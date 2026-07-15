@@ -35,13 +35,33 @@ export async function recompute(planId: string): Promise<RecomputeResult> {
   if (planErr || !plan) return { error: planErr?.message ?? 'Plan not found.' };
 
   const months: number = plan.horizon_months;
-  const [{ data: buckets }, { data: programs }, { data: demandRows }, { data: harvestRows }] = await Promise.all([
+
+  // PostgREST caps a SELECT at 1000 rows; demand_plan (up to 50×60) and
+  // harvest_plan (up to 30×60) exceed that, so page through them fully.
+  async function fetchAll<T = Record<string, unknown>>(table: string, cols: string): Promise<T[]> {
+    const out: T[] = [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await svc.from(table).select(cols).eq('plan_id', planId).range(from, from + 999);
+      if (error) throw new Error(`${table}: ${error.message}`);
+      out.push(...((data ?? []) as T[]));
+      if (!data || data.length < 1000) break;
+    }
+    return out;
+  }
+
+  const [{ data: buckets }, { data: programs }] = await Promise.all([
     svc.from('buckets').select('id, sort_order').eq('org_id', plan.org_id).eq('is_archived', false).order('sort_order'),
     // Order by sort_order == the "row order" the engine uses for locked ranking.
     svc.from('programs').select('*').eq('plan_id', planId).is('deleted_at', null).order('sort_order'),
-    svc.from('demand_plan').select('program_id, month_index, demand_fp').eq('plan_id', planId),
-    svc.from('harvest_plan').select('bucket_id, month_index, capacity_kg_wr').eq('plan_id', planId),
   ]);
+  let demandRows: { program_id: string; month_index: number; demand_fp: number }[];
+  let harvestRows: { bucket_id: string; month_index: number; capacity_kg_wr: number }[];
+  try {
+    demandRows = await fetchAll('demand_plan', 'program_id, month_index, demand_fp');
+    harvestRows = await fetchAll('harvest_plan', 'bucket_id, month_index, capacity_kg_wr');
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'Failed to load plan inputs.' };
+  }
 
   // demand overrides keyed by program:month (missing months fall back to baseline)
   const demandByPM = new Map<string, number>();
