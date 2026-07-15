@@ -125,8 +125,39 @@ for (let R = 11; R < 61; R++) {
 console.log('60-MS rolling_fp matched:', matched, '/', programs.length,
   '| unmatched 60-MS rows:', unmatched.length, unmatched.length ? '-> ' + unmatched.slice(0, 6).join(' ; ') : '');
 
+// --- Unallocated WR tab (bucket rows, cols 1..60) — parity reference ---
+const UW = sheet('Unallocated WR');
+const expectedUnallocatedWr = {};
+for (let R = 4; R < 40; R++) {
+  const name = cell(UW, R, 0);
+  if (!name || !String(name).trim()) break;
+  const nm = String(name).trim();
+  if (nm.toLowerCase() === 'bucket') continue;
+  expectedUnallocatedWr[nm] = Array.from({ length: MONTHS }, (_, m) => num(cell(UW, R, m + 1)));
+}
+
+// --- Annual Summary volume rows (cols 1..6 = FY1..FY5, total_60mo) ---
+const AS = sheet('Annual Summary');
+const asRow = (label) => {
+  for (let R = 0; R < 26; R++) {
+    const v = cell(AS, R, 0);
+    if (v && String(v).trim().toLowerCase().startsWith(label.toLowerCase())) return R;
+  }
+  return -1;
+};
+const asVals = (label) => { const R = asRow(label); return R < 0 ? null : Array.from({ length: 6 }, (_, c) => num(cell(AS, R, c + 1))); };
+const expectedAnnual = {
+  demandFp: asVals('demand fp'),
+  allocatedFp: asVals('allocated fp'),
+  unallocatedFp: asVals('unallocated fp'),
+  allocatedWr: asVals('allocated wr'),
+  unallocatedWr: asVals('unallocated wr'),
+};
+console.log('unallocated WR buckets:', Object.keys(expectedUnallocatedWr).length,
+  '| annual demand total:', expectedAnnual.demandFp && expectedAnnual.demandFp[5]);
+
 mkdirSync('packages/engine/fixtures', { recursive: true });
-const out = { source: WB, months: MONTHS, buckets, programs, harvest };
+const out = { source: WB, months: MONTHS, buckets, programs, harvest, expected: { unallocated_wr: expectedUnallocatedWr, annual: expectedAnnual } };
 writeFileSync('packages/engine/fixtures/v30.json', JSON.stringify(out, null, 2));
 
 console.log('buckets   :', buckets.length, buckets.map((b) => b.name).join(', '));
