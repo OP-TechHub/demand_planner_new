@@ -1,5 +1,8 @@
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
+import { AppSidebar } from '@/components/app-sidebar';
+import type { UserRole } from '@oceanpick/shared';
 import { logout } from '../login/actions';
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -47,22 +50,32 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   }
 
   return (
-    <div className="min-h-screen">
-      <header className="flex h-14 items-center justify-between border-b bg-card px-6">
-        <span className="text-sm font-semibold tracking-tight">Oceanpick Demand Planner</span>
-        <div className="flex items-center gap-4">
-          <div className="text-right leading-tight">
-            <div className="text-sm font-medium">{profile.full_name || profile.email}</div>
-            <div className="text-xs capitalize text-muted-foreground">{profile.role}</div>
+    <div className="flex min-h-screen">
+      <AppSidebar role={profile.role as UserRole} />
+      <div className="flex min-h-screen flex-1 flex-col">
+        <header className="flex h-14 items-center justify-between border-b bg-card px-6">
+          <div className="flex items-center gap-3">
+            <Link href="/home" className="text-sm font-semibold tracking-tight">
+              Oceanpick Demand Planner
+            </Link>
+            <span className="rounded-md border px-2 py-0.5 text-xs text-muted-foreground">
+              Plan: Master
+            </span>
           </div>
-          <form action={logout}>
-            <button className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted">
-              Sign out
-            </button>
-          </form>
-        </div>
-      </header>
-      <main className="p-6">{children}</main>
+          <div className="flex items-center gap-4">
+            <div className="text-right leading-tight">
+              <div className="text-sm font-medium">{profile.full_name || profile.email}</div>
+              <div className="text-xs capitalize text-muted-foreground">{profile.role}</div>
+            </div>
+            <form action={logout}>
+              <button className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted">
+                Sign out
+              </button>
+            </form>
+          </div>
+        </header>
+        <main className="flex-1 p-6">{children}</main>
+      </div>
     </div>
   );
 }
