@@ -1,4 +1,15 @@
-// Spec §3 — ranking and prioritization.
+// Spec §3 — ranking. Replicates the V30 model's 60-MS formulas exactly
+// (columns BW "InBkt", BX "SortKey", BY "Global"), which differ from the prose
+// spec §3.1 in one key way discovered via Excel parity:
+//
+//   InBkt within a bucket:
+//     - LOCKED programs are ordered by ORIGINAL ROW ORDER (Excel "BR"/P-row),
+//       NOT by margin.  (BW: SUMPRODUCT((BU=1)*(BR<BR_this))+1)
+//     - UNLOCKED programs come AFTER all locked in the bucket, ordered by the
+//       margin lens (W/X/Y) DESCENDING, tie-broken by original order.
+//
+//   SortKey = (1-locked)*1_000_000 + bucketPriority*100 + InBkt
+//   Global  = count of in-scope programs with a smaller SortKey, + 1.
 import type { EngineInput, EngineProgram } from './types';
 import { rankingMargin } from './derived';
 
@@ -6,29 +17,19 @@ export interface RankedProgram {
   program: EngineProgram;
   inScope: boolean;
   bucketPriority: number; // primary bucket sort_order (lower = higher priority)
-  inBucketRank: number; // 1 = best margin among in-scope programs in this bucket
-  priorityScore: number; // lower = served first; +Infinity if out of scope
+  inBucketRank: number; // Excel "InBkt"
+  priorityScore: number; // Excel "SortKey"; +Infinity if out of scope
   globalRank: number; // 1..N over in-scope programs (0 if out of scope)
 }
 
-function idLess(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
-}
-
-/**
- * Rank all programs (spec §3). Out-of-scope programs get inScope=false,
- * priorityScore=+Infinity, globalRank=0. In-scope programs are ordered by
- * priority_score = (locked ? 0 : 1_000_000) + bucketPriority*100 + inBucketRank,
- * ties broken deterministically by id.
- */
 export function rankPrograms(input: EngineInput): RankedProgram[] {
   const { programs, buckets, settings } = input;
   const sortOrder = new Map(buckets.map((b) => [b.id, b.sortOrder]));
+  const order = new Map(programs.map((p, i) => [p.id, i])); // original row order (BR/P-row)
   const inScope = (p: EngineProgram) =>
     p.status === 'active' || (settings.scope === 'active_pipeline' && p.status === 'pipeline');
 
-  // In-bucket rank: among in-scope programs sharing a primary bucket, by the
-  // margin metric (desc), ties by id. (Lock is applied later via the offset.)
+  // In-bucket rank per Excel BW.
   const byBucket = new Map<string, EngineProgram[]>();
   for (const p of programs) {
     if (!inScope(p)) continue;
@@ -38,11 +39,14 @@ export function rankPrograms(input: EngineInput): RankedProgram[] {
   }
   const inBucketRank = new Map<string, number>();
   for (const arr of byBucket.values()) {
-    arr.sort((a, b) => {
+    const idx = (p: EngineProgram) => order.get(p.id) ?? 0;
+    const locked = arr.filter((p) => p.locked).sort((a, b) => idx(a) - idx(b));
+    const unlocked = arr.filter((p) => !p.locked).sort((a, b) => {
       const d = rankingMargin(b, settings.marginMetric) - rankingMargin(a, settings.marginMetric);
-      return d !== 0 ? d : idLess(a.id, b.id);
+      return d !== 0 ? d : idx(a) - idx(b);
     });
-    arr.forEach((p, i) => inBucketRank.set(p.id, i + 1));
+    locked.forEach((p, i) => inBucketRank.set(p.id, i + 1));
+    unlocked.forEach((p, i) => inBucketRank.set(p.id, locked.length + i + 1));
   }
 
   const ranked: RankedProgram[] = programs.map((p) => {
@@ -61,7 +65,7 @@ export function rankPrograms(input: EngineInput): RankedProgram[] {
 
   ranked
     .filter((r) => r.inScope)
-    .sort((a, b) => a.priorityScore - b.priorityScore || idLess(a.program.id, b.program.id))
+    .sort((a, b) => a.priorityScore - b.priorityScore || (order.get(a.program.id)! - order.get(b.program.id)!))
     .forEach((r, i) => { r.globalRank = i + 1; });
 
   return ranked;

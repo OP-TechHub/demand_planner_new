@@ -61,13 +61,22 @@ describe('§3 ranking — behavioral', () => {
     expect(rankOf(activeOnly, 'a').inScope).toBe(true);
   });
 
-  it('ties broken deterministically by id', () => {
+  it('unlocked ties broken by original input order (P-row)', () => {
     const r = rankPrograms(makeInput([
-      prog('b', { primaryBucket: 'small' }),
-      prog('a', { primaryBucket: 'small' }),
+      prog('first', { primaryBucket: 'small' }),
+      prog('second', { primaryBucket: 'small' }),
     ], buckets));
-    expect(rankOf(r, 'a').inBucketRank).toBe(1);
-    expect(rankOf(r, 'b').inBucketRank).toBe(2);
+    expect(rankOf(r, 'first').inBucketRank).toBe(1);
+    expect(rankOf(r, 'second').inBucketRank).toBe(2);
+  });
+
+  it('locked programs are ranked by input order, NOT margin (matches Excel BW)', () => {
+    const r = rankPrograms(makeInput([
+      prog('lockedLowMargin', { primaryBucket: 'small', locked: true, price: 10 }),
+      prog('lockedHighMargin', { primaryBucket: 'small', locked: true, price: 50 }),
+    ], buckets));
+    expect(rankOf(r, 'lockedLowMargin').inBucketRank).toBe(1); // first in order, despite lower margin
+    expect(rankOf(r, 'lockedHighMargin').inBucketRank).toBe(2);
   });
 });
 
