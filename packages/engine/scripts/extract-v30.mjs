@@ -99,6 +99,32 @@ programs.forEach((p, i) => {
   else { mismatches++; if (d) p.demand = d.values; }
 });
 
+// --- 60-Month Summary: expected rolling_fp grid (Cell Metric = "Allocated FP",
+//     lens Margin/kg WR, Fill-what-you-can, Active+Pipeline). Months = cols 8..67,
+//     program rows from row 12, ordered by rank. Match to programs by identity. ---
+const MS = sheet('60-Month Summary');
+const norm = (s) => String(s ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+const byKey = new Map(programs.map((p) => [norm(p.customer) + '|' + norm(p.item_description), p]));
+let matched = 0;
+const unmatched = [];
+for (let R = 11; R < 61; R++) {
+  const name = cell(MS, R, 2);
+  if (!name || !String(name).trim()) continue;
+  const p = byKey.get(norm(cell(MS, R, 1)) + '|' + norm(name));
+  const fp = Array.from({ length: MONTHS }, (_, m) => num(cell(MS, R, 8 + m)));
+  if (p) {
+    p.expected_rolling_fp = fp;
+    // col 74 "InBkt" drives SortKey (priority); col 6 "Rank" is a display rank.
+    p.expected_in_bucket_rank = num(cell(MS, R, 74));
+    p.expected_global_rank = num(cell(MS, R, 76));
+    p.expected_sort_key = num(cell(MS, R, 75));
+    matched++;
+  }
+  else unmatched.push(String(name).slice(0, 40));
+}
+console.log('60-MS rolling_fp matched:', matched, '/', programs.length,
+  '| unmatched 60-MS rows:', unmatched.length, unmatched.length ? '-> ' + unmatched.slice(0, 6).join(' ; ') : '');
+
 mkdirSync('packages/engine/fixtures', { recursive: true });
 const out = { source: WB, months: MONTHS, buckets, programs, harvest };
 writeFileSync('packages/engine/fixtures/v30.json', JSON.stringify(out, null, 2));
