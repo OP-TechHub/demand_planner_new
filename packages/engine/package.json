@@ -4,7 +4,14 @@
   "private": true,
   "type": "module",
   "description": "Pure, deterministic demand-plan calculation engine (calculation-engine-spec.md).",
+  "main": "src/index.ts",
   "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
     "extract-v30": "node scripts/extract-v30.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.8"
   }
 }
