@@ -11,8 +11,11 @@ export interface V30Program extends EngineProgram {
 }
 
 export function v30Programs(): V30Program[] {
+  // item_code is NOT unique in V30 (blank / "TBC" repeat), so key the engine on
+  // the row index (padded so lexicographic order == row order, matching Excel's
+  // row-position tie-break). Production uses unique program UUIDs.
   return v30.programs.map((p, i) => ({
-    id: p.item_code || String(i),
+    id: 'p' + String(i).padStart(2, '0'),
     status: p.status as Status,
     locked: p.locked,
     primaryBucket: p.primary_bucket as string,
