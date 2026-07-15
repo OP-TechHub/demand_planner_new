@@ -1,0 +1,10 @@
+{
+  "name": "@oceanpick/engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Pure, deterministic demand-plan calculation engine (calculation-engine-spec.md).",
+  "scripts": {
+    "extract-v30": "node scripts/extract-v30.mjs"
+  }
+}

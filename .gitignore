@@ -11,3 +11,7 @@ next-env.d.ts
 .DS_Store
 .supabase/
 supabase/.temp/
+
+# Large reference workbook (5 MB). Fixtures are extracted from it via
+# packages/engine/scripts/extract-v30.mjs; the JSON output is what we commit.
+Oceanpick_Demand_Plan_30 NM 28.05.2026.xlsx
