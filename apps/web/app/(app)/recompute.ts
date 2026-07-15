@@ -129,7 +129,7 @@ export async function recompute(planId: string): Promise<RecomputeResult> {
       demand_fp: c.demandFp, own_fp: c.ownFp, own_wr: c.ownWr,
       borrow_m1_prim_wr: c.borrow.m1_prim, borrow_m1_alt_wr: c.borrow.m1_alt, borrow_m1_tert_wr: c.borrow.m1_tert,
       borrow_m2_prim_wr: c.borrow.m2_prim, borrow_m2_alt_wr: c.borrow.m2_alt, borrow_m2_tert_wr: c.borrow.m2_tert,
-      rolling_fp: c.rollingFp, rolling_wr: c.rollingWr, rolling_margin: c.rollingMargin,
+      rolling_fp: c.rollingFp, rolling_wr: c.rollingWr, rolling_margin: f?.margin ?? 0,
       revenue: f?.revenue ?? 0, cost: f?.cost ?? 0,
       fulfilment_pct: f?.fulfilmentPct ?? null, unfulfilled_wr: f?.unfulfilledWr ?? 0,
     };

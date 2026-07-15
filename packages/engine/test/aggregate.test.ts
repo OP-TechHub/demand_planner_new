@@ -50,6 +50,23 @@ describe('§6–8 aggregations — V30', () => {
     check('UnallocatedWR', 'unallocatedWr');
   });
 
+  it('§8.1 Annual Summary FINANCIALS match Excel with time-varying price/cost', () => {
+    const rows = ['fy1', 'fy2', 'fy3', 'fy4', 'fy5', 'total_60mo'] as const;
+    const get = (period: string) => agg.planSummary.find((r) => r.period === period)!;
+    const check = (label: string, key: 'revenue' | 'cost' | 'margin', excel: number[] | null | undefined) => {
+      if (!excel) return;
+      rows.forEach((period, i) => {
+        const d = Math.abs(get(period)[key] - (excel[i] ?? 0));
+        // eslint-disable-next-line no-console
+        if (d >= 1) console.log(`${label} ${period}: mine=${get(period)[key].toFixed(0)} excel=${(excel[i] ?? 0).toFixed(0)} diff=${d.toFixed(1)}`);
+        expect(d, `${label} ${period}`).toBeLessThan(1);
+      });
+    };
+    check('Revenue', 'revenue', exp.annual.revenue);
+    check('Cost', 'cost', exp.annual.cost);
+    check('Margin', 'margin', exp.annual.margin);
+  });
+
   it('invariants: unallocated >= 0, fulfilment in [0,1], FYs sum to total', () => {
     for (const u of agg.unallocated) expect(u.unallocatedWr).toBeGreaterThanOrEqual(0);
     for (const f of agg.fulfilment) if (f.fulfilmentPct != null) { expect(f.fulfilmentPct).toBeGreaterThanOrEqual(0); expect(f.fulfilmentPct).toBeLessThanOrEqual(1); }

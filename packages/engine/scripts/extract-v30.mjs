@@ -152,6 +152,9 @@ const expectedAnnual = {
   unallocatedFp: asVals('unallocated fp'),
   allocatedWr: asVals('allocated wr'),
   unallocatedWr: asVals('unallocated wr'),
+  revenue: asVals('revenue'),
+  cost: asVals('cost'),
+  margin: asVals('gross margin'),
 };
 console.log('unallocated WR buckets:', Object.keys(expectedUnallocatedWr).length,
   '| annual demand total:', expectedAnnual.demandFp && expectedAnnual.demandFp[5]);

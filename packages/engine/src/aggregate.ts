@@ -95,14 +95,24 @@ export function aggregate(
     }
   }
 
-  // --- §7 Program fulfilment + money (flat price/cost) ---
+  // --- §7 Program fulfilment + money ---
+  // Excel's financials (Annual Summary rows 16-18) use FLAT price (Programs!M)
+  // and FLAT primary total cost (Programs!V) × allocated FP — not per-path, and
+  // not the time-varying W/X columns (those feed display + ranking only). Match:
+  //   revenue = rolling_fp × price,  cost = rolling_fp × primary_total_cost.
+  const primaryCost = new Map<string, number>();
+  const costFlat = (p: EngineProgram) => {
+    let c = primaryCost.get(p.id);
+    if (c == null) { c = pathCostMargin(p, 'primary')?.total_cost_fp ?? 0; primaryCost.set(p.id, c); }
+    return c;
+  };
   const fulfilment: FulfilmentCell[] = rolling.cells.map((c) => {
     const p = programs.get(c.programId) as EngineProgram;
     const pct = c.demandFp > 0 ? Math.min(1, c.rollingFp / c.demandFp) : null;
     const unfulfilledWr = c.demandFp > 0 && p.primaryYield > 0 ? Math.max(0, (c.demandFp - c.rollingFp) / p.primaryYield) : 0;
     const revenue = c.rollingFp * p.price;
-    const margin = c.rollingMargin;
-    return { programId: c.programId, month: c.month, demandFp: c.demandFp, rollingFp: c.rollingFp, fulfilmentPct: pct, unfulfilledWr, revenue, cost: revenue - margin, margin };
+    const cost = c.rollingFp * costFlat(p);
+    return { programId: c.programId, month: c.month, demandFp: c.demandFp, rollingFp: c.rollingFp, fulfilmentPct: pct, unfulfilledWr, revenue, cost, margin: revenue - cost };
   });
   const fByKey = new Map(fulfilment.map((f) => [`${f.programId}:${f.month}`, f]));
   const unByKey = new Map(unallocated.map((u) => [`${u.bucketId}:${u.month}`, u]));
@@ -113,7 +123,6 @@ export function aggregate(
     for (const r of ranked) {
       if (!inScope.has(r.program.id)) continue;
       const p = r.program;
-      const primary = pathCostMargin(p, 'primary');
       for (let m = start; m <= end; m++) {
         const f = fByKey.get(`${p.id}:${m}`);
         if (!f) continue;
@@ -122,7 +131,7 @@ export function aggregate(
         revenue += f.revenue;
         cost += f.cost;
         revOpp += f.demandFp * p.price;
-        costOpp += f.demandFp * (primary?.total_cost_fp ?? 0);
+        costOpp += f.demandFp * costFlat(p);
       }
     }
     // allocatedWr summed from the rolling grid; unallocatedWr from §6
