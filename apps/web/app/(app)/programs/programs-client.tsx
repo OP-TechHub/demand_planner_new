@@ -4,8 +4,10 @@ import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { PROGRAM_STATUS_META, type Bucket, type Program, type ProgramStatus } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
+import { toCsv, downloadCsv } from '@/lib/csv';
 import { archiveProgram } from './actions';
 import { ProgramPanel } from './program-panel';
+import { ImportPrograms, PROGRAM_CSV_HEADER } from './import-programs';
 
 type PanelState = null | { mode: 'new' } | { mode: 'edit'; program: Program };
 
@@ -22,6 +24,7 @@ export function ProgramsClient({
 }) {
   const router = useRouter();
   const [panel, setPanel] = useState<PanelState>(null);
+  const [importing, setImporting] = useState(false);
   const [isPending, startTransition] = useTransition();
 
   const [status, setStatus] = useState<'all' | ProgramStatus>('all');
@@ -63,18 +66,42 @@ export function ProgramsClient({
     router.refresh();
   }
 
+  function onExport() {
+    const nm = new Map(buckets.map((b) => [b.id, b.name]));
+    const name = (id: string | null) => (id ? nm.get(id) ?? '' : '');
+    const data = rows.map((p) => [
+      p.status, p.item_code, p.item_description, p.customer, p.max_monthly_demand_fp,
+      name(p.primary_bucket_id), p.primary_yield,
+      name(p.secondary_bucket_id), p.secondary_yield ?? '',
+      name(p.tertiary_bucket_id), p.tertiary_yield ?? '',
+      p.price_per_fp, p.barra_cost_wr, p.packing_cost_fp, p.processing_cost_fp,
+      p.storage_cost_fp, p.freight_cost_fp, p.other_costs_fp, p.locked,
+    ]);
+    downloadCsv('programs.csv', toCsv([[...PROGRAM_CSV_HEADER], ...data]));
+  }
+
   return (
     <div className="mx-auto max-w-5xl space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">Programs</h1>
-        {canEdit && (
-          <button
-            onClick={() => setPanel({ mode: 'new' })}
-            className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground"
-          >
-            + New Program
+        <div className="flex items-center gap-2">
+          <button onClick={onExport} className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted">
+            Export CSV
           </button>
-        )}
+          {canEdit && (
+            <button onClick={() => setImporting(true)} className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted">
+              Import CSV
+            </button>
+          )}
+          {canEdit && (
+            <button
+              onClick={() => setPanel({ mode: 'new' })}
+              className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground"
+            >
+              + New Program
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -153,6 +180,16 @@ export function ProgramsClient({
           program={panel.mode === 'edit' ? panel.program : null}
           onClose={() => setPanel(null)}
           onSaved={onSaved}
+        />
+      )}
+
+      {importing && canEdit && (
+        <ImportPrograms
+          planId={planId}
+          buckets={buckets}
+          existingCodes={new Set(programs.map((p) => p.item_code))}
+          onClose={() => setImporting(false)}
+          onDone={() => { setImporting(false); router.refresh(); }}
         />
       )}
     </div>
