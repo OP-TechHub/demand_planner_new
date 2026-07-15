@@ -4,7 +4,10 @@ import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { monthLabel, type Bucket, type HarvestCell } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
+import { toCsv, downloadCsv } from '@/lib/csv';
+import { WideGridImport } from '@/components/wide-grid-import';
 import { HarvestEditor } from './harvest-editor';
+import { importHarvest } from './actions';
 
 export function HarvestClient({
   planId,
@@ -23,6 +26,7 @@ export function HarvestClient({
 }) {
   const router = useRouter();
   const [editing, setEditing] = useState<Bucket | null>(null);
+  const [importing, setImporting] = useState(false);
   const months = useMemo(() => Array.from({ length: horizon }, (_, i) => i + 1), [horizon]);
 
   const capacity = useMemo(() => {
@@ -39,9 +43,26 @@ export function HarvestClient({
     [months, buckets, capacity] // eslint-disable-line react-hooks/exhaustive-deps
   );
 
+  function onExport() {
+    const header = ['bucket', ...months.map((mo) => `M${mo}`)];
+    const data = buckets.map((b) => [
+      b.name,
+      ...months.map((mo) => { const v = cell(b.id, mo); return v === 0 ? '' : v; }),
+    ]);
+    downloadCsv('harvest-plan.csv', toCsv([header, ...data]));
+  }
+
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold tracking-tight">Monthly Harvest Plan</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold tracking-tight">Monthly Harvest Plan</h1>
+        <div className="flex items-center gap-2">
+          <button onClick={onExport} className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted">Export CSV</button>
+          {canEdit && (
+            <button onClick={() => setImporting(true)} className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted">Import CSV</button>
+          )}
+        </div>
+      </div>
       <p className="text-xs text-muted-foreground">
         Harvest capacity (kg WR) by bucket. Empty cells are 0.
         {canEdit ? ' Click a bucket to edit its timeline.' : ''}
@@ -107,6 +128,18 @@ export function HarvestClient({
           rows={harvestRows.filter((r) => r.bucket_id === editing.id)}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); router.refresh(); }}
+        />
+      )}
+
+      {importing && canEdit && (
+        <WideGridImport
+          title="Import Monthly Harvest"
+          keyColumn="bucket"
+          knownKeys={new Set(buckets.map((b) => b.name))}
+          horizon={horizon}
+          onImport={(rows) => importHarvest(planId, rows)}
+          onClose={() => setImporting(false)}
+          onDone={() => { setImporting(false); router.refresh(); }}
         />
       )}
     </div>

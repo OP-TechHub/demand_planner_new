@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
+import type { WideRow, WideImportResult } from '@/components/wide-grid-import';
 
 export type SaveResult = { error: string | null };
 
@@ -60,4 +61,37 @@ export async function saveHarvestCapacity(
 
   revalidatePath('/harvest-plan');
   return { error: null };
+}
+
+/**
+ * Bulk import harvest capacity from a wide CSV (bucket × M1..M60). Keys resolve
+ * to bucket ids; non-blank cells upsert into harvest_plan. Unknown bucket names
+ * are skipped and reported.
+ */
+export async function importHarvest(planId: string, rows: WideRow[]): Promise<WideImportResult> {
+  if (!planId) return { error: 'Missing plan.', count: 0, unknown: [] };
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: 'Your session expired. Sign in again.', count: 0, unknown: [] };
+
+  const { data: buckets } = await supabase.from('buckets').select('id, name').eq('is_archived', false);
+  const idByName = new Map((buckets ?? []).map((b: { id: string; name: string }) => [b.name, b.id]));
+
+  const upserts: Record<string, unknown>[] = [];
+  const unknown = new Set<string>();
+  for (const row of rows) {
+    const bid = idByName.get(row.key);
+    if (!bid) { unknown.add(row.key); continue; }
+    for (const c of row.cells) {
+      if (c.month < 1 || c.month > 60 || !Number.isFinite(c.value) || c.value < 0) continue;
+      upserts.push({ plan_id: planId, bucket_id: bid, month_index: c.month, capacity_kg_wr: c.value, created_by: user.id, updated_by: user.id });
+    }
+  }
+
+  if (upserts.length) {
+    const { error } = await supabase.from('harvest_plan').upsert(upserts, { onConflict: 'plan_id,bucket_id,month_index' });
+    if (error) return { error: error.message, count: 0, unknown: [...unknown] };
+  }
+  revalidatePath('/harvest-plan');
+  return { error: null, count: upserts.length, unknown: [...unknown] };
 }

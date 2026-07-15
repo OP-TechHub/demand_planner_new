@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
+import type { WideRow, WideImportResult } from '@/components/wide-grid-import';
 
 export type SaveResult = { error: string | null };
 
@@ -59,6 +60,43 @@ export async function saveDemandOverrides(
 
   revalidatePath('/demand-plan');
   return { error: null };
+}
+
+/**
+ * Bulk import demand overrides from a wide CSV (item_code × M1..M60). Keys
+ * resolve to program ids; non-blank cells upsert into demand_plan. Unknown
+ * item_codes are skipped and reported.
+ */
+export async function importDemand(planId: string, rows: WideRow[]): Promise<WideImportResult> {
+  if (!planId) return { error: 'Missing plan.', count: 0, unknown: [] };
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: 'Your session expired. Sign in again.', count: 0, unknown: [] };
+
+  const { data: progs } = await supabase
+    .from('programs')
+    .select('id, item_code')
+    .eq('plan_id', planId)
+    .is('deleted_at', null);
+  const idByCode = new Map((progs ?? []).map((p: { id: string; item_code: string }) => [p.item_code, p.id]));
+
+  const upserts: Record<string, unknown>[] = [];
+  const unknown = new Set<string>();
+  for (const row of rows) {
+    const pid = idByCode.get(row.key);
+    if (!pid) { unknown.add(row.key); continue; }
+    for (const c of row.cells) {
+      if (c.month < 1 || c.month > 60 || !Number.isFinite(c.value) || c.value < 0) continue;
+      upserts.push({ plan_id: planId, program_id: pid, month_index: c.month, demand_fp: c.value, created_by: user.id, updated_by: user.id });
+    }
+  }
+
+  if (upserts.length) {
+    const { error } = await supabase.from('demand_plan').upsert(upserts, { onConflict: 'program_id,month_index' });
+    if (error) return { error: error.message, count: 0, unknown: [...unknown] };
+  }
+  revalidatePath('/demand-plan');
+  return { error: null, count: upserts.length, unknown: [...unknown] };
 }
 
 /** Clear every override for a program (revert all months to baseline). */

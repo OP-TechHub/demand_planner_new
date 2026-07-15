@@ -4,7 +4,10 @@ import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { monthLabel, type DemandCell, type Program } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
+import { toCsv, downloadCsv } from '@/lib/csv';
+import { WideGridImport } from '@/components/wide-grid-import';
 import { DemandEditor } from './demand-editor';
+import { importDemand } from './actions';
 
 export function DemandClient({
   planId,
@@ -23,6 +26,7 @@ export function DemandClient({
 }) {
   const router = useRouter();
   const [editing, setEditing] = useState<Program | null>(null);
+  const [importing, setImporting] = useState(false);
   const [customer, setCustomer] = useState('all');
   const [search, setSearch] = useState('');
 
@@ -58,10 +62,26 @@ export function DemandClient({
     [months, visible, overrides] // eslint-disable-line react-hooks/exhaustive-deps
   );
 
+  function onExport() {
+    const header = ['item_code', 'item_description', ...months.map((mo) => `M${mo}`)];
+    const data = programs.map((p) => [
+      p.item_code,
+      p.item_description,
+      ...months.map((mo) => overrides.get(`${p.id}:${mo}`) ?? ''),
+    ]);
+    downloadCsv('demand-plan.csv', toCsv([header, ...data]));
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">Monthly Demand Plan</h1>
+        <div className="flex items-center gap-2">
+          <button onClick={onExport} className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted">Export CSV</button>
+          {canEdit && (
+            <button onClick={() => setImporting(true)} className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted">Import CSV</button>
+          )}
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -149,6 +169,18 @@ export function DemandClient({
           rows={demandRows.filter((r) => r.program_id === editing.id)}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); router.refresh(); }}
+        />
+      )}
+
+      {importing && canEdit && (
+        <WideGridImport
+          title="Import Monthly Demand"
+          keyColumn="item_code"
+          knownKeys={new Set(programs.map((p) => p.item_code))}
+          horizon={horizon}
+          onImport={(rows) => importDemand(planId, rows)}
+          onClose={() => setImporting(false)}
+          onDone={() => { setImporting(false); router.refresh(); }}
         />
       )}
     </div>
