@@ -74,6 +74,67 @@ export interface Bucket {
   is_archived: boolean;
 }
 
+/**
+ * A program: one customer × product line within a plan. Mirrors
+ * `demand_planner.programs` (data-model.md §4). Numeric columns arrive from
+ * PostgREST as JS numbers.
+ */
+export interface Program {
+  id: string;
+  plan_id: string;
+  status: ProgramStatus;
+  item_code: string;
+  item_description: string;
+  customer: string;
+  max_monthly_demand_fp: number;
+  primary_bucket_id: string;
+  secondary_bucket_id: string | null;
+  tertiary_bucket_id: string | null;
+  primary_yield: number;
+  secondary_yield: number | null;
+  tertiary_yield: number | null;
+  price_per_fp: number;
+  barra_cost_wr: number;
+  packing_cost_fp: number;
+  processing_cost_fp: number;
+  storage_cost_fp: number;
+  freight_cost_fp: number;
+  other_costs_fp: number;
+  locked: boolean;
+  sort_order: number;
+  created_at?: string;
+  updated_at?: string;
+  deleted_at?: string | null;
+}
+
+/** One editable cell of the sparse per-program demand grid (data-model.md §4). */
+export interface DemandCell {
+  id: string;
+  plan_id: string;
+  program_id: string;
+  month_index: number;
+  demand_fp: number;
+}
+
+/** One editable cell of the sparse per-bucket harvest grid (data-model.md §4). */
+export interface HarvestCell {
+  id: string;
+  plan_id: string;
+  bucket_id: string;
+  month_index: number;
+  capacity_kg_wr: number;
+}
+
+/** The fixed planning horizon (months). data-model.md fixes this at 60 for v1. */
+export const HORIZON_MONTHS = 60 as const;
+
+/** Program status → chip color intent, shared by list + panel. */
+export const PROGRAM_STATUS_META: Record<ProgramStatus, { label: string; tone: 'active' | 'pipeline' | 'inactive' }> = {
+  active: { label: 'Active', tone: 'active' },
+  pipeline: { label: 'Pipeline', tone: 'pipeline' },
+  inactive: { label: 'Inactive', tone: 'inactive' },
+};
+
 /** Role capability checks. Single source of truth for the UI. */
 export const can = {
   manageUsers: (r: UserRole) => r === 'admin',
