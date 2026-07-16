@@ -8,6 +8,17 @@ export interface GridRow {
   values: (number | null)[]; // length === horizon
 }
 
+/** Convert grid rows to a CSV matrix (header + rows), matching the on-screen grid. */
+export function gridCsvRows(firstCol: string, planStartDate: string, horizon: number, rows: GridRow[], includeTotal = true): (string | number | null)[][] {
+  const header = [firstCol, ...Array.from({ length: horizon }, (_, i) => monthLabel(planStartDate, i + 1)), ...(includeTotal ? ['Total'] : [])];
+  const body = rows.map((r) => {
+    const label = r.sublabel ? `${r.label} — ${r.sublabel}` : r.label;
+    const total = r.values.reduce((s: number, v) => s + (v ?? 0), 0);
+    return [label, ...r.values, ...(includeTotal ? [total] : [])];
+  });
+  return [header, ...body];
+}
+
 /**
  * Read-only wide grid used by the output pages: frozen first column, one column
  * per month, an optional 60-month total column, and optional column totals.

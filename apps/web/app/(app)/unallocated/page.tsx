@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { getActivePlan } from '@/lib/plan';
-import { OutputGrid, NotComputed, type GridRow } from '@/components/output-grid';
+import { OutputGrid, NotComputed, gridCsvRows, type GridRow } from '@/components/output-grid';
+import { ExportCsvButton } from '@/components/export-csv-button';
 import { fetchAllByPlan } from '@/lib/fetch-all';
 import { num0 } from '@/lib/format';
 
@@ -22,7 +23,10 @@ export default async function UnallocatedPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold tracking-tight">Unallocated WR</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold tracking-tight">Unallocated WR</h1>
+        {uw.length > 0 && <ExportCsvButton filename="unallocated-wr.csv" rows={gridCsvRows('Bucket', plan.plan_start_date, plan.horizon_months, rows)} />}
+      </div>
       {uw.length === 0 ? (
         <NotComputed />
       ) : (

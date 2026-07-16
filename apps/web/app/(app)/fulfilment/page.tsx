@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { getActivePlan } from '@/lib/plan';
-import { OutputGrid, NotComputed, type GridRow } from '@/components/output-grid';
+import { OutputGrid, NotComputed, gridCsvRows, type GridRow } from '@/components/output-grid';
+import { ExportCsvButton } from '@/components/export-csv-button';
 import { fetchAllByPlan } from '@/lib/fetch-all';
 import { programOrder } from '@/lib/outputs';
 import { pct } from '@/lib/format';
@@ -30,7 +31,10 @@ export default async function FulfilmentPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold tracking-tight">Program Fulfilment</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold tracking-tight">Program Fulfilment</h1>
+        {rows.length > 0 && <ExportCsvButton filename="program-fulfilment.csv" rows={gridCsvRows('Program', plan.plan_start_date, plan.horizon_months, rows, false)} />}
+      </div>
       {rows.length === 0 ? (
         <NotComputed />
       ) : (

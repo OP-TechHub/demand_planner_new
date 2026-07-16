@@ -24,7 +24,7 @@ export default async function RevenueCostPage() {
       <h1 className="text-2xl font-semibold tracking-tight">Revenue &amp; Cost</h1>
       <p className="text-xs text-muted-foreground">Uses flat price/cost (time-varying overrides deferred), so dollar figures differ slightly for a few programs. Volumes are exact.</p>
       {order.length === 0 ? <NotComputed /> : (
-        <MetricGrid planStartDate={plan.plan_start_date} horizon={m} metrics={metrics} />
+        <MetricGrid planStartDate={plan.plan_start_date} horizon={m} metrics={metrics} filenameBase="revenue-cost" />
       )}
     </div>
   );

@@ -23,7 +23,7 @@ export default async function SixtyMonthPage() {
     <div className="space-y-4">
       <h1 className="text-2xl font-semibold tracking-tight">60-Month Summary</h1>
       {order.length === 0 ? <NotComputed /> : (
-        <MetricGrid planStartDate={plan.plan_start_date} horizon={m} metrics={metrics} />
+        <MetricGrid planStartDate={plan.plan_start_date} horizon={m} metrics={metrics} filenameBase="60-month" />
       )}
     </div>
   );

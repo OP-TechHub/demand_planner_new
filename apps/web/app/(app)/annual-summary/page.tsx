@@ -2,6 +2,7 @@ import { Fragment } from 'react';
 import { createClient } from '@/lib/supabase/server';
 import { getActivePlan } from '@/lib/plan';
 import { NotComputed } from '@/components/output-grid';
+import { ExportCsvButton } from '@/components/export-csv-button';
 import { kg, usd, pct } from '@/lib/format';
 
 const PERIODS = [
@@ -30,17 +31,24 @@ export default async function AnnualSummaryPage() {
   if (!plan) return <NoPlan />;
   const supabase = await createClient();
   const { data: rows } = await supabase.from('plan_summary').select('*').eq('plan_id', plan.id);
+  const byPeriod: Record<string, Record<string, number>> = {};
+  for (const r of rows ?? []) byPeriod[r.period] = r;
+  const csvRows: (string | number | null)[][] = [
+    ['Metric', ...PERIODS.map(([, label]) => label)],
+    ...METRICS.map((m) => [m.label, ...PERIODS.map(([p]) => byPeriod[p]?.[m.key] ?? null)]),
+  ];
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold tracking-tight">Annual Summary</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold tracking-tight">Annual Summary</h1>
+        {rows && rows.length > 0 && <ExportCsvButton filename="annual-summary.csv" rows={csvRows} />}
+      </div>
       {!rows || rows.length === 0 ? (
         <NotComputed />
       ) : (
         <div className="overflow-x-auto rounded-lg border">
           {(() => {
-            const byPeriod: Record<string, Record<string, number>> = {};
-            for (const r of rows) byPeriod[r.period] = r;
             return (
               <table className="w-full text-sm">
                 <thead className="bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground">
