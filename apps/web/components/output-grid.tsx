@@ -1,3 +1,4 @@
+import { BarChart3 } from 'lucide-react';
 import { monthLabel } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 
@@ -93,8 +94,14 @@ export function OutputGrid({
 /** Shared empty state when a plan hasn't been computed yet. */
 export function NotComputed() {
   return (
-    <div className="rounded-lg border border-dashed bg-muted/30 p-8 text-sm text-muted-foreground">
-      No computed results yet. Go to <b>Home</b> and click <b>Recalculate now</b>, then come back.
+    <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-muted/20 px-6 py-14 text-center">
+      <span className="flex h-11 w-11 items-center justify-center rounded-full bg-muted text-muted-foreground">
+        <BarChart3 className="h-5 w-5" />
+      </span>
+      <p className="text-sm font-medium">No computed results yet</p>
+      <p className="max-w-sm text-sm text-muted-foreground">
+        Set your inputs, then click <b className="text-foreground">Recalculate</b> (top bar) to generate this view.
+      </p>
     </div>
   );
 }

@@ -2,11 +2,13 @@
 
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Download, Upload } from 'lucide-react';
+import Link from 'next/link';
+import { Download, Upload, Boxes } from 'lucide-react';
 import { monthLabel, type Bucket, type HarvestCell } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 import { toCsv, downloadCsv } from '@/lib/csv';
 import { Button } from '@/components/ui/button';
+import { EmptyState } from '@/components/ui/empty-state';
 import { WideGridImport } from '@/components/wide-grid-import';
 import { HarvestEditor } from './harvest-editor';
 import { importHarvest } from './actions';
@@ -71,9 +73,19 @@ export function HarvestClient({
       </p>
 
       {buckets.length === 0 ? (
-        <div className="rounded-lg border p-8 text-center text-sm text-muted-foreground">
-          No buckets found. Seed the buckets first.
-        </div>
+        <EmptyState
+          icon={Boxes}
+          title="No supply buckets yet"
+          description="Harvest capacity is entered per bucket. Create your buckets first, then set their monthly capacity here."
+          action={
+            <Link
+              href="/buckets"
+              className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+            >
+              Go to Buckets
+            </Link>
+          }
+        />
       ) : (
         <div className="overflow-x-auto rounded-lg border">
           <table className="w-max text-xs">

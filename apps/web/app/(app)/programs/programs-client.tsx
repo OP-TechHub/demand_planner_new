@@ -164,10 +164,15 @@ export function ProgramsClient({
         </table>
 
         {rows.length === 0 && (
-          <div className="p-8 text-center text-sm text-muted-foreground">
-            {programs.length === 0
-              ? 'No programs yet. Get started by adding your first program.'
-              : 'No programs match these filters.'}
+          <div className="flex flex-col items-center gap-3 p-10 text-center text-sm text-muted-foreground">
+            <span>
+              {programs.length === 0
+                ? 'No programs yet. Get started by adding your first program.'
+                : 'No programs match these filters.'}
+            </span>
+            {programs.length === 0 && canEdit && (
+              <Button size="sm" onClick={() => setPanel({ mode: 'new' })}><Plus />New Program</Button>
+            )}
           </div>
         )}
       </div>
