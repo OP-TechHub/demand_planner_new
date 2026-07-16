@@ -12,7 +12,7 @@ describe('§6–8 aggregations — V30', () => {
   const rolling = rollingCalc(input, ranked, own);
   const agg = aggregate(input, ranked, own, rolling);
 
-  const exp = (v30 as { expected: { unallocated_wr: Record<string, number[]>; annual: Record<string, number[] | null> } }).expected;
+  const exp = (v30 as { expected: { unallocated_wr: Record<string, number[]>; pipeline_wr: Record<string, number[]>; annual: Record<string, number[] | null> } }).expected;
 
   it('§6 Unallocated WR matches Excel (±0.01)', () => {
     const byKey = new Map(agg.unallocated.map((u) => [`${u.bucketId}:${u.month}`, u.unallocatedWr]));
@@ -26,6 +26,21 @@ describe('§6–8 aggregations — V30', () => {
     }
     // eslint-disable-next-line no-console
     console.log(`Unallocated WR max diff: ${maxDiff.toFixed(4)} (${worst})`);
+    expect(maxDiff).toBeLessThan(0.01);
+  });
+
+  it('§8.2 Pipeline WR matches Excel (±0.01)', () => {
+    const byKey = new Map(agg.pipeline.map((p) => [`${p.bucketId}:${p.month}`, p.pipelineWr]));
+    let maxDiff = 0, worst = '';
+    for (const [bucket, arr] of Object.entries(exp.pipeline_wr)) {
+      for (let m = 0; m < input.months; m++) {
+        const mine = byKey.get(`${bucket}:${m}`) ?? 0;
+        const d = Math.abs(mine - (arr[m] ?? 0));
+        if (d > maxDiff) { maxDiff = d; worst = `${bucket} M${m + 1}: mine=${mine.toFixed(2)} excel=${(arr[m] ?? 0).toFixed(2)}`; }
+      }
+    }
+    // eslint-disable-next-line no-console
+    console.log(`Pipeline WR max diff: ${maxDiff.toFixed(4)} (${worst})`);
     expect(maxDiff).toBeLessThan(0.01);
   });
 

@@ -136,6 +136,17 @@ for (let R = 4; R < 40; R++) {
   expectedUnallocatedWr[nm] = Array.from({ length: MONTHS }, (_, m) => num(cell(UW, R, m + 1)));
 }
 
+// --- Pipeline WR tab (bucket rows, cols 1..60) — parity reference ---
+const PW = sheet('Pipeline');
+const expectedPipelineWr = {};
+for (let R = 4; R < 40; R++) {
+  const name = cell(PW, R, 0);
+  if (!name || !String(name).trim()) break;
+  const nm = String(name).trim();
+  if (nm.toLowerCase() === 'bucket') continue;
+  expectedPipelineWr[nm] = Array.from({ length: MONTHS }, (_, m) => num(cell(PW, R, m + 1)));
+}
+
 // --- Annual Summary volume rows (cols 1..6 = FY1..FY5, total_60mo) ---
 const AS = sheet('Annual Summary');
 const asRow = (label) => {
@@ -160,7 +171,7 @@ console.log('unallocated WR buckets:', Object.keys(expectedUnallocatedWr).length
   '| annual demand total:', expectedAnnual.demandFp && expectedAnnual.demandFp[5]);
 
 mkdirSync('packages/engine/fixtures', { recursive: true });
-const out = { source: WB, months: MONTHS, buckets, programs, harvest, expected: { unallocated_wr: expectedUnallocatedWr, annual: expectedAnnual } };
+const out = { source: WB, months: MONTHS, buckets, programs, harvest, expected: { unallocated_wr: expectedUnallocatedWr, pipeline_wr: expectedPipelineWr, annual: expectedAnnual } };
 writeFileSync('packages/engine/fixtures/v30.json', JSON.stringify(out, null, 2));
 
 console.log('buckets   :', buckets.length, buckets.map((b) => b.name).join(', '));

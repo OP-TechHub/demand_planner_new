@@ -139,6 +139,9 @@ export async function recompute(planId: string): Promise<RecomputeResult> {
     plan_capacity_wr: u.capacity, own_consumption_wr: u.ownConsumption,
     borrowings_into_wr: u.borrowingsInto, unallocated_wr: u.unallocatedWr,
   }));
+  const pipelineRows = aggregate.pipeline.map((p) => ({
+    plan_id: planId, bucket_id: p.bucketId, month_index: p.month + 1, pipeline_wr: p.pipelineWr,
+  }));
   const summaryRows = aggregate.planSummary.map((s) => ({
     plan_id: planId, period: s.period, demand_fp: s.demandFp, allocated_fp: s.allocatedFp,
     unallocated_fp: s.unallocatedFp, allocated_wr: s.allocatedWr, unallocated_wr: s.unallocatedWr,
@@ -155,7 +158,7 @@ export async function recompute(planId: string): Promise<RecomputeResult> {
   }
   const inserts: [string, unknown[]][] = [
     ['plan_rank', planRankRows], ['allocations', allocationRows], ['rolling_results', rollingRows],
-    ['unallocated_wr', unallocatedRows], ['plan_summary', summaryRows],
+    ['unallocated_wr', unallocatedRows], ['pipeline_wr', pipelineRows], ['plan_summary', summaryRows],
   ];
   for (const [t, rows] of inserts) {
     if (!rows.length) continue;

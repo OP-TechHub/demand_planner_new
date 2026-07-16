@@ -29,6 +29,7 @@ const SECTIONS: Section[] = [
       { label: 'Annual Summary', href: '/annual-summary' },
       { label: 'Program Fulfilment', href: '/fulfilment' },
       { label: 'Unallocated WR', href: '/unallocated' },
+      { label: 'Pipeline WR', href: '/pipeline' },
       { label: '60-Month Summary', href: '/sixty-month' },
       { label: 'Revenue & Cost', href: '/revenue-cost' },
     ],

@@ -5,11 +5,11 @@
 // Physical rows (volumes, unallocated) are exact vs Excel; the money rows use
 // flat price/cost (time-varying deferred) so they can differ for the handful of
 // programs that carry time-varying overrides.
-import type { EngineInput, EngineProgram } from './types';
+import type { EngineInput, EngineProgram, PathKey } from './types';
 import { pathCostMargin } from './derived';
 import type { RankedProgram } from './rank';
 import type { OwnMonthResult } from './allocate';
-import type { RollingResult } from './rolling';
+import type { RollingResult, BorrowChannels } from './rolling';
 
 export interface UnallocatedCell {
   bucketId: string;
@@ -50,10 +50,13 @@ export interface PlanSummaryRow {
   marginGap: number;
 }
 
+export interface PipelineCell { bucketId: string; month: number; pipelineWr: number }
+
 export interface AggregateResult {
   unallocated: UnallocatedCell[];
   fulfilment: FulfilmentCell[];
   planSummary: PlanSummaryRow[];
+  pipeline: PipelineCell[];
 }
 
 const PERIODS: { period: Period; start: number; end: number }[] = [
@@ -166,5 +169,37 @@ export function aggregate(
     };
   });
 
-  return { unallocated, fulfilment, planSummary };
+  // --- §8.2 Pipeline WR: WR consumed BY pipeline programs, attributed to the
+  //     SOURCE (bucket, month). Own-month consumption sources at the same month;
+  //     each borrow channel sources at (path bucket, target month - offset). ---
+  const isPipeline = (id: string) => programs.get(id)?.status === 'pipeline';
+  const pathBucket = (p: EngineProgram, path: PathKey) =>
+    path === 'primary' ? p.primaryBucket : path === 'secondary' ? p.secondaryBucket : p.tertiaryBucket;
+  const pipeByBM: Record<string, number[]> = {};
+  for (const b of buckets) pipeByBM[b.id] = new Array<number>(months).fill(0);
+  const addPipe = (bucket: string | null, month: number, wr: number) => {
+    if (!bucket || month < 0 || month >= months) return;
+    const arr = pipeByBM[bucket] ?? (pipeByBM[bucket] = new Array<number>(months).fill(0));
+    arr[month] = (arr[month] ?? 0) + wr;
+  };
+  for (const a of own.allocations) {
+    if (!isPipeline(a.programId)) continue;
+    addPipe(pathBucket(programs.get(a.programId)!, a.path), a.month, a.allocatedWr);
+  }
+  const CHANNELS: [keyof BorrowChannels, PathKey, number][] = [
+    ['m1_prim', 'primary', 1], ['m1_alt', 'secondary', 1], ['m1_tert', 'tertiary', 1],
+    ['m2_prim', 'primary', 2], ['m2_alt', 'secondary', 2], ['m2_tert', 'tertiary', 2],
+  ];
+  for (const c of rolling.cells) {
+    if (!isPipeline(c.programId)) continue;
+    const p = programs.get(c.programId)!;
+    for (const [field, path, offset] of CHANNELS) {
+      const wr = c.borrow[field];
+      if (wr > 0) addPipe(pathBucket(p, path), c.month - offset, wr);
+    }
+  }
+  const pipeline: PipelineCell[] = [];
+  for (const b of buckets) for (let m = 0; m < months; m++) pipeline.push({ bucketId: b.id, month: m, pipelineWr: pipeByBM[b.id]?.[m] ?? 0 });
+
+  return { unallocated, fulfilment, planSummary, pipeline };
 }
