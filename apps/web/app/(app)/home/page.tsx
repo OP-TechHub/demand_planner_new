@@ -1,7 +1,10 @@
+import { Package, Target, DollarSign, TrendingUp, AlertTriangle, Activity, CalendarRange, type LucideIcon } from 'lucide-react';
 import { createClient } from '@/lib/supabase/server';
 import { monthLabel } from '@oceanpick/shared';
+import { cn } from '@/lib/utils';
 import { fetchAllByPlan } from '@/lib/fetch-all';
 import { MonthlyLineChart } from '@/components/charts/monthly-line-chart';
+import { Card } from '@/components/ui/card';
 import { RecalculateButton } from '../recalculate-button';
 
 function kg(n: number) {
@@ -76,33 +79,33 @@ export default async function HomePage() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6">
-      <div className="flex items-start justify-between">
+    <div className="mx-auto max-w-5xl space-y-6">
+      <div className="flex items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Home</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            {lastComputed ? `Plan last computed ${lastComputed}.` : 'Plan has not been computed yet.'}
+            {lastComputed ? `Last computed ${lastComputed}.` : 'Plan has not been computed yet.'}
           </p>
         </div>
         {plan && <RecalculateButton planId={plan.id} />}
       </div>
 
       {summary ? (
-        <div className="grid gap-4 sm:grid-cols-4">
-          <Stat label="Total Demand FP" value={`${kg(summary.demand_fp)} kg`} sub="60 months" />
-          <Stat label="Fulfilled" value={`${(fulfilled * 100).toFixed(0)}%`} sub={`${kg(summary.allocated_fp)} kg FP`} />
-          <Stat label="Revenue" value={usd(summary.revenue)} sub="allocated" />
-          <Stat label="Margin" value={usd(summary.margin)} sub={`GP ${(summary.gp_pct * 100).toFixed(1)}%`} />
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Stat icon={Package} tone="primary" label="Total Demand" value={`${kg(summary.demand_fp)} kg`} sub="60 months, FP" />
+          <Stat icon={Target} tone="accent" label="Fulfilled" value={`${(fulfilled * 100).toFixed(0)}%`} sub={`${kg(summary.allocated_fp)} kg FP`} />
+          <Stat icon={DollarSign} tone="success" label="Revenue" value={usd(summary.revenue)} sub="allocated" />
+          <Stat icon={TrendingUp} tone="primary" label="Margin" value={usd(summary.margin)} sub={`GP ${(summary.gp_pct * 100).toFixed(1)}%`} />
         </div>
       ) : (
-        <div className="rounded-lg border border-dashed bg-muted/30 p-5 text-sm text-muted-foreground">
-          No computed results yet. Add programs, demand, and harvest capacity, then <b>Recalculate now</b> to see
-          fulfilment, revenue, and margin.
-        </div>
+        <Card className="border-dashed bg-muted/30 p-6 text-sm text-muted-foreground">
+          No computed results yet. Add programs, demand, and harvest capacity, then{' '}
+          <b className="text-foreground">Recalculate</b> to see fulfilment, revenue, and margin.
+        </Card>
       )}
 
       {chartData.length > 0 && (
-        <div className="rounded-lg border bg-card p-5">
+        <Card className="p-5">
           <h2 className="mb-3 text-sm font-semibold">Monthly demand vs. fulfilled (kg FP)</h2>
           <MonthlyLineChart
             data={chartData}
@@ -112,49 +115,60 @@ export default async function HomePage() {
             ]}
             format="kg"
           />
-        </div>
+        </Card>
       )}
 
       {plan && (
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="rounded-lg border bg-card p-5">
-            <h2 className="mb-2 text-sm font-semibold">Recent activity</h2>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Card className="p-5">
+            <div className="mb-3 flex items-center gap-2">
+              <Activity className="h-4 w-4 text-muted-foreground" />
+              <h2 className="text-sm font-semibold">Recent activity</h2>
+            </div>
             {recent.length === 0 ? (
               <p className="text-sm text-muted-foreground">No recent activity recorded.</p>
             ) : (
-              <ul className="space-y-1 text-sm">
+              <ul className="space-y-2 text-sm">
                 {recent.map((r, i) => (
-                  <li key={i} className="flex justify-between gap-2">
-                    <span className="truncate"><span className="font-medium">{r.who}</span> {r.text}</span>
+                  <li key={i} className="flex items-center justify-between gap-2">
+                    <span className="truncate"><span className="font-medium">{r.who}</span>{' '}
+                      <span className="text-muted-foreground">{r.text}</span></span>
                     <span className="shrink-0 text-xs text-muted-foreground">{r.when}</span>
                   </li>
                 ))}
               </ul>
             )}
-          </div>
-          <div className="rounded-lg border bg-card p-5">
-            <h2 className="mb-2 text-sm font-semibold">Alerts</h2>
-            <ul className="space-y-1 text-sm">
+          </Card>
+          <Card className="p-5">
+            <div className="mb-3 flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-muted-foreground" />
+              <h2 className="text-sm font-semibold">Alerts</h2>
+            </div>
+            <ul className="space-y-1.5 text-sm">
               {alerts.map((a, i) => (
-                <li key={i} className={a.level === 'warn' ? 'text-amber-700' : 'text-muted-foreground'}>
-                  {a.level === 'warn' ? '⚠ ' : '• '}{a.text}
+                <li key={i} className="flex items-start gap-2">
+                  <span className={cn('mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full', a.level === 'warn' ? 'bg-warning' : 'bg-muted-foreground/40')} />
+                  <span className={a.level === 'warn' ? 'text-warning' : 'text-muted-foreground'}>{a.text}</span>
                 </li>
               ))}
             </ul>
-          </div>
+          </Card>
         </div>
       )}
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <Stat label="Master plan" value={plan ? plan.name : 'Not seeded'} />
-        <Stat label="Size buckets" value={String(bucketCount ?? 0)} />
-        <Stat label="Team members" value={String(userCount ?? 0)} />
+        <MiniStat label="Master plan" value={plan ? plan.name : 'Not seeded'} />
+        <MiniStat label="Size buckets" value={String(bucketCount ?? 0)} />
+        <MiniStat label="Team members" value={String(userCount ?? 0)} />
       </div>
 
       {plan && (
-        <div className="rounded-lg border bg-card p-5">
-          <h2 className="text-sm font-semibold">Plan horizon</h2>
-          <p className="mt-2 text-sm text-muted-foreground">
+        <Card className="p-5">
+          <div className="mb-2 flex items-center gap-2">
+            <CalendarRange className="h-4 w-4 text-muted-foreground" />
+            <h2 className="text-sm font-semibold">Plan horizon</h2>
+          </div>
+          <p className="text-sm text-muted-foreground">
             M1 = <span className="font-medium text-foreground">{monthLabel(plan.plan_start_date, 1)}</span>
             {' · '}M{plan.horizon_months} ={' '}
             <span className="font-medium text-foreground">{monthLabel(plan.plan_start_date, plan.horizon_months)}</span>
@@ -165,25 +179,56 @@ export default async function HomePage() {
             <Row k="Scope" v={plan.settings_scope} />
             <Row k="Lookback" v={`${plan.settings_lookback_months} months`} />
           </dl>
-        </div>
+        </Card>
       )}
     </div>
   );
 }
 
-function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
+function Stat({
+  icon: Icon,
+  tone,
+  label,
+  value,
+  sub,
+}: {
+  icon: LucideIcon;
+  tone: 'primary' | 'accent' | 'success';
+  label: string;
+  value: string;
+  sub?: string;
+}) {
+  const tones = {
+    primary: 'bg-primary/10 text-primary',
+    accent: 'bg-accent/10 text-accent',
+    success: 'bg-success/12 text-success',
+  };
   return (
-    <div className="rounded-lg border bg-card p-5">
+    <Card className="p-5">
+      <div className="flex items-center justify-between">
+        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</div>
+        <span className={cn('flex h-8 w-8 items-center justify-center rounded-md', tones[tone])}>
+          <Icon className="h-4 w-4" />
+        </span>
+      </div>
+      <div className="mt-2 text-2xl font-semibold tracking-tight">{value}</div>
+      {sub && <div className="mt-0.5 text-xs text-muted-foreground">{sub}</div>}
+    </Card>
+  );
+}
+
+function MiniStat({ label, value }: { label: string; value: string }) {
+  return (
+    <Card className="p-5">
       <div className="text-xs uppercase tracking-wide text-muted-foreground">{label}</div>
       <div className="mt-1 text-lg font-semibold">{value}</div>
-      {sub && <div className="text-xs text-muted-foreground">{sub}</div>}
-    </div>
+    </Card>
   );
 }
 
 function Row({ k, v }: { k: string; v: string }) {
   return (
-    <div className="flex justify-between border-b pb-1">
+    <div className="flex justify-between border-b border-border pb-1">
       <dt className="text-muted-foreground">{k}</dt>
       <dd className="font-medium">{v.replace(/_/g, ' ')}</dd>
     </div>
