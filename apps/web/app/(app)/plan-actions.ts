@@ -3,6 +3,7 @@
 import { cookies } from 'next/headers';
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { fetchAllByPlan } from '@/lib/fetch-all';
 import { ACTIVE_PLAN_COOKIE } from '@/lib/plan';
 
@@ -119,19 +120,26 @@ export async function deleteScenario(id: string): Promise<{ error: string | null
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: 'Your session expired. Sign in again.' };
 
-  // Confirm the caller can actually see this scenario under RLS first. Without
-  // this, a session that isn't carrying auth (auth.uid() → null) would make the
-  // UPDATE match zero rows and report nothing — the scenario silently "won't delete".
+  // Authorize in app code (mirrors the plans_delete policy: owner or org admin).
+  const { data: me } = await supabase.from('users').select('role, org_id').eq('id', user.id).maybeSingle();
   const { data: target } = await supabase
     .from('plans')
-    .select('id')
+    .select('id, owner_user_id, org_id')
     .eq('id', id)
     .eq('type', 'scenario')
     .is('deleted_at', null)
     .maybeSingle();
-  if (!target) return { error: 'Scenario not found, or you don’t have permission to delete it.' };
+  if (!target) return { error: 'Scenario not found, or already deleted.' };
 
-  const { error } = await supabase
+  const isOwner = target.owner_user_id === user.id;
+  const isOrgAdmin = me?.role === 'admin' && me?.org_id === target.org_id;
+  if (!isOwner && !isOrgAdmin) return { error: 'You don’t have permission to delete this scenario.' };
+
+  // Soft-delete with the service-role client. The live plans UPDATE policy's
+  // WITH CHECK rejects setting deleted_at under the user's own RLS, so we
+  // authorize above and write privileged — same pattern as recompute.
+  const svc = createServiceClient();
+  const { error } = await svc
     .from('plans')
     .update({ deleted_at: new Date().toISOString(), updated_by: user.id })
     .eq('id', id)
