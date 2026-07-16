@@ -7,6 +7,8 @@ import { getActivePlan, getSelectablePlans } from '@/lib/plan';
 import { PlanSelector } from './plan-selector';
 import { ScenarioBanner } from './scenario-banner';
 import { ThemeToggle } from '@/components/theme-toggle';
+import { Toaster } from '@/components/ui/toast';
+import { ConfirmHost } from '@/components/ui/confirm';
 import { logout } from '../login/actions';
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -85,6 +87,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         )}
         <main className="flex-1 p-6">{children}</main>
       </div>
+      <Toaster />
+      <ConfirmHost />
     </div>
   );
 }

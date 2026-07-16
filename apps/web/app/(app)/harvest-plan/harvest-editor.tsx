@@ -3,6 +3,7 @@
 import { useMemo, useState, useTransition } from 'react';
 import { monthLabel, type Bucket, type HarvestCell } from '@oceanpick/shared';
 import { MonthlyLineChart } from '@/components/charts/monthly-line-chart';
+import { toast } from '@/components/ui/toast';
 import { saveHarvestCapacity } from './actions';
 
 type Cells = Record<number, string>; // month -> capacity string ('' = 0/none)
@@ -63,7 +64,7 @@ export function HarvestEditor({
     startTransition(async () => {
       const res = await saveHarvestCapacity(planId, bucket.id, upserts, deletes);
       if (res.error) setError(res.error);
-      else onSaved();
+      else { toast.success('Harvest updated'); onSaved(); }
     });
   }
 

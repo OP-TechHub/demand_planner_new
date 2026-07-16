@@ -7,6 +7,8 @@ import { PROGRAM_STATUS_META, type Bucket, type Program, type ProgramStatus } fr
 import { cn } from '@/lib/utils';
 import { toCsv, downloadCsv } from '@/lib/csv';
 import { Button } from '@/components/ui/button';
+import { toast } from '@/components/ui/toast';
+import { confirmDialog } from '@/components/ui/confirm';
 import { archiveProgram } from './actions';
 import { ProgramPanel } from './program-panel';
 import { ImportPrograms, PROGRAM_CSV_HEADER } from './import-programs';
@@ -53,12 +55,20 @@ export function ProgramsClient({
     });
   }, [programs, status, customer, search]);
 
-  function onArchive(p: Program) {
-    if (!confirm(`Archive "${p.item_description || p.item_code}"? It can be restored from the database.`)) return;
+  async function onArchive(p: Program) {
+    const label = p.item_description || p.item_code;
+    const ok = await confirmDialog({
+      title: `Archive “${label}”?`,
+      description: 'It will be removed from the plan. It can be restored from the database.',
+      confirmLabel: 'Archive',
+      destructive: true,
+    });
+    if (!ok) return;
     const fd = new FormData();
     fd.set('id', p.id);
     startTransition(async () => {
       await archiveProgram(fd);
+      toast.success(`Archived “${label}”`);
       router.refresh();
     });
   }
