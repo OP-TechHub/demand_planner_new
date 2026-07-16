@@ -146,7 +146,7 @@ export function DemandEditor({
           </table>
         </div>
 
-        {error && <p role="alert" className="mx-5 mb-2 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+        {error && <p role="alert" className="mx-5 mb-2 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
 
         <div className="flex justify-end gap-2 border-t px-5 py-3">
           <button onClick={onClose} className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted">Cancel</button>

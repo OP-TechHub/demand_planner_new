@@ -28,12 +28,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   if (!profile) {
     return (
       <main className="flex min-h-screen items-center justify-center px-4">
-        <div className="max-w-md rounded-lg border border-red-200 bg-red-50 p-6 text-sm">
-          <p className="font-semibold text-red-800">Account not fully provisioned</p>
-          <p className="mt-2 text-red-700">
+        <div className="max-w-md rounded-lg border border-destructive/30 bg-destructive/10 p-6 text-sm">
+          <p className="font-semibold text-destructive">Account not fully provisioned</p>
+          <p className="mt-2 text-destructive">
             Your login exists but your profile row is missing. This usually means the seed
             never ran, so no organisation matches your email domain. Ask an admin to run
-            <code className="mx-1 rounded bg-red-100 px-1">supabase/seed.sql</code>.
+            <code className="mx-1 rounded bg-destructive/15 px-1">supabase/seed.sql</code>.
           </p>
         </div>
       </main>

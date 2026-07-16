@@ -136,7 +136,7 @@ function BucketModal({
           <input name="sort_order" type="number" step="1" defaultValue={bucket?.sort_order ?? defaultOrder} className={inputCls} />
         </label>
 
-        {state.error && <p role="alert" className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{state.error}</p>}
+        {state.error && <p role="alert" className="mt-3 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{state.error}</p>}
 
         <div className="mt-4 flex justify-end gap-2">
           <button type="button" onClick={onClose} className="rounded-md border px-3 py-1.5 hover:bg-muted">Cancel</button>

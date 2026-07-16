@@ -37,7 +37,7 @@ export function UsersClient({ users, meId }: { users: AdminUser[]; meId: string 
       <p className="text-xs text-muted-foreground">
         Anyone can self-register (first user in became admin; the rest default to viewer). Set roles and deactivate accounts here.
       </p>
-      {error && <p role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+      {error && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
 
       <div className="overflow-x-auto rounded-lg border">
         <table className="w-full text-sm">

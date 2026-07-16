@@ -2,6 +2,11 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
+import { Plus } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Dialog } from '@/components/ui/dialog';
+import { Input, Textarea } from '@/components/ui/input';
 import { createScenario, deleteScenario, renameScenario, setActivePlan } from '../plan-actions';
 
 interface ScenarioRow { id: string; name: string; description: string; forked_at: string | null }
@@ -47,13 +52,10 @@ export function ScenariosClient({
     <div className="mx-auto max-w-3xl space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">My Scenarios</h1>
-        <button
-          onClick={() => { setError(null); setCreating(true); }}
-          disabled={!hasMaster || scenarios.length >= 20}
-          className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-50"
-        >
-          + New Scenario
-        </button>
+        <Button onClick={() => { setError(null); setCreating(true); }} disabled={!hasMaster || scenarios.length >= 20}>
+          <Plus />
+          New Scenario
+        </Button>
       </div>
 
       <p className="text-xs text-muted-foreground">
@@ -61,7 +63,7 @@ export function ScenariosClient({
       </p>
 
       {error && !creating && (
-        <p role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
+        <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>
       )}
 
       <div className="overflow-x-auto rounded-lg border">
@@ -79,7 +81,7 @@ export function ScenariosClient({
                 <td className="px-3 py-2">
                   <div className="font-medium">
                     {s.name}
-                    {s.id === activeId && <span className="ml-2 rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-800">active</span>}
+                    {s.id === activeId && <Badge variant="success" className="ml-2">active</Badge>}
                   </div>
                   {s.description && <div className="text-xs text-muted-foreground">{s.description}</div>}
                 </td>
@@ -135,32 +137,32 @@ function CreateModal({
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 p-4" onClick={onClose}>
-      <div className="w-full max-w-sm rounded-lg bg-card p-5 text-sm shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <h2 className="mb-3 text-sm font-semibold">New scenario</h2>
-        <label className="block">
-          <span className="text-xs font-medium text-muted-foreground">Name</span>
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder='e.g. "Q4 uplift +20%"' className={inputCls} autoFocus />
-        </label>
-        <label className="mt-3 block">
-          <span className="text-xs font-medium text-muted-foreground">Description (optional)</span>
-          <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} className={inputCls} />
-        </label>
-        <p className="mt-2 text-xs text-muted-foreground">Forks the current master state (programs, demand, harvest, settings).</p>
-        {error && <p role="alert" className="mt-2 rounded-md bg-red-50 px-3 py-2 text-red-700">{error}</p>}
-        <div className="mt-4 flex justify-end gap-2">
-          <button onClick={onClose} className="rounded-md border px-3 py-1.5 hover:bg-muted">Cancel</button>
-          <button
-            onClick={() => onCreate(name, description)}
-            disabled={pending || !name.trim()}
-            className="rounded-md bg-primary px-3 py-1.5 font-medium text-primary-foreground disabled:opacity-50"
-          >
+    <Dialog
+      open
+      onClose={onClose}
+      title="New scenario"
+      description="Forks the current master state (programs, demand, harvest, settings)."
+      className="max-w-sm"
+      footer={
+        <>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={() => onCreate(name, description)} disabled={pending || !name.trim()}>
             {pending ? 'Forking…' : 'Create'}
-          </button>
-        </div>
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <label className="block space-y-1.5">
+          <span className="text-xs font-medium text-muted-foreground">Name</span>
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder='e.g. "Q4 uplift +20%"' autoFocus />
+        </label>
+        <label className="block space-y-1.5">
+          <span className="text-xs font-medium text-muted-foreground">Description (optional)</span>
+          <Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} />
+        </label>
+        {error && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
       </div>
-    </div>
+    </Dialog>
   );
 }
-
-const inputCls = 'mt-1 w-full rounded-md border px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-primary';

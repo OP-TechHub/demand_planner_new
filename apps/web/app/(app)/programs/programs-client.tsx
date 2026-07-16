@@ -202,9 +202,9 @@ function StatusChip({ status }: { status: ProgramStatus }) {
   const tone = PROGRAM_STATUS_META[status].tone;
   const cls =
     tone === 'active'
-      ? 'bg-green-100 text-green-800'
+      ? 'bg-success/12 text-success'
       : tone === 'pipeline'
-        ? 'bg-blue-100 text-blue-800'
+        ? 'bg-primary/12 text-primary'
         : 'bg-gray-100 text-gray-600';
   return <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium', cls)}>{PROGRAM_STATUS_META[status].label}</span>;
 }

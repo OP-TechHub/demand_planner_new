@@ -78,14 +78,14 @@ export function SettingsForm({ plan, canEdit }: { plan: Plan; canEdit: boolean }
             </label>
           </div>
 
-          {state.error && <p role="alert" className="rounded-md bg-red-50 px-3 py-2 text-red-700">{state.error}</p>}
+          {state.error && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-destructive">{state.error}</p>}
 
           {canEdit && (
             <div className="flex items-center gap-3">
               <button type="submit" disabled={pending} className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50">
                 {pending ? 'Saving…' : 'Save changes'}
               </button>
-              {saved && <span className="text-sm text-green-700">Saved.</span>}
+              {saved && <span className="text-sm text-success">Saved.</span>}
               <span className="text-xs text-muted-foreground">Recompute runs on save once the calc engine ships (Phase 2).</span>
             </div>
           )}

@@ -10,7 +10,7 @@ export default async function AuditPage() {
     return (
       <div className="mx-auto max-w-3xl space-y-4">
         <h1 className="text-2xl font-semibold tracking-tight">Audit Log</h1>
-        <div className="rounded-lg border border-red-200 bg-red-50 p-6 text-sm text-red-800">Admins only.</div>
+        <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-6 text-sm text-destructive">Admins only.</div>
       </div>
     );
   }
