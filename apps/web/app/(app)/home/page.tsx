@@ -26,17 +26,53 @@ export default async function HomePage() {
   const fulfilled = summary && summary.demand_fp > 0 ? summary.allocated_fp / summary.demand_fp : 0;
   const lastComputed = plan?.last_computed_at ? new Date(plan.last_computed_at).toLocaleString() : null;
 
-  // Monthly demand vs fulfilled (FP) for the chart, aggregated from rolling_results.
+  // One rolling_results pass feeds both the chart (monthly) and the alerts (per-program).
   let chartData: { label: string; demand: number; fulfilled: number }[] = [];
-  if (plan && summary) {
-    const rr = await fetchAllByPlan(supabase, 'rolling_results', 'month_index, demand_fp, rolling_fp', plan.id);
-    const dem = new Array<number>(plan.horizon_months).fill(0);
-    const ful = new Array<number>(plan.horizon_months).fill(0);
-    for (const r of rr) {
-      const i = r.month_index - 1;
-      if (i >= 0 && i < plan.horizon_months) { dem[i] += r.demand_fp; ful[i] += r.rolling_fp; }
+  const alerts: { level: 'warn' | 'info'; text: string }[] = [];
+  let recent: { who: string; text: string; when: string }[] = [];
+
+  if (plan) {
+    const months = plan.horizon_months;
+    if (!plan.last_computed_at) alerts.push({ level: 'warn', text: 'Plan hasn’t been computed yet — click Recalculate now.' });
+    else if (Date.now() - new Date(plan.last_computed_at).getTime() > 24 * 3600 * 1000)
+      alerts.push({ level: 'warn', text: 'Computed results are over 24 hours old — Recalculate to refresh.' });
+
+    if (summary) {
+      const rr = await fetchAllByPlan(supabase, 'rolling_results', 'program_id, month_index, demand_fp, rolling_fp', plan.id);
+      const dem = new Array<number>(months).fill(0), ful = new Array<number>(months).fill(0);
+      const pd = new Map<string, number>(), pf = new Map<string, number>();
+      for (const r of rr) {
+        const i = r.month_index - 1;
+        if (i >= 0 && i < months) { dem[i] += r.demand_fp; ful[i] += r.rolling_fp; }
+        pd.set(r.program_id, (pd.get(r.program_id) ?? 0) + r.demand_fp);
+        pf.set(r.program_id, (pf.get(r.program_id) ?? 0) + r.rolling_fp);
+      }
+      chartData = dem.map((d, i) => ({ label: monthLabel(plan.plan_start_date, i + 1), demand: d, fulfilled: ful[i] ?? 0 }));
+      let under = 0;
+      for (const [pid, d] of pd) if (d > 0 && (pf.get(pid) ?? 0) / d < 0.5) under++;
+      if (under) alerts.push({ level: 'warn', text: `${under} program${under > 1 ? 's' : ''} under 50% fulfilled over 60 months.` });
     }
-    chartData = dem.map((d, i) => ({ label: monthLabel(plan.plan_start_date, i + 1), demand: d, fulfilled: ful[i] ?? 0 }));
+
+    const [{ data: progs }, { data: bks }, harv] = await Promise.all([
+      supabase.from('programs').select('id, primary_yield, max_monthly_demand_fp').eq('plan_id', plan.id).is('deleted_at', null),
+      supabase.from('buckets').select('id, name').eq('is_archived', false),
+      fetchAllByPlan(supabase, 'harvest_plan', 'bucket_id, capacity_kg_wr', plan.id),
+    ]);
+    const noYield = (progs ?? []).filter((p) => (p.max_monthly_demand_fp ?? 0) > 0 && (!p.primary_yield || p.primary_yield <= 0)).length;
+    if (noYield) alerts.push({ level: 'warn', text: `${noYield} program${noYield > 1 ? 's have' : ' has'} demand but no primary yield.` });
+    const cap = new Map<string, number>();
+    for (const h of harv) cap.set(h.bucket_id, (cap.get(h.bucket_id) ?? 0) + h.capacity_kg_wr);
+    const zero = (bks ?? []).filter((b) => (cap.get(b.id) ?? 0) === 0);
+    if (zero.length) alerts.push({ level: 'info', text: `${zero.length} bucket${zero.length > 1 ? 's have' : ' has'} zero 60-month capacity (${zero.map((b) => b.name).slice(0, 3).join(', ')}${zero.length > 3 ? '…' : ''}).` });
+
+    if (!alerts.some((a) => a.level === 'warn')) alerts.push({ level: 'info', text: 'No warnings — plan looks healthy.' });
+
+    const [{ data: entries }, { data: users }] = await Promise.all([
+      supabase.from('audit_log').select('user_id, action, entity_type, at').order('at', { ascending: false }).limit(8),
+      supabase.from('users').select('id, full_name, email'),
+    ]);
+    const nameById = new Map((users ?? []).map((u) => [u.id, u.full_name || u.email]));
+    recent = (entries ?? []).map((e) => ({ who: nameById.get(e.user_id) ?? '—', text: `${e.action} ${e.entity_type}`, when: new Date(e.at).toLocaleString() }));
   }
 
   return (
@@ -77,6 +113,36 @@ export default async function HomePage() {
             formatY={(v) => (v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 1e3 ? (v / 1e3).toFixed(0) + 'k' : String(Math.round(v)))}
             formatValue={(v) => Math.round(v).toLocaleString() + ' kg'}
           />
+        </div>
+      )}
+
+      {plan && (
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="rounded-lg border bg-card p-5">
+            <h2 className="mb-2 text-sm font-semibold">Recent activity</h2>
+            {recent.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No recent activity recorded.</p>
+            ) : (
+              <ul className="space-y-1 text-sm">
+                {recent.map((r, i) => (
+                  <li key={i} className="flex justify-between gap-2">
+                    <span className="truncate"><span className="font-medium">{r.who}</span> {r.text}</span>
+                    <span className="shrink-0 text-xs text-muted-foreground">{r.when}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div className="rounded-lg border bg-card p-5">
+            <h2 className="mb-2 text-sm font-semibold">Alerts</h2>
+            <ul className="space-y-1 text-sm">
+              {alerts.map((a, i) => (
+                <li key={i} className={a.level === 'warn' ? 'text-amber-700' : 'text-muted-foreground'}>
+                  {a.level === 'warn' ? '⚠ ' : '• '}{a.text}
+                </li>
+              ))}
+            </ul>
+          </div>
         </div>
       )}
 
