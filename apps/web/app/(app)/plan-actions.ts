@@ -108,7 +108,8 @@ export async function createScenario(name: string, description: string): Promise
  */
 export async function createPlan(input: {
   name: string;
-  planStartDate: string; // 'YYYY-MM-DD' (financial-year start, April 1)
+  planStartDate: string; // 'YYYY-MM-DD' (start month, day always 01)
+  horizonMonths: number; // plan length in months (1–60)
   programIds: string[];
   copyData: boolean;
 }): Promise<ScenarioResult> {
@@ -117,6 +118,10 @@ export async function createPlan(input: {
   if (!user) return { error: 'Your session expired. Sign in again.' };
   if (!input.name?.trim()) return { error: 'Name is required.' };
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.planStartDate ?? '')) return { error: 'Pick a start month.' };
+  const horizon = Math.trunc(input.horizonMonths);
+  if (!Number.isFinite(horizon) || horizon < 1 || horizon > 60) {
+    return { error: 'Plan length must be between 1 and 60 months. Check the end month.' };
+  }
   if (!input.programIds?.length) return { error: 'Select at least one program to include.' };
 
   const { data: master } = await supabase.from('plans').select('*').eq('type', 'master').is('deleted_at', null).maybeSingle();
@@ -125,7 +130,7 @@ export async function createPlan(input: {
   const { data: plan, error: se } = await supabase.from('plans').insert({
     org_id: master.org_id, type: 'scenario', parent_plan_id: master.id,
     name: input.name.trim(), description: '', owner_user_id: user.id, is_locked: false,
-    plan_start_date: input.planStartDate, horizon_months: master.horizon_months,
+    plan_start_date: input.planStartDate, horizon_months: horizon,
     settings_margin_metric: master.settings_margin_metric, settings_allocation_mode: master.settings_allocation_mode,
     settings_scope: master.settings_scope, settings_lookback_months: master.settings_lookback_months,
     forked_at: new Date().toISOString(), created_by: user.id, updated_by: user.id,
@@ -161,7 +166,7 @@ export async function createPlan(input: {
 
     const demand = await fetchAllByPlan(supabase, 'demand_plan', 'program_id, month_index, demand_fp', master.id);
     const demandRows = demand
-      .filter((d: any) => idSet.has(d.program_id))
+      .filter((d: any) => idSet.has(d.program_id) && d.month_index <= horizon)
       .map((d: any) => ({ plan_id: pid, program_id: newIdByCode.get(codeByOldId.get(d.program_id)), month_index: d.month_index, demand_fp: d.demand_fp, created_by: user.id, updated_by: user.id }))
       .filter((d) => d.program_id);
     for (let i = 0; i < demandRows.length; i += 800) {
@@ -170,7 +175,9 @@ export async function createPlan(input: {
     }
 
     const harvest = await fetchAllByPlan(supabase, 'harvest_plan', 'bucket_id, month_index, capacity_kg_wr', master.id);
-    const harvestRows = harvest.map((h: any) => ({ plan_id: pid, bucket_id: h.bucket_id, month_index: h.month_index, capacity_kg_wr: h.capacity_kg_wr, created_by: user.id, updated_by: user.id }));
+    const harvestRows = harvest
+      .filter((h: any) => h.month_index <= horizon)
+      .map((h: any) => ({ plan_id: pid, bucket_id: h.bucket_id, month_index: h.month_index, capacity_kg_wr: h.capacity_kg_wr, created_by: user.id, updated_by: user.id }));
     for (let i = 0; i < harvestRows.length; i += 800) {
       const { error } = await supabase.from('harvest_plan').insert(harvestRows.slice(i, i + 800));
       if (error) return fail(`copying harvest: ${error.message}`);
