@@ -9,6 +9,7 @@ import { ScenarioBanner } from './scenario-banner';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { Toaster } from '@/components/ui/toast';
 import { ConfirmHost } from '@/components/ui/confirm';
+import { RecalculateButton } from './recalculate-button';
 import { logout } from '../login/actions';
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -66,6 +67,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <div className="flex items-center gap-3">
             <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Plan</span>
             {activePlan && <PlanSelector plans={plans} activeId={activePlan.id} />}
+            {activePlan && <RecalculateButton planId={activePlan.id} label="Recalculate" size="sm" variant="outline" />}
           </div>
           <div className="flex items-center gap-3">
             <ThemeToggle />

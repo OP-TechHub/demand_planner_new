@@ -2,6 +2,7 @@ import { Fragment } from 'react';
 import { createClient } from '@/lib/supabase/server';
 import { getActivePlan } from '@/lib/plan';
 import { NotComputed } from '@/components/output-grid';
+import { StalePlanNotice } from '../stale-banner';
 import { ExportCsvButton } from '@/components/export-csv-button';
 import { kg, usd, pct } from '@/lib/format';
 
@@ -40,6 +41,7 @@ export default async function AnnualSummaryPage() {
 
   return (
     <div className="space-y-4">
+      <StalePlanNotice planId={plan.id} lastComputedAt={plan.last_computed_at} />
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">Annual Summary</h1>
         {rows && rows.length > 0 && <ExportCsvButton filename="annual-summary.csv" rows={csvRows} />}

@@ -8,7 +8,17 @@ import { Button } from '@/components/ui/button';
 import { toast } from '@/components/ui/toast';
 import { recompute } from './recompute';
 
-export function RecalculateButton({ planId, label = 'Recalculate now' }: { planId: string; label?: string }) {
+export function RecalculateButton({
+  planId,
+  label = 'Recalculate now',
+  size = 'md',
+  variant = 'default',
+}: {
+  planId: string;
+  label?: string;
+  size?: 'sm' | 'md';
+  variant?: 'default' | 'outline';
+}) {
   const router = useRouter();
   const [pending, start] = useTransition();
 
@@ -24,7 +34,7 @@ export function RecalculateButton({ planId, label = 'Recalculate now' }: { planI
   }
 
   return (
-    <Button onClick={onClick} disabled={pending}>
+    <Button onClick={onClick} disabled={pending} size={size} variant={variant}>
       <RefreshCw className={cn(pending && 'animate-spin')} />
       {pending ? 'Recalculating…' : label}
     </Button>

@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { getActivePlan } from '@/lib/plan';
 import { NotComputed } from '@/components/output-grid';
+import { StalePlanNotice } from '../stale-banner';
 import { fetchAllByPlan } from '@/lib/fetch-all';
 import { programOrder } from '@/lib/outputs';
 import { OptimizerClient, type OptProgram, type OptBucket } from './optimizer-client';
@@ -48,12 +49,15 @@ export default async function OptimizerPage() {
   }
 
   return (
-    <OptimizerClient
-      months={months}
-      planStartDate={plan.plan_start_date}
-      scope={plan.settings_scope}
-      programs={programs}
-      buckets={[...bkt.values()]}
-    />
+    <div className="space-y-4">
+      <StalePlanNotice planId={plan.id} lastComputedAt={plan.last_computed_at} />
+      <OptimizerClient
+        months={months}
+        planStartDate={plan.plan_start_date}
+        scope={plan.settings_scope}
+        programs={programs}
+        buckets={[...bkt.values()]}
+      />
+    </div>
   );
 }

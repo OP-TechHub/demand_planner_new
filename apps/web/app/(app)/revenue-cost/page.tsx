@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { getActivePlan } from '@/lib/plan';
 import { NotComputed } from '@/components/output-grid';
+import { StalePlanNotice } from '../stale-banner';
 import { MetricGrid, type Metric } from '@/components/metric-grid';
 import { fetchAllByPlan } from '@/lib/fetch-all';
 import { programOrder, gridRowsFor } from '@/lib/outputs';
@@ -22,6 +23,7 @@ export default async function RevenueCostPage() {
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-semibold tracking-tight">Revenue &amp; Cost</h1>
+      <StalePlanNotice planId={plan.id} lastComputedAt={plan.last_computed_at} />
       <p className="text-xs text-muted-foreground">Uses flat price/cost (time-varying overrides deferred), so dollar figures differ slightly for a few programs. Volumes are exact.</p>
       {order.length === 0 ? <NotComputed /> : (
         <MetricGrid planStartDate={plan.plan_start_date} horizon={m} metrics={metrics} filenameBase="revenue-cost" />
