@@ -17,7 +17,7 @@ export default async function UsersPage() {
 
   const { data: users } = await supabase
     .from('users')
-    .select('id, email, full_name, role, is_active, last_login_at')
+    .select('id, email, full_name, role, is_active, last_login_at, edit_sections')
     .order('created_at', { ascending: true });
 
   return <UsersClient users={(users ?? []) as AdminUser[]} meId={user!.id} />;

@@ -7,6 +7,13 @@ import type { WideRow, WideImportResult } from '@/components/wide-grid-import';
 
 export type SaveResult = { error: string | null };
 
+/** Map a raw RLS rejection to a clear message about section access. */
+function permError(message: string): string {
+  return /row-level security|violates row-level/i.test(message)
+    ? 'You don’t have permission to edit the demand plan. Ask an admin for access.'
+    : message;
+}
+
 /**
  * Persist per-month demand overrides for one program.
  *
@@ -56,7 +63,7 @@ export async function saveDemandOverrides(
     const { error } = await supabase
       .from('demand_plan')
       .upsert(rows, { onConflict: 'program_id,month_index' });
-    if (error) return { error: error.message };
+    if (error) return { error: permError(error.message) };
   }
 
   if (deletes.length) {
@@ -65,7 +72,7 @@ export async function saveDemandOverrides(
       .delete()
       .eq('program_id', programId)
       .in('month_index', deletes);
-    if (error) return { error: error.message };
+    if (error) return { error: permError(error.message) };
   }
 
   const edits: { m: number; old: number; new: number }[] = [];
@@ -118,7 +125,7 @@ export async function importDemand(planId: string, rows: WideRow[]): Promise<Wid
 
   if (upserts.length) {
     const { error } = await supabase.from('demand_plan').upsert(upserts, { onConflict: 'program_id,month_index' });
-    if (error) return { error: error.message, count: 0, unknown: [...unknown] };
+    if (error) return { error: permError(error.message), count: 0, unknown: [...unknown] };
     await logAudit(supabase, { planId, entityType: 'demand_plan', entityId: planId, action: 'update', changes: { imported_cells: upserts.length } });
   }
   revalidatePath('/demand-plan');

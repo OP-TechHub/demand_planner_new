@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { getActivePlan } from '@/lib/plan';
-import { can, type DemandCell, type Program, type UserRole } from '@oceanpick/shared';
+import { canEditSection, type DemandCell, type Program, type UserRole } from '@oceanpick/shared';
 import { DemandClient } from './demand-client';
 
 export default async function DemandPlanPage() {
@@ -21,10 +21,10 @@ export default async function DemandPlanPage() {
   const [{ data: programs }, { data: rows }, { data: me }] = await Promise.all([
     supabase.from('programs').select('*').eq('plan_id', plan.id).is('deleted_at', null).order('sort_order'),
     supabase.from('demand_plan').select('*').eq('plan_id', plan.id),
-    supabase.from('users').select('role').eq('id', user!.id).maybeSingle(),
+    supabase.from('users').select('role, edit_sections').eq('id', user!.id).maybeSingle(),
   ]);
 
-  const canEdit = can.editMaster((me?.role ?? 'viewer') as UserRole);
+  const canEdit = canEditSection((me?.role ?? 'viewer') as UserRole, me?.edit_sections, 'demand_plan');
 
   return (
     <DemandClient

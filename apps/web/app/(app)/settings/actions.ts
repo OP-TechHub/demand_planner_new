@@ -33,17 +33,31 @@ export async function updateSettings(_prev: SettingsFormState, fd: FormData): Pr
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: 'Your session expired. Sign in again.', ok: false };
 
-  const { error } = await supabase
-    .from('plans')
-    .update({
-      settings_margin_metric: margin,
-      settings_allocation_mode: alloc,
-      settings_scope: scope,
-      settings_lookback_months: lookback,
-      plan_start_date: `${startMonth}-01`,
-      updated_by: user.id,
-    })
-    .eq('id', planId);
+  const update: Record<string, unknown> = {
+    settings_margin_metric: margin,
+    settings_allocation_mode: alloc,
+    settings_scope: scope,
+    settings_lookback_months: lookback,
+    plan_start_date: `${startMonth}-01`,
+    updated_by: user.id,
+  };
+
+  // Only present on the master plan's settings form.
+  const yearsRaw = fd.get('settings_plan_years_ahead');
+  if (yearsRaw !== null && String(yearsRaw).trim() !== '') {
+    const years = Number(yearsRaw);
+    if (!Number.isInteger(years) || years < 1 || years > 30) {
+      return { error: 'Years ahead must be a whole number between 1 and 30.', ok: false };
+    }
+    update.settings_plan_years_ahead = years;
+  }
+
+  let { error } = await supabase.from('plans').update(update).eq('id', planId);
+  // If the years-ahead column hasn't been migrated yet, save everything else.
+  if (error && /settings_plan_years_ahead/i.test(error.message)) {
+    delete update.settings_plan_years_ahead;
+    ({ error } = await supabase.from('plans').update(update).eq('id', planId));
+  }
   if (error) return { error: error.message, ok: false };
 
   revalidatePath('/settings');

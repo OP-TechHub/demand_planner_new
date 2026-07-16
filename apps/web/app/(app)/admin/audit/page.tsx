@@ -31,7 +31,7 @@ function relativeTime(iso: string): string {
 }
 
 const FIELD_LABEL: Record<string, string> = {
-  is_active: 'Status', role: 'Role', status: 'Status',
+  is_active: 'Status', role: 'Role', status: 'Status', edit_sections: 'Edit access',
   item_code: 'Item code', item_description: 'Description', customer: 'Customer',
   max_monthly_demand_fp: 'Max monthly demand',
   primary_yield: 'Primary yield', secondary_yield: 'Secondary yield', tertiary_yield: 'Tertiary yield',

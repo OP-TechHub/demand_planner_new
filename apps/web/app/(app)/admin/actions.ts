@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
-import type { UserRole } from '@oceanpick/shared';
+import { EDITABLE_SECTIONS, type UserRole } from '@oceanpick/shared';
 
 export type AdminResult = { error: string | null };
 
@@ -42,6 +42,25 @@ export async function updateUserRole(userId: string, role: string): Promise<Admi
   const { error: e } = await supabase.from('users').update({ role }).eq('id', userId);
   if (e) return { error: e.message };
   if (me && before && before.role !== role) await writeAudit(supabase, me, userId, { role: { old: before.role, new: role } });
+  revalidatePath('/admin/users');
+  return { error: null };
+}
+
+/** Grant/revoke the input sections a user may edit. Admin-only. */
+export async function setUserSections(userId: string, sections: string[]): Promise<AdminResult> {
+  const { supabase, me, error } = await requireAdmin();
+  if (error) return { error };
+  const allowed = EDITABLE_SECTIONS as readonly string[];
+  const valid = Array.from(new Set(sections.filter((s) => allowed.includes(s))));
+  const { data: before } = await supabase.from('users').select('edit_sections').eq('id', userId).maybeSingle();
+  const { error: e } = await supabase.from('users').update({ edit_sections: valid }).eq('id', userId);
+  if (e) return { error: e.message };
+  const oldList = (before?.edit_sections ?? []) as string[];
+  if (me && oldList.slice().sort().join(',') !== valid.slice().sort().join(',')) {
+    await writeAudit(supabase, me, userId, {
+      edit_sections: { old: oldList.join(', ') || 'none', new: valid.join(', ') || 'none' },
+    });
+  }
   revalidatePath('/admin/users');
   return { error: null };
 }

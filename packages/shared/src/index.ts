@@ -45,6 +45,7 @@ export interface AppUser {
   role: UserRole;
   is_active: boolean;
   last_login_at: string | null;
+  edit_sections: string[];
 }
 
 export interface Plan {
@@ -62,6 +63,7 @@ export interface Plan {
   settings_allocation_mode: AllocationMode;
   settings_scope: PlanScope;
   settings_lookback_months: number;
+  settings_plan_years_ahead: number;
   last_computed_at: string | null;
   forked_at: string | null;
 }
@@ -142,6 +144,30 @@ export const can = {
   editMaster: (r: UserRole) => r === 'admin' || r === 'planner',
   createScenario: (r: UserRole) => r !== 'viewer',
 } as const;
+
+/**
+ * Sections whose edit access can be granted per user. Admins always have all;
+ * everyone else edits only the sections they've been granted (empty = view-only).
+ */
+export const EDITABLE_SECTIONS = ['programs', 'demand_plan', 'harvest_plan', 'buckets'] as const;
+export type EditableSection = (typeof EDITABLE_SECTIONS)[number];
+
+export const SECTION_LABEL: Record<EditableSection, string> = {
+  programs: 'Programs',
+  demand_plan: 'Demand Plan',
+  harvest_plan: 'Harvest Plan',
+  buckets: 'Buckets',
+};
+
+/** Can this user edit a given section? Admin ⇒ everything; others ⇒ granted only. */
+export function canEditSection(
+  role: UserRole,
+  editSections: string[] | null | undefined,
+  section: EditableSection
+): boolean {
+  if (role === 'admin') return true;
+  return (editSections ?? []).includes(section);
+}
 
 /**
  * Month index (1-60) -> calendar label, derived from the plan's start date.
