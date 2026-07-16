@@ -3,13 +3,13 @@
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Clock } from 'lucide-react';
-import type { UserRole } from '@oceanpick/shared';
+import { EDITABLE_SECTIONS, SECTION_LABEL, type UserRole } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { toast } from '@/components/ui/toast';
-import { updateUserRole, setUserActive } from '../actions';
+import { updateUserRole, setUserActive, setUserSections } from '../actions';
 
 export interface AdminUser {
   id: string;
@@ -18,6 +18,7 @@ export interface AdminUser {
   role: UserRole;
   is_active: boolean;
   last_login_at: string | null;
+  edit_sections: string[];
 }
 
 const ROLES: UserRole[] = ['admin', 'planner', 'contributor', 'viewer'];
@@ -61,12 +62,13 @@ export function UsersClient({ users, meId }: { users: AdminUser[]; meId: string 
         </div>
       )}
 
-      <div className="overflow-hidden rounded-lg border border-border">
-        <table className="w-full text-sm">
+      <div className="overflow-x-auto rounded-lg border border-border">
+        <table className="w-full min-w-[52rem] text-sm">
           <thead className="border-b border-border bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
             <tr>
               <th className="px-4 py-2.5 font-medium">User</th>
               <th className="px-4 py-2.5 font-medium">Role</th>
+              <th className="px-4 py-2.5 font-medium">Edit access</th>
               <th className="px-4 py-2.5 font-medium">Last login</th>
               <th className="px-4 py-2.5 text-right font-medium">Status</th>
             </tr>
@@ -103,6 +105,17 @@ export function UsersClient({ users, meId }: { users: AdminUser[]; meId: string 
                     </Select>
                   </div>
                 </td>
+                <td className="px-4 py-3">
+                  {u.role === 'admin' ? (
+                    <span className="text-xs text-muted-foreground">Full access</span>
+                  ) : (
+                    <SectionToggles
+                      granted={u.edit_sections ?? []}
+                      disabled={isPending}
+                      onChange={(secs) => run(() => setUserSections(u.id, secs), 'Access updated')}
+                    />
+                  )}
+                </td>
                 <td className="px-4 py-3 text-muted-foreground">
                   {u.last_login_at ? new Date(u.last_login_at).toLocaleDateString() : 'Never'}
                 </td>
@@ -137,6 +150,51 @@ export function UsersClient({ users, meId }: { users: AdminUser[]; meId: string 
           </tbody>
         </table>
       </div>
+      <p className="text-xs text-muted-foreground">
+        Admins can edit everything. For everyone else, click a section to grant or revoke edit access — ungranted sections stay read-only.
+      </p>
+    </div>
+  );
+}
+
+function SectionToggles({
+  granted,
+  disabled,
+  onChange,
+}: {
+  granted: string[];
+  disabled: boolean;
+  onChange: (sections: string[]) => void;
+}) {
+  const set = new Set(granted);
+  const toggle = (s: string) => {
+    const next = new Set(set);
+    if (next.has(s)) next.delete(s);
+    else next.add(s);
+    onChange([...next]);
+  };
+  return (
+    <div className="flex flex-wrap gap-1">
+      {EDITABLE_SECTIONS.map((s) => {
+        const on = set.has(s);
+        return (
+          <button
+            key={s}
+            type="button"
+            disabled={disabled}
+            onClick={() => toggle(s)}
+            aria-pressed={on}
+            className={cn(
+              'rounded-md border px-2 py-0.5 text-xs font-medium transition-colors disabled:opacity-50',
+              on
+                ? 'border-primary/30 bg-primary/10 text-primary'
+                : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'
+            )}
+          >
+            {SECTION_LABEL[s]}
+          </button>
+        );
+      })}
     </div>
   );
 }

@@ -1,6 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
 import { getActivePlan } from '@/lib/plan';
-import { can, type UserRole } from '@oceanpick/shared';
 import { SettingsForm } from './settings-form';
 
 export default async function SettingsPage() {
@@ -20,5 +19,5 @@ export default async function SettingsPage() {
   const { data: { user } } = await supabase.auth.getUser();
   const { data: me } = await supabase.from('users').select('role').eq('id', user!.id).maybeSingle();
 
-  return <SettingsForm plan={plan} canEdit={can.editMaster((me?.role ?? 'viewer') as UserRole)} />;
+  return <SettingsForm plan={plan} canEdit={me?.role === 'admin'} />;
 }

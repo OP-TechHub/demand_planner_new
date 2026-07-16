@@ -7,6 +7,13 @@ import type { WideRow, WideImportResult } from '@/components/wide-grid-import';
 
 export type SaveResult = { error: string | null };
 
+/** Map a raw RLS rejection to a clear message about section access. */
+function permError(message: string): string {
+  return /row-level security|violates row-level/i.test(message)
+    ? 'You don’t have permission to edit the harvest plan. Ask an admin for access.'
+    : message;
+}
+
 /**
  * Persist per-month harvest capacity for one bucket.
  *
@@ -58,7 +65,7 @@ export async function saveHarvestCapacity(
     const { error } = await supabase
       .from('harvest_plan')
       .upsert(rows, { onConflict: 'plan_id,bucket_id,month_index' });
-    if (error) return { error: error.message };
+    if (error) return { error: permError(error.message) };
   }
 
   if (deletes.length) {
@@ -68,7 +75,7 @@ export async function saveHarvestCapacity(
       .eq('plan_id', planId)
       .eq('bucket_id', bucketId)
       .in('month_index', deletes);
-    if (error) return { error: error.message };
+    if (error) return { error: permError(error.message) };
   }
 
   const edits: { m: number; old: number; new: number }[] = [];
@@ -117,7 +124,7 @@ export async function importHarvest(planId: string, rows: WideRow[]): Promise<Wi
 
   if (upserts.length) {
     const { error } = await supabase.from('harvest_plan').upsert(upserts, { onConflict: 'plan_id,bucket_id,month_index' });
-    if (error) return { error: error.message, count: 0, unknown: [...unknown] };
+    if (error) return { error: permError(error.message), count: 0, unknown: [...unknown] };
     await logAudit(supabase, { planId, entityType: 'harvest_plan', entityId: planId, action: 'update', changes: { imported_cells: upserts.length } });
   }
   revalidatePath('/harvest-plan');

@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { getActivePlan } from '@/lib/plan';
-import { can, type Bucket, type HarvestCell, type UserRole } from '@oceanpick/shared';
+import { canEditSection, type Bucket, type HarvestCell, type UserRole } from '@oceanpick/shared';
 import { HarvestClient } from './harvest-client';
 
 export default async function HarvestPlanPage() {
@@ -21,10 +21,10 @@ export default async function HarvestPlanPage() {
   const [{ data: buckets }, { data: rows }, { data: me }] = await Promise.all([
     supabase.from('buckets').select('*').eq('is_archived', false).order('sort_order'),
     supabase.from('harvest_plan').select('*').eq('plan_id', plan.id),
-    supabase.from('users').select('role').eq('id', user!.id).maybeSingle(),
+    supabase.from('users').select('role, edit_sections').eq('id', user!.id).maybeSingle(),
   ]);
 
-  const canEdit = can.editMaster((me?.role ?? 'viewer') as UserRole);
+  const canEdit = canEditSection((me?.role ?? 'viewer') as UserRole, me?.edit_sections, 'harvest_plan');
 
   return (
     <HarvestClient

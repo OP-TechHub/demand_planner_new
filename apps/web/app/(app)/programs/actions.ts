@@ -290,6 +290,9 @@ function diffProgram(before: Record<string, any> | null, after: Record<string, a
 
 function friendly(message: string): string {
   const m = message.toLowerCase();
+  if (m.includes('row-level security') || m.includes('violates row-level')) {
+    return 'You don’t have permission to edit programs. Ask an admin for access.';
+  }
   if (m.includes('duplicate') || m.includes('unique') || m.includes('item_code')) {
     return 'An item code must be unique within the plan. That code is already used.';
   }
