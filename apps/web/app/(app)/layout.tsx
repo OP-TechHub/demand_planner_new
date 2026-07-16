@@ -1,5 +1,5 @@
-import Link from 'next/link';
 import { redirect } from 'next/navigation';
+import { LogOut } from 'lucide-react';
 import { createClient } from '@/lib/supabase/server';
 import { AppSidebar } from '@/components/app-sidebar';
 import type { UserRole } from '@oceanpick/shared';
@@ -60,21 +60,21 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     <div className="flex min-h-screen">
       <AppSidebar role={profile.role as UserRole} />
       <div className="flex min-h-screen flex-1 flex-col">
-        <header className="flex h-14 items-center justify-between border-b bg-card px-6">
+        <header className="sticky top-0 z-20 flex h-14 items-center justify-between border-b border-border bg-card/80 px-6 backdrop-blur">
           <div className="flex items-center gap-3">
-            <Link href="/home" className="text-sm font-semibold tracking-tight">
-              Oceanpick Demand Planner
-            </Link>
+            <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Plan</span>
             {activePlan && <PlanSelector plans={plans} activeId={activePlan.id} />}
           </div>
           <div className="flex items-center gap-3">
             <ThemeToggle />
+            <div className="h-6 w-px bg-border" />
             <div className="text-right leading-tight">
               <div className="text-sm font-medium">{profile.full_name || profile.email}</div>
               <div className="text-xs capitalize text-muted-foreground">{profile.role}</div>
             </div>
             <form action={logout}>
-              <button className="rounded-md border border-border px-3 py-1.5 text-sm transition-colors hover:bg-muted">
+              <button className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
+                <LogOut className="h-3.5 w-3.5" />
                 Sign out
               </button>
             </form>
