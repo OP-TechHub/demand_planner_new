@@ -48,15 +48,18 @@ export function OutputGrid({
   const months = Array.from({ length: horizon }, (_, i) => i + 1);
   const rowTotal = (r: GridRow) => r.values.reduce((s: number, v) => s + (v ?? 0), 0);
   const colTotal = (m: number) => rows.reduce((s: number, r) => s + (r.values[m] ?? 0), 0);
+  // A vertical divider at each fiscal-year boundary (M13, M25, …) to orient the eye.
+  const yearStart = (mo: number) => mo > 1 && (mo - 1) % 12 === 0;
+  const stickyCol = 'sticky left-0 z-10 shadow-[6px_0_8px_-6px_rgba(0,0,0,0.18)]';
 
   return (
     <div className="overflow-x-auto rounded-lg border">
       <table className="w-max text-xs">
         <thead className="bg-muted/50 text-muted-foreground">
           <tr>
-            <th className="sticky left-0 z-10 min-w-[15rem] max-w-[15rem] bg-muted/50 px-3 py-2 text-left font-semibold">{firstColLabel}</th>
+            <th className={cn(stickyCol, 'min-w-[15rem] max-w-[15rem] bg-muted/50 px-3 py-2 text-left font-semibold')}>{firstColLabel}</th>
             {months.map((mo) => (
-              <th key={mo} className="min-w-[4.5rem] px-2 py-2 text-right font-medium">{monthLabel(planStartDate, mo)}</th>
+              <th key={mo} className={cn('min-w-[4.5rem] px-2 py-2 text-right font-medium', yearStart(mo) && 'border-l border-border')}>{monthLabel(planStartDate, mo)}</th>
             ))}
             {!hideTotals && <th className="min-w-[6rem] border-l bg-muted/50 px-3 py-2 text-right font-semibold">{rightLabel}</th>}
           </tr>
@@ -64,12 +67,12 @@ export function OutputGrid({
         <tbody>
           {rows.map((r) => (
             <tr key={r.key} className="border-t hover:bg-muted/30">
-              <td className="sticky left-0 z-10 min-w-[15rem] max-w-[15rem] truncate border-r bg-card px-3 py-1.5" title={`${r.label}${r.sublabel ? ' — ' + r.sublabel : ''}`}>
+              <td className={cn(stickyCol, 'min-w-[15rem] max-w-[15rem] truncate border-r bg-card px-3 py-1.5')} title={`${r.label}${r.sublabel ? ' — ' + r.sublabel : ''}`}>
                 <span className="font-medium">{r.label}</span>
                 {r.sublabel && <span className="ml-1 text-muted-foreground">{r.sublabel}</span>}
               </td>
               {months.map((mo, i) => (
-                <td key={mo} className={cn('px-2 py-1.5 text-right tabular-nums', colorFor?.(r.values[i] ?? null))}>
+                <td key={mo} className={cn('px-2 py-1.5 text-right tabular-nums', yearStart(mo) && 'border-l border-border/60', colorFor?.(r.values[i] ?? null))}>
                   {format(r.values[i] ?? null)}
                 </td>
               ))}
@@ -78,9 +81,9 @@ export function OutputGrid({
           ))}
           {!hideTotals && showColumnTotals && rows.length > 0 && (
             <tr className="border-t-2 bg-muted/40 font-semibold">
-              <td className="sticky left-0 z-10 bg-muted/40 px-3 py-1.5">TOTAL</td>
+              <td className={cn(stickyCol, 'bg-muted/40 px-3 py-1.5')}>TOTAL</td>
               {months.map((_, i) => (
-                <td key={i} className="px-2 py-1.5 text-right tabular-nums">{format(colTotal(i))}</td>
+                <td key={i} className={cn('px-2 py-1.5 text-right tabular-nums', yearStart(i + 1) && 'border-l border-border/60')}>{format(colTotal(i))}</td>
               ))}
               <td className="border-l px-3 py-1.5 text-right tabular-nums">{format(rows.reduce((s: number, r) => s + rowTotal(r), 0))}</td>
             </tr>
