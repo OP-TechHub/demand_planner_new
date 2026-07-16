@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
+import { Clock } from 'lucide-react';
 import type { UserRole } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 import { Select } from '@/components/ui/select';
@@ -41,6 +42,8 @@ export function UsersClient({ users, meId }: { users: AdminUser[]; meId: string 
     });
   };
 
+  const pendingCount = users.filter((u) => !u.is_active && !u.last_login_at).length;
+
   return (
     <div className="mx-auto max-w-3xl space-y-4">
       <div>
@@ -50,6 +53,13 @@ export function UsersClient({ users, meId }: { users: AdminUser[]; meId: string 
         </p>
       </div>
       {error && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
+
+      {pendingCount > 0 && (
+        <div className="flex items-center gap-2 rounded-lg border border-warning/30 bg-warning/10 px-4 py-2.5 text-sm text-warning">
+          <Clock className="h-4 w-4 shrink-0" />
+          {pendingCount} account{pendingCount > 1 ? 's are' : ' is'} awaiting approval — click <b>Approve</b> to grant access.
+        </div>
+      )}
 
       <div className="overflow-hidden rounded-lg border border-border">
         <table className="w-full text-sm">
@@ -97,18 +107,30 @@ export function UsersClient({ users, meId }: { users: AdminUser[]; meId: string 
                   {u.last_login_at ? new Date(u.last_login_at).toLocaleDateString() : 'Never'}
                 </td>
                 <td className="px-4 py-3">
-                  <div className="flex items-center justify-end gap-2">
-                    <Badge variant={u.is_active ? 'success' : 'outline'}>{u.is_active ? 'Active' : 'Inactive'}</Badge>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={isPending || u.id === meId}
-                      title={u.id === meId ? 'You can’t change your own status' : undefined}
-                      onClick={() => run(() => setUserActive(u.id, !u.is_active), u.is_active ? 'User deactivated' : 'User activated')}
-                    >
-                      {u.is_active ? 'Deactivate' : 'Activate'}
-                    </Button>
-                  </div>
+                  {(() => {
+                    const pending = !u.is_active && !u.last_login_at;
+                    const badge = u.is_active
+                      ? { v: 'success' as const, t: 'Active' }
+                      : pending
+                        ? { v: 'warning' as const, t: 'Pending' }
+                        : { v: 'outline' as const, t: 'Inactive' };
+                    const label = u.is_active ? 'Deactivate' : pending ? 'Approve' : 'Activate';
+                    const okMsg = u.is_active ? 'User deactivated' : pending ? 'User approved' : 'User activated';
+                    return (
+                      <div className="flex items-center justify-end gap-2">
+                        <Badge variant={badge.v}>{badge.t}</Badge>
+                        <Button
+                          variant={pending ? 'default' : 'outline'}
+                          size="sm"
+                          disabled={isPending || u.id === meId}
+                          title={u.id === meId ? 'You can’t change your own status' : undefined}
+                          onClick={() => run(() => setUserActive(u.id, !u.is_active), okMsg)}
+                        >
+                          {label}
+                        </Button>
+                      </div>
+                    );
+                  })()}
                 </td>
               </tr>
             ))}

@@ -24,7 +24,7 @@ export async function signup(_prev: AuthState, formData: FormData): Promise<Auth
   if (!fullName) return { error: 'Please enter your name.' };
 
   const supabase = await createClient();
-  const { error } = await supabase.auth.signUp({
+  const { data, error } = await supabase.auth.signUp({
     email,
     password,
     options: { data: { full_name: fullName } },
@@ -41,6 +41,18 @@ export async function signup(_prev: AuthState, formData: FormData): Promise<Auth
       return { error: 'We couldn\'t create your account right now. Please try again, or contact an administrator if it keeps happening.' };
     }
     return { error: error.message };
+  }
+
+  // New accounts start inactive and must be approved by an admin (handle_new_user
+  // sets is_active=false for everyone except the first/admin user). If this user
+  // isn't active yet, end their session and send them to the pending notice
+  // rather than the blocked app shell.
+  if (data.user) {
+    const { data: profile } = await supabase.from('users').select('is_active').eq('id', data.user.id).maybeSingle();
+    if (!profile?.is_active) {
+      await supabase.auth.signOut();
+      redirect('/login?pending=1');
+    }
   }
 
   revalidatePath('/', 'layout');
