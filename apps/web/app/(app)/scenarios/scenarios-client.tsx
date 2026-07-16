@@ -271,6 +271,25 @@ function fyStartOptions(yearsAhead: number): { value: string; label: string }[] 
   return out;
 }
 
+/** Inclusive month count between two 'YYYY-MM' values; 0 if invalid or end < start. */
+function monthsBetween(startYM: string, endYM: string): number {
+  const s = /^(\d{4})-(\d{2})$/.exec(startYM);
+  const e = /^(\d{4})-(\d{2})$/.exec(endYM);
+  if (!s || !e) return 0;
+  const diff = (Number(e[1]) - Number(s[1])) * 12 + (Number(e[2]) - Number(s[2])) + 1;
+  return diff >= 1 ? diff : 0;
+}
+
+/** Add n months to a 'YYYY-MM' value, returning 'YYYY-MM'. */
+function addMonthsYM(ym: string, n: number): string {
+  const m = /^(\d{4})-(\d{2})$/.exec(ym);
+  if (!m) return '';
+  const total = Number(m[1]) * 12 + (Number(m[2]) - 1) + n;
+  const y = Math.floor(total / 12);
+  const mo = (total % 12) + 1;
+  return `${y}-${String(mo).padStart(2, '0')}`;
+}
+
 function NewPlanModal({
   programs,
   yearsAhead,
@@ -284,7 +303,7 @@ function NewPlanModal({
   pending: boolean;
   error: string | null;
   onClose: () => void;
-  onCreate: (input: { name: string; planStartDate: string; programIds: string[]; copyData: boolean }) => void;
+  onCreate: (input: { name: string; planStartDate: string; horizonMonths: number; programIds: string[]; copyData: boolean }) => void;
 }) {
   const options = fyStartOptions(yearsAhead);
   const [name, setName] = useState('');
@@ -292,6 +311,10 @@ function NewPlanModal({
   const [fyStart, setFyStart] = useState(options[1]?.value ?? options[0]?.value ?? '');
   const [customMonth, setCustomMonth] = useState(''); // 'YYYY-MM'
   const startDate = startMode === 'fy' ? fyStart : customMonth ? `${customMonth}-01` : '';
+  const startYM = startDate ? startDate.slice(0, 7) : '';
+  // Default to a 12-month plan (end = start + 11 months).
+  const [endMonth, setEndMonth] = useState<string>(() => addMonthsYM((options[1]?.value ?? '').slice(0, 7), 11));
+  const horizon = monthsBetween(startYM, endMonth);
   const [selected, setSelected] = useState<Set<string>>(new Set(programs.map((p) => p.id)));
   const [copyData, setCopyData] = useState(false);
 
@@ -303,19 +326,19 @@ function NewPlanModal({
       return next;
     });
 
-  const disabled = pending || !name.trim() || !startDate || selected.size === 0;
+  const disabled = pending || !name.trim() || !startDate || horizon < 1 || horizon > 60 || selected.size === 0;
 
   return (
     <Dialog
       open
       onClose={onClose}
       title="New plan"
-      description="Start a fresh plan for a financial year with the programs you choose."
+      description="Create a plan of any length (up to 60 months) with the programs you choose."
       footer={
         <>
           <Button variant="outline" onClick={onClose}>Cancel</Button>
           <Button
-            onClick={() => onCreate({ name, planStartDate: startDate, programIds: [...selected], copyData })}
+            onClick={() => onCreate({ name, planStartDate: startDate, horizonMonths: horizon, programIds: [...selected], copyData })}
             disabled={disabled}
           >
             {pending ? 'Creating…' : 'Create plan'}
@@ -355,6 +378,25 @@ function NewPlanModal({
               </Select>
             ) : (
               <Input type="month" value={customMonth} onChange={(e) => setCustomMonth(e.target.value)} />
+            )}
+          </div>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="block space-y-1.5">
+            <span className="text-xs font-medium text-muted-foreground">End month (last month of the plan)</span>
+            <Input type="month" value={endMonth} onChange={(e) => setEndMonth(e.target.value)} />
+          </label>
+          <div className="flex items-end pb-2 text-sm">
+            {horizon >= 1 && horizon <= 60 ? (
+              <span className="text-muted-foreground">
+                Plan length: <span className="font-medium text-foreground">{horizon} month{horizon === 1 ? '' : 's'}</span>
+                {horizon >= 12 && <> (~{(horizon / 12).toFixed(horizon % 12 === 0 ? 0 : 1)} yr)</>}
+              </span>
+            ) : (
+              <span className="text-destructive">
+                {startYM && endMonth ? 'End must be on/after the start, within 60 months.' : 'Pick an end month.'}
+              </span>
             )}
           </div>
         </div>
