@@ -99,19 +99,47 @@ export async function createScenario(name: string, description: string): Promise
   return { error: null, scenarioId: sid };
 }
 
-export async function renameScenario(id: string, name: string): Promise<void> {
-  if (!name?.trim()) return;
+export async function renameScenario(id: string, name: string): Promise<{ error: string | null }> {
+  if (!name?.trim()) return { error: 'Name is required.' };
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
-  await supabase.from('plans').update({ name: name.trim(), updated_by: user?.id }).eq('id', id).eq('type', 'scenario');
+  if (!user) return { error: 'Your session expired. Sign in again.' };
+  const { error } = await supabase
+    .from('plans')
+    .update({ name: name.trim(), updated_by: user.id })
+    .eq('id', id)
+    .eq('type', 'scenario');
+  if (error) return { error: error.message };
   revalidatePath('/', 'layout');
+  return { error: null };
 }
 
-export async function deleteScenario(id: string): Promise<void> {
+export async function deleteScenario(id: string): Promise<{ error: string | null }> {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
-  await supabase.from('plans').update({ deleted_at: new Date().toISOString(), updated_by: user?.id }).eq('id', id).eq('type', 'scenario');
+  if (!user) return { error: 'Your session expired. Sign in again.' };
+
+  // Confirm the caller can actually see this scenario under RLS first. Without
+  // this, a session that isn't carrying auth (auth.uid() → null) would make the
+  // UPDATE match zero rows and report nothing — the scenario silently "won't delete".
+  const { data: target } = await supabase
+    .from('plans')
+    .select('id')
+    .eq('id', id)
+    .eq('type', 'scenario')
+    .is('deleted_at', null)
+    .maybeSingle();
+  if (!target) return { error: 'Scenario not found, or you don’t have permission to delete it.' };
+
+  const { error } = await supabase
+    .from('plans')
+    .update({ deleted_at: new Date().toISOString(), updated_by: user.id })
+    .eq('id', id)
+    .eq('type', 'scenario');
+  if (error) return { error: error.message };
+
   const store = await cookies();
   if (store.get(ACTIVE_PLAN_COOKIE)?.value === id) store.delete(ACTIVE_PLAN_COOKIE);
   revalidatePath('/', 'layout');
+  return { error: null };
 }

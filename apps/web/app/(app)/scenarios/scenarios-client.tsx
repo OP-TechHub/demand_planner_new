@@ -25,12 +25,22 @@ export function ScenariosClient({
   }
   function onDelete(s: ScenarioRow) {
     if (!confirm(`Delete scenario "${s.name}"? It can be recovered within 90 days.`)) return;
-    start(async () => { await deleteScenario(s.id); router.refresh(); });
+    setError(null);
+    start(async () => {
+      const res = await deleteScenario(s.id);
+      if (res?.error) setError(res.error);
+      else router.refresh();
+    });
   }
   function onRename(s: ScenarioRow) {
     const name = prompt('Rename scenario', s.name);
     if (!name || name.trim() === s.name) return;
-    start(async () => { await renameScenario(s.id, name); router.refresh(); });
+    setError(null);
+    start(async () => {
+      const res = await renameScenario(s.id, name);
+      if (res?.error) setError(res.error);
+      else router.refresh();
+    });
   }
 
   return (
@@ -49,6 +59,10 @@ export function ScenariosClient({
       <p className="text-xs text-muted-foreground">
         A scenario is a full fork of the master plan you can edit freely — the master is never affected. {scenarios.length} of 20 used.
       </p>
+
+      {error && !creating && (
+        <p role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
+      )}
 
       <div className="overflow-x-auto rounded-lg border">
         <table className="w-full text-sm">
