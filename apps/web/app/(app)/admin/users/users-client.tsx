@@ -2,11 +2,10 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Clock } from 'lucide-react';
+import { Clock, ChevronDown } from 'lucide-react';
 import { EDITABLE_SECTIONS, SECTION_LABEL, type UserRole } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 import { Select } from '@/components/ui/select';
-import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { toast } from '@/components/ui/toast';
 import { updateUserRole, setUserActive, setUserSections } from '../actions';
@@ -109,7 +108,7 @@ export function UsersClient({ users, meId }: { users: AdminUser[]; meId: string 
                   {u.role === 'admin' ? (
                     <span className="text-xs text-muted-foreground">Full access</span>
                   ) : (
-                    <SectionToggles
+                    <SectionAccessDropdown
                       granted={u.edit_sections ?? []}
                       disabled={isPending}
                       onChange={(secs) => run(() => setUserSections(u.id, secs), 'Access updated')}
@@ -120,30 +119,24 @@ export function UsersClient({ users, meId }: { users: AdminUser[]; meId: string 
                   {u.last_login_at ? new Date(u.last_login_at).toLocaleDateString() : 'Never'}
                 </td>
                 <td className="px-4 py-3">
-                  {(() => {
-                    const pending = !u.is_active && !u.last_login_at;
-                    const badge = u.is_active
-                      ? { v: 'success' as const, t: 'Active' }
-                      : pending
-                        ? { v: 'warning' as const, t: 'Pending' }
-                        : { v: 'outline' as const, t: 'Inactive' };
-                    const label = u.is_active ? 'Deactivate' : pending ? 'Approve' : 'Activate';
-                    const okMsg = u.is_active ? 'User deactivated' : pending ? 'User approved' : 'User activated';
-                    return (
-                      <div className="flex items-center justify-end gap-2">
-                        <Badge variant={badge.v}>{badge.t}</Badge>
-                        <Button
-                          variant={pending ? 'default' : 'outline'}
-                          size="sm"
-                          disabled={isPending || u.id === meId}
-                          title={u.id === meId ? 'You can’t change your own status' : undefined}
-                          onClick={() => run(() => setUserActive(u.id, !u.is_active), okMsg)}
-                        >
-                          {label}
-                        </Button>
-                      </div>
-                    );
-                  })()}
+                  <div className="flex items-center justify-end gap-2">
+                    {!u.is_active && !u.last_login_at && <Badge variant="warning">Pending</Badge>}
+                    <div className="w-32">
+                      <Select
+                        value={u.is_active ? 'active' : 'inactive'}
+                        disabled={isPending || u.id === meId}
+                        title={u.id === meId ? 'You can’t change your own status' : undefined}
+                        onChange={(e) => {
+                          const active = e.target.value === 'active';
+                          run(() => setUserActive(u.id, active), active ? 'User activated' : 'User deactivated');
+                        }}
+                        className="h-8"
+                      >
+                        <option value="active">Active</option>
+                        <option value="inactive">Inactive</option>
+                      </Select>
+                    </div>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -157,7 +150,7 @@ export function UsersClient({ users, meId }: { users: AdminUser[]; meId: string 
   );
 }
 
-function SectionToggles({
+function SectionAccessDropdown({
   granted,
   disabled,
   onChange,
@@ -173,28 +166,36 @@ function SectionToggles({
     else next.add(s);
     onChange([...next]);
   };
+
+  const summary =
+    granted.length === 0
+      ? 'No access'
+      : granted.length === EDITABLE_SECTIONS.length
+        ? 'All sections'
+        : EDITABLE_SECTIONS.filter((s) => set.has(s)).map((s) => SECTION_LABEL[s]).join(', ');
+
   return (
-    <div className="flex flex-wrap gap-1">
-      {EDITABLE_SECTIONS.map((s) => {
-        const on = set.has(s);
-        return (
-          <button
+    <details className="group relative w-56">
+      <summary
+        className={cn(
+          'flex h-8 cursor-pointer list-none items-center justify-between rounded-md border border-input bg-card px-3 text-sm text-foreground transition-colors [&::-webkit-details-marker]:hidden',
+          disabled ? 'pointer-events-none opacity-50' : 'hover:bg-muted'
+        )}
+      >
+        <span className={cn('truncate', granted.length === 0 && 'text-muted-foreground')}>{summary}</span>
+        <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
+      </summary>
+      <div className="absolute left-0 z-20 mt-1 w-56 rounded-md border border-border bg-popover p-1 shadow-lg">
+        {EDITABLE_SECTIONS.map((s) => (
+          <label
             key={s}
-            type="button"
-            disabled={disabled}
-            onClick={() => toggle(s)}
-            aria-pressed={on}
-            className={cn(
-              'rounded-md border px-2 py-0.5 text-xs font-medium transition-colors disabled:opacity-50',
-              on
-                ? 'border-primary/30 bg-primary/10 text-primary'
-                : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'
-            )}
+            className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-muted"
           >
+            <input type="checkbox" checked={set.has(s)} disabled={disabled} onChange={() => toggle(s)} />
             {SECTION_LABEL[s]}
-          </button>
-        );
-      })}
-    </div>
+          </label>
+        ))}
+      </div>
+    </details>
   );
 }
