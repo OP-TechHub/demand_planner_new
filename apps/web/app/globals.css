@@ -2,18 +2,130 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Oceanpick design tokens — ocean brand-forward, light + dark.
+ * All colors are HSL channels so Tailwind can apply opacity (hsl(var(--x) / <a>)).
+ * Dark mode is toggled by a `.dark` class on <html> (see darkMode: 'class').
+ */
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222 47% 11%;
+    --background: 200 40% 99%;
+    --foreground: 205 45% 12%;
+
     --card: 0 0% 100%;
-    --muted: 210 40% 96%;
-    --muted-foreground: 215 16% 47%;
-    --border: 214 32% 91%;
-    --primary: 201 96% 32%;
+    --card-foreground: 205 45% 12%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 205 45% 12%;
+
+    --muted: 205 32% 95%;
+    --muted-foreground: 205 14% 42%;
+
+    --border: 205 26% 89%;
+    --input: 205 26% 87%;
+    --ring: 199 89% 42%;
+
+    /* Ocean blue */
+    --primary: 199 89% 36%;
     --primary-foreground: 0 0% 100%;
+
+    /* Pale teal surface */
+    --secondary: 191 55% 93%;
+    --secondary-foreground: 199 82% 22%;
+
+    /* Teal accent */
+    --accent: 187 80% 41%;
+    --accent-foreground: 0 0% 100%;
+
+    --success: 160 72% 36%;
+    --success-foreground: 0 0% 100%;
+    --warning: 32 92% 46%;
+    --warning-foreground: 40 90% 12%;
     --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --radius: 0.625rem;
+
+    --chart-demand: 201 84% 45%;
+    --chart-fulfilled: 18 82% 56%;
   }
-  * { @apply border-border; }
-  body { @apply bg-background text-foreground antialiased; }
+
+  .dark {
+    --background: 205 45% 8%;
+    --foreground: 200 22% 92%;
+
+    --card: 205 40% 11%;
+    --card-foreground: 200 22% 92%;
+
+    --popover: 205 42% 10%;
+    --popover-foreground: 200 22% 92%;
+
+    --muted: 205 28% 17%;
+    --muted-foreground: 205 16% 63%;
+
+    --border: 205 24% 21%;
+    --input: 205 24% 24%;
+    --ring: 199 90% 55%;
+
+    --primary: 199 90% 52%;
+    --primary-foreground: 205 45% 8%;
+
+    --secondary: 202 30% 19%;
+    --secondary-foreground: 190 45% 84%;
+
+    --accent: 187 78% 47%;
+    --accent-foreground: 205 45% 8%;
+
+    --success: 160 58% 46%;
+    --success-foreground: 205 45% 8%;
+    --warning: 34 92% 56%;
+    --warning-foreground: 40 90% 10%;
+    --destructive: 0 70% 56%;
+    --destructive-foreground: 0 0% 100%;
+
+    --chart-demand: 199 85% 58%;
+    --chart-fulfilled: 20 88% 62%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+
+  /* Visible, on-brand focus for keyboard users. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+
+  ::selection {
+    background-color: hsl(var(--primary) / 0.18);
+  }
+
+  /* Slim, theme-aware scrollbars (the wide grids scroll a lot). */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--muted-foreground) / 0.35) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--muted-foreground) / 0.3);
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--muted-foreground) / 0.5);
+  }
 }

@@ -6,6 +6,7 @@ import type { UserRole } from '@oceanpick/shared';
 import { getActivePlan, getSelectablePlans } from '@/lib/plan';
 import { PlanSelector } from './plan-selector';
 import { ScenarioBanner } from './scenario-banner';
+import { ThemeToggle } from '@/components/theme-toggle';
 import { logout } from '../login/actions';
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -66,13 +67,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             </Link>
             {activePlan && <PlanSelector plans={plans} activeId={activePlan.id} />}
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
+            <ThemeToggle />
             <div className="text-right leading-tight">
               <div className="text-sm font-medium">{profile.full_name || profile.email}</div>
               <div className="text-xs capitalize text-muted-foreground">{profile.role}</div>
             </div>
             <form action={logout}>
-              <button className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted">
+              <button className="rounded-md border border-border px-3 py-1.5 text-sm transition-colors hover:bg-muted">
                 Sign out
               </button>
             </form>
