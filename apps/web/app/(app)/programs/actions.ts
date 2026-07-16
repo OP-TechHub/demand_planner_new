@@ -135,11 +135,18 @@ export async function archiveProgram(fd: FormData): Promise<void> {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return;
+  const { data: before } = await supabase.from('programs').select('item_code, plan_id').eq('id', id).maybeSingle();
   await supabase
     .from('programs')
     .update({ deleted_at: new Date().toISOString(), updated_by: user.id })
     .eq('id', id);
-  await logAudit(supabase, { planId: null, entityType: 'programs', entityId: id, action: 'delete', changes: { archived: true } });
+  await logAudit(supabase, {
+    planId: before?.plan_id ?? null,
+    entityType: 'programs',
+    entityId: id,
+    action: 'delete',
+    changes: { archived: true, item_code: before?.item_code },
+  });
   revalidatePath('/programs');
 }
 
