@@ -21,7 +21,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // RLS restricts this to the caller's own org.
   const { data: profile } = await supabase
     .from('users')
-    .select('full_name, email, role, is_active')
+    .select('full_name, email, role, is_active, last_login_at')
     .eq('id', user.id)
     .single();
 
@@ -44,13 +44,21 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   }
 
   if (!profile.is_active) {
+    const awaitingApproval = !profile.last_login_at;
     return (
       <main className="flex min-h-screen items-center justify-center px-4">
-        <div className="max-w-md rounded-lg border bg-card p-6 text-sm">
-          <p className="font-semibold">Access disabled</p>
+        <div className="max-w-md rounded-lg border border-border bg-card p-6 text-sm">
+          <p className="font-semibold">{awaitingApproval ? 'Awaiting approval' : 'Access disabled'}</p>
           <p className="mt-2 text-muted-foreground">
-            Your account has been deactivated. Contact an administrator.
+            {awaitingApproval
+              ? 'Your account has been created and is waiting for an administrator to approve access. You’ll be able to sign in once it’s approved.'
+              : 'Your account has been deactivated. Contact an administrator.'}
           </p>
+          <form action={logout} className="mt-4">
+            <button className="rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
+              Sign out
+            </button>
+          </form>
         </div>
       </main>
     );

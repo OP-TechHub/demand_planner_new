@@ -23,7 +23,7 @@ export default function SignupPage() {
             <Waves className="h-6 w-6" strokeWidth={2.25} />
           </span>
           <h1 className="mt-3 text-lg font-semibold tracking-tight">Create your account</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Start planning in minutes.</p>
+          <p className="mt-1 text-sm text-muted-foreground">New accounts need administrator approval before first sign-in.</p>
         </div>
 
         <div className="rounded-xl border border-border bg-card p-6 shadow-lg">

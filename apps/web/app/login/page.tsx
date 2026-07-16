@@ -1,13 +1,25 @@
 'use client';
 
-import { useActionState } from 'react';
+import { Suspense, useActionState } from 'react';
 import Link from 'next/link';
-import { Waves } from 'lucide-react';
+import { useSearchParams } from 'next/navigation';
+import { Waves, Clock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { login, type AuthState } from './actions';
 
 const initial: AuthState = { error: null };
+
+function PendingNotice() {
+  const isPending = useSearchParams().get('pending') === '1';
+  if (!isPending) return null;
+  return (
+    <div className="mb-4 flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
+      <Clock className="mt-0.5 h-4 w-4 shrink-0" />
+      <span>Your account was created and is <b>awaiting administrator approval</b>. You’ll be able to sign in once an admin approves it.</span>
+    </div>
+  );
+}
 
 export default function LoginPage() {
   const [state, formAction, pending] = useActionState(login, initial);
@@ -26,6 +38,10 @@ export default function LoginPage() {
           <h1 className="mt-3 text-lg font-semibold tracking-tight">Oceanpick Demand Planner</h1>
           <p className="mt-1 text-sm text-muted-foreground">Sign in to continue.</p>
         </div>
+
+        <Suspense fallback={null}>
+          <PendingNotice />
+        </Suspense>
 
         <div className="rounded-xl border border-border bg-card p-6 shadow-lg">
           <form action={formAction} className="space-y-4">
