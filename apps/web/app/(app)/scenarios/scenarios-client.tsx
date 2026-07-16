@@ -260,7 +260,8 @@ function fyStartOptions(): { value: string; label: string }[] {
   // Financial year starts in April; before April we're still in the prior FY.
   const base = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
   const out: { value: string; label: string }[] = [];
-  for (let y = base - 1; y <= base + 3; y++) {
+  // One prior FY through ten years ahead.
+  for (let y = base - 1; y <= base + 10; y++) {
     out.push({ value: `${y}-04-01`, label: `FY ${y}/${String(y + 1).slice(2)} · Apr ${y} – Mar ${y + 1}` });
   }
   return out;
