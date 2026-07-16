@@ -79,6 +79,7 @@ create policy harvest_plan_write on demand_planner.harvest_plan for all
 
 -- 5) Buckets: admin or users granted the 'buckets' section.
 drop policy if exists buckets_admin_write on demand_planner.buckets;
+drop policy if exists buckets_write on demand_planner.buckets;
 create policy buckets_write on demand_planner.buckets for all
   using (org_id = demand_planner.current_org_id() and demand_planner.can_edit_section('buckets'))
   with check (org_id = demand_planner.current_org_id() and demand_planner.can_edit_section('buckets'));
