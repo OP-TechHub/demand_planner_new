@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
+import { logAudit } from '@/lib/audit';
 import type { WideRow, WideImportResult } from '@/components/wide-grid-import';
 
 export type SaveResult = { error: string | null };
@@ -58,6 +59,7 @@ export async function saveDemandOverrides(
     if (error) return { error: error.message };
   }
 
+  await logAudit(supabase, { planId, entityType: 'demand_plan', entityId: programId, action: 'update', changes: { set: upserts.length, cleared: deletes.length } });
   revalidatePath('/demand-plan');
   return { error: null };
 }
@@ -94,6 +96,7 @@ export async function importDemand(planId: string, rows: WideRow[]): Promise<Wid
   if (upserts.length) {
     const { error } = await supabase.from('demand_plan').upsert(upserts, { onConflict: 'program_id,month_index' });
     if (error) return { error: error.message, count: 0, unknown: [...unknown] };
+    await logAudit(supabase, { planId, entityType: 'demand_plan', entityId: planId, action: 'update', changes: { imported_cells: upserts.length } });
   }
   revalidatePath('/demand-plan');
   return { error: null, count: upserts.length, unknown: [...unknown] };

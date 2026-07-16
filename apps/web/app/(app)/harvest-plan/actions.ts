@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
+import { logAudit } from '@/lib/audit';
 import type { WideRow, WideImportResult } from '@/components/wide-grid-import';
 
 export type SaveResult = { error: string | null };
@@ -59,6 +60,7 @@ export async function saveHarvestCapacity(
     if (error) return { error: error.message };
   }
 
+  await logAudit(supabase, { planId, entityType: 'harvest_plan', entityId: bucketId, action: 'update', changes: { set: upserts.length, cleared: deletes.length } });
   revalidatePath('/harvest-plan');
   return { error: null };
 }
@@ -91,6 +93,7 @@ export async function importHarvest(planId: string, rows: WideRow[]): Promise<Wi
   if (upserts.length) {
     const { error } = await supabase.from('harvest_plan').upsert(upserts, { onConflict: 'plan_id,bucket_id,month_index' });
     if (error) return { error: error.message, count: 0, unknown: [...unknown] };
+    await logAudit(supabase, { planId, entityType: 'harvest_plan', entityId: planId, action: 'update', changes: { imported_cells: upserts.length } });
   }
   revalidatePath('/harvest-plan');
   return { error: null, count: upserts.length, unknown: [...unknown] };

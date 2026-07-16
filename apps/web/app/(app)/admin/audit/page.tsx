@@ -24,7 +24,7 @@ export default async function AuditPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-4">
       <h1 className="text-2xl font-semibold tracking-tight">Audit Log</h1>
-      <p className="text-xs text-muted-foreground">Append-only record of changes. Currently captures user role/status changes; input-table edits will be added.</p>
+      <p className="text-xs text-muted-foreground">Append-only record of changes across users, programs, demand, and harvest.</p>
 
       {!entries || entries.length === 0 ? (
         <div className="rounded-lg border border-dashed bg-muted/30 p-8 text-sm text-muted-foreground">No audit entries yet.</div>
