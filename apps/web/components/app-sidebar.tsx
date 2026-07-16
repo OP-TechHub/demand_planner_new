@@ -32,6 +32,7 @@ const SECTIONS: Section[] = [
       { label: 'Pipeline WR', href: '/pipeline' },
       { label: '60-Month Summary', href: '/sixty-month' },
       { label: 'Revenue & Cost', href: '/revenue-cost' },
+      { label: 'Fulfilment Optimizer', href: '/optimizer' },
     ],
   },
   {
