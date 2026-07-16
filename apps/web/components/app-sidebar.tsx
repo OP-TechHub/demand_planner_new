@@ -26,19 +26,25 @@ const SECTIONS: Section[] = [
     title: 'Outputs',
     items: [
       { label: 'Dashboard', href: '/home' },
-      { label: 'Annual Summary', href: '/annual-summary', soon: true },
-      { label: 'Program Fulfilment', href: '/fulfilment', soon: true },
-      { label: 'Unallocated WR', href: '/unallocated', soon: true },
-      { label: '60-Month Summary', href: '/sixty-month', soon: true },
-      { label: 'Revenue & Cost', href: '/revenue-cost', soon: true },
+      { label: 'Annual Summary', href: '/annual-summary' },
+      { label: 'Program Fulfilment', href: '/fulfilment' },
+      { label: 'Unallocated WR', href: '/unallocated' },
+      { label: 'Pipeline WR', href: '/pipeline' },
+      { label: '60-Month Summary', href: '/sixty-month' },
+      { label: 'Revenue & Cost', href: '/revenue-cost' },
+      { label: 'Fulfilment Optimizer', href: '/optimizer' },
     ],
+  },
+  {
+    title: 'Scenarios',
+    items: [{ label: 'My scenarios', href: '/scenarios' }],
   },
   {
     title: 'Admin',
     adminOnly: true,
     items: [
-      { label: 'Users', href: '/admin/users', soon: true },
-      { label: 'Audit log', href: '/admin/audit', soon: true },
+      { label: 'Users', href: '/admin/users' },
+      { label: 'Audit log', href: '/admin/audit' },
     ],
   },
 ];

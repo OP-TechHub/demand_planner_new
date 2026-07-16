@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
+import { logAudit } from '@/lib/audit';
 
 export type ProgramFormState = { error: string | null; ok: boolean };
 
@@ -103,6 +104,7 @@ export async function saveProgram(
   if (id) {
     const { error } = await supabase.from('programs').update(row).eq('id', id);
     if (error) return { error: friendly(error.message), ok: false };
+    await logAudit(supabase, { planId, entityType: 'programs', entityId: id, action: 'update', changes: { item_code: row.item_code, customer: row.customer } });
   } else {
     // New programs sort after existing ones (gaps of 10, matching the seed).
     const { data: last } = await supabase
@@ -113,10 +115,13 @@ export async function saveProgram(
       .limit(1)
       .maybeSingle();
     const sortOrder = (last?.sort_order ?? 0) + 10;
-    const { error } = await supabase
+    const { data: created, error } = await supabase
       .from('programs')
-      .insert({ ...row, sort_order: sortOrder, created_by: user.id });
+      .insert({ ...row, sort_order: sortOrder, created_by: user.id })
+      .select('id')
+      .maybeSingle();
     if (error) return { error: friendly(error.message), ok: false };
+    if (created) await logAudit(supabase, { planId, entityType: 'programs', entityId: created.id, action: 'insert', changes: { item_code: row.item_code, customer: row.customer } });
   }
 
   revalidatePath('/programs');
@@ -134,6 +139,7 @@ export async function archiveProgram(fd: FormData): Promise<void> {
     .from('programs')
     .update({ deleted_at: new Date().toISOString(), updated_by: user.id })
     .eq('id', id);
+  await logAudit(supabase, { planId: null, entityType: 'programs', entityId: id, action: 'delete', changes: { archived: true } });
   revalidatePath('/programs');
 }
 
@@ -221,6 +227,7 @@ export async function importPrograms(
     updated = updatePayload.length;
   }
 
+  if (inserted || updated) await logAudit(supabase, { planId, entityType: 'programs', entityId: planId, action: 'update', changes: { imported_new: inserted, imported_updated: updated } });
   revalidatePath('/programs');
   return { error: null, inserted, updated, skipped };
 }
