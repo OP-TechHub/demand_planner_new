@@ -102,9 +102,14 @@ export async function saveProgram(
   };
 
   if (id) {
+    const { data: before } = await supabase.from('programs').select('*').eq('id', id).maybeSingle();
     const { error } = await supabase.from('programs').update(row).eq('id', id);
     if (error) return { error: friendly(error.message), ok: false };
-    await logAudit(supabase, { planId, entityType: 'programs', entityId: id, action: 'update', changes: { item_code: row.item_code, customer: row.customer } });
+    const diff = diffProgram(before, row);
+    await logAudit(supabase, {
+      planId, entityType: 'programs', entityId: id, action: 'update',
+      changes: Object.keys(diff).length ? diff : { item_code: row.item_code },
+    });
   } else {
     // New programs sort after existing ones (gaps of 10, matching the seed).
     const { data: last } = await supabase
@@ -261,6 +266,26 @@ function fieldsOf(r: ImportProgramRow) {
     other_costs_fp: r.other_costs_fp,
     locked: r.locked,
   };
+}
+
+// Fields worth showing in the audit log as old → new (skips bucket-id UUIDs).
+const DIFF_FIELDS = [
+  'status', 'item_code', 'item_description', 'customer', 'max_monthly_demand_fp',
+  'primary_yield', 'secondary_yield', 'tertiary_yield', 'price_per_fp',
+  'barra_cost_wr', 'packing_cost_fp', 'processing_cost_fp', 'storage_cost_fp',
+  'freight_cost_fp', 'other_costs_fp', 'locked',
+] as const;
+
+/** Diff the changed fields into an audit-friendly { field: { old, new } } map. */
+function diffProgram(before: Record<string, any> | null, after: Record<string, any>): Record<string, { old: unknown; new: unknown }> {
+  const out: Record<string, { old: unknown; new: unknown }> = {};
+  if (!before) return out;
+  for (const f of DIFF_FIELDS) {
+    const o = before[f];
+    const n = after[f];
+    if (String(o ?? '') !== String(n ?? '')) out[f] = { old: o ?? null, new: n ?? null };
+  }
+  return out;
 }
 
 function friendly(message: string): string {

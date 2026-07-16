@@ -30,28 +30,52 @@ function relativeTime(iso: string): string {
   return new Date(iso).toLocaleDateString();
 }
 
+const FIELD_LABEL: Record<string, string> = {
+  is_active: 'Status', role: 'Role', status: 'Status',
+  item_code: 'Item code', item_description: 'Description', customer: 'Customer',
+  max_monthly_demand_fp: 'Max monthly demand',
+  primary_yield: 'Primary yield', secondary_yield: 'Secondary yield', tertiary_yield: 'Tertiary yield',
+  price_per_fp: 'Price', barra_cost_wr: 'Barra cost', packing_cost_fp: 'Packing cost',
+  processing_cost_fp: 'Processing cost', storage_cost_fp: 'Storage cost',
+  freight_cost_fp: 'Freight cost', other_costs_fp: 'Other costs', locked: 'Locked',
+};
+
+function labelFor(k: string): string {
+  return FIELD_LABEL[k] ?? k.charAt(0).toUpperCase() + k.slice(1).replace(/_/g, ' ');
+}
+
 function prettyVal(v: unknown): string {
-  if (typeof v === 'boolean') return v ? 'active' : 'inactive';
-  if (v === null || v === undefined) return '—';
+  if (typeof v === 'boolean') return v ? 'yes' : 'no';
+  if (v === null || v === undefined || v === '') return '—';
+  if (typeof v === 'number') return v.toLocaleString();
   return String(v);
 }
 
-/** Turn a heterogeneous change payload into a human-readable summary. */
+/** Turn a heterogeneous change payload into a human-readable "old → new" summary. */
 function describeChanges(changes: any): string {
   const c = changes ?? {};
   const parts: string[] = [];
+
+  // Field-level old → new pairs (roles, status, program fields).
   for (const [k, v] of Object.entries<any>(c)) {
-    if (v && typeof v === 'object' && ('old' in v || 'new' in v)) {
-      const key = k === 'is_active' ? 'Status' : k.charAt(0).toUpperCase() + k.slice(1);
-      parts.push(`${key}: ${prettyVal(v.old)} → ${prettyVal(v.new)}`);
+    if (v && typeof v === 'object' && !Array.isArray(v) && ('old' in v || 'new' in v)) {
+      const fmt = k === 'is_active' ? (x: unknown) => (x ? 'active' : 'inactive') : prettyVal;
+      parts.push(`${labelFor(k)}: ${fmt(v.old)} → ${fmt(v.new)}`);
     }
   }
-  if (c.set || c.cleared) {
+
+  // Per-month edits (demand / harvest) — show a handful, then "+N more".
+  if (Array.isArray(c.edits) && c.edits.length) {
+    const shown = c.edits.slice(0, 8).map((x: any) => `M${x.m}: ${prettyVal(x.old)} → ${prettyVal(x.new)}`);
+    const remaining = c.edits.length - Math.min(8, c.edits.length) + (c.more ?? 0);
+    parts.push(shown.join(' · ') + (remaining > 0 ? ` · +${remaining} more` : ''));
+  } else if (c.set || c.cleared) {
     const b: string[] = [];
     if (c.set) b.push(`${c.set} month${c.set === 1 ? '' : 's'} set`);
     if (c.cleared) b.push(`${c.cleared} cleared`);
     parts.push(b.join(', '));
   }
+
   if (c.imported_cells) parts.push(`${c.imported_cells} cells imported`);
   if (c.imported_new || c.imported_updated) parts.push(`${c.imported_new ?? 0} added, ${c.imported_updated ?? 0} updated`);
   return parts.join(' · ');

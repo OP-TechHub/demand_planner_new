@@ -35,6 +35,15 @@ export async function saveDemandOverrides(
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: 'Your session expired. Sign in again.' };
 
+  // Snapshot current values BEFORE writing, so the audit can show old → new.
+  // A cleared override reverts to the program baseline.
+  const { data: prog } = await supabase.from('programs').select('max_monthly_demand_fp').eq('id', programId).maybeSingle();
+  const baseline = Number(prog?.max_monthly_demand_fp ?? 0);
+  const { data: existingRows } = await supabase.from('demand_plan').select('month_index, demand_fp').eq('program_id', programId);
+  const existing = new Map<number, number>(
+    (existingRows ?? []).map((r: { month_index: number; demand_fp: number }) => [r.month_index, Number(r.demand_fp)])
+  );
+
   if (upserts.length) {
     const rows = upserts.map((c) => ({
       plan_id: planId,
@@ -59,7 +68,21 @@ export async function saveDemandOverrides(
     if (error) return { error: error.message };
   }
 
-  await logAudit(supabase, { planId, entityType: 'demand_plan', entityId: programId, action: 'update', changes: { set: upserts.length, cleared: deletes.length } });
+  const edits: { m: number; old: number; new: number }[] = [];
+  for (const c of upserts) {
+    const old = existing.has(c.month_index) ? existing.get(c.month_index)! : baseline;
+    if (old !== c.demand_fp) edits.push({ m: c.month_index, old, new: c.demand_fp });
+  }
+  for (const m of deletes) {
+    const old = existing.has(m) ? existing.get(m)! : baseline;
+    if (old !== baseline) edits.push({ m, old, new: baseline });
+  }
+  edits.sort((a, b) => a.m - b.m);
+  const CAP = 40;
+  await logAudit(supabase, {
+    planId, entityType: 'demand_plan', entityId: programId, action: 'update',
+    changes: { set: upserts.length, cleared: deletes.length, edits: edits.slice(0, CAP), more: Math.max(0, edits.length - CAP) },
+  });
   revalidatePath('/demand-plan');
   return { error: null };
 }
