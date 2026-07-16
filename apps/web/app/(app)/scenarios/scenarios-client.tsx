@@ -7,6 +7,8 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog } from '@/components/ui/dialog';
 import { Input, Textarea } from '@/components/ui/input';
+import { toast } from '@/components/ui/toast';
+import { confirmDialog } from '@/components/ui/confirm';
 import { createScenario, deleteScenario, renameScenario, setActivePlan } from '../plan-actions';
 
 interface ScenarioRow { id: string; name: string; description: string; forked_at: string | null }
@@ -22,29 +24,26 @@ export function ScenariosClient({
 }) {
   const router = useRouter();
   const [creating, setCreating] = useState(false);
+  const [renaming, setRenaming] = useState<ScenarioRow | null>(null);
   const [isPending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
   function open(id: string) {
     start(async () => { await setActivePlan(id); router.push('/home'); });
   }
-  function onDelete(s: ScenarioRow) {
-    if (!confirm(`Delete scenario "${s.name}"? It can be recovered within 90 days.`)) return;
+  async function onDelete(s: ScenarioRow) {
+    const ok = await confirmDialog({
+      title: `Delete “${s.name}”?`,
+      description: 'The scenario is archived and can be recovered within 90 days.',
+      confirmLabel: 'Delete scenario',
+      destructive: true,
+    });
+    if (!ok) return;
     setError(null);
     start(async () => {
       const res = await deleteScenario(s.id);
-      if (res?.error) setError(res.error);
-      else router.refresh();
-    });
-  }
-  function onRename(s: ScenarioRow) {
-    const name = prompt('Rename scenario', s.name);
-    if (!name || name.trim() === s.name) return;
-    setError(null);
-    start(async () => {
-      const res = await renameScenario(s.id, name);
-      if (res?.error) setError(res.error);
-      else router.refresh();
+      if (res?.error) { setError(res.error); toast.error(res.error); }
+      else { toast.success(`Deleted “${s.name}”`); router.refresh(); }
     });
   }
 
@@ -89,7 +88,7 @@ export function ScenariosClient({
                 <td className="px-3 py-2">
                   <div className="flex justify-end gap-3">
                     <button onClick={() => open(s.id)} disabled={isPending} className="text-primary hover:underline">Open</button>
-                    <button onClick={() => onRename(s)} disabled={isPending} className="text-muted-foreground hover:text-foreground">Rename</button>
+                    <button onClick={() => setRenaming(s)} disabled={isPending} className="text-muted-foreground hover:text-foreground">Rename</button>
                     <button onClick={() => onDelete(s)} disabled={isPending} className="text-muted-foreground hover:text-destructive">Delete</button>
                   </div>
                 </td>
@@ -112,14 +111,67 @@ export function ScenariosClient({
             start(async () => {
               const res = await createScenario(name, description);
               if (res.error) setError(res.error);
-              else { setCreating(false); router.push('/home'); }
+              else { toast.success(`Created “${name.trim()}”`); setCreating(false); router.push('/home'); }
             });
           }}
           pending={isPending}
           error={error}
         />
       )}
+
+      {renaming && (
+        <RenameDialog
+          scenario={renaming}
+          pending={isPending}
+          onClose={() => setRenaming(null)}
+          onSubmit={(name) => {
+            start(async () => {
+              const res = await renameScenario(renaming.id, name);
+              if (res?.error) toast.error(res.error);
+              else { toast.success(`Renamed to “${name.trim()}”`); setRenaming(null); router.refresh(); }
+            });
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function RenameDialog({
+  scenario,
+  pending,
+  onClose,
+  onSubmit,
+}: {
+  scenario: ScenarioRow;
+  pending: boolean;
+  onClose: () => void;
+  onSubmit: (name: string) => void;
+}) {
+  const [name, setName] = useState(scenario.name);
+  const unchanged = !name.trim() || name.trim() === scenario.name;
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title="Rename scenario"
+      className="max-w-sm"
+      footer={
+        <>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={() => onSubmit(name)} disabled={pending || unchanged}>
+            {pending ? 'Saving…' : 'Save'}
+          </Button>
+        </>
+      }
+    >
+      <Input
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        autoFocus
+        onKeyDown={(e) => { if (e.key === 'Enter' && !unchanged) onSubmit(name); }}
+      />
+    </Dialog>
   );
 }
 

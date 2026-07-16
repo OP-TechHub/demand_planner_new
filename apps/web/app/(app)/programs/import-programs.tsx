@@ -2,8 +2,11 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
+import { CheckCircle2 } from 'lucide-react';
 import type { Bucket } from '@oceanpick/shared';
 import { parseCsv, toCsv, downloadCsv } from '@/lib/csv';
+import { Dialog } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
 import { importPrograms, type ImportProgramRow } from './actions';
 
 export const PROGRAM_CSV_HEADER = [
@@ -158,75 +161,73 @@ export function ImportPrograms({
   }
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={onClose}>
-      <div className="w-full max-w-lg rounded-lg bg-card p-5 text-sm shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold">Import Programs</h2>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">✕</button>
+    <Dialog open onClose={onClose} title="Import Programs">
+      {result ? (
+        <div className="space-y-4">
+          <p className="flex items-center gap-1.5 rounded-md bg-success/10 px-3 py-2 text-sm text-success">
+            <CheckCircle2 className="h-4 w-4" /> {result}
+          </p>
+          <div className="flex justify-end">
+            <Button onClick={onDone}>Done</Button>
+          </div>
         </div>
-
-        {result ? (
-          <div className="space-y-4">
-            <p className="rounded-md bg-success/10 px-3 py-2 text-success">{result}</p>
-            <div className="flex justify-end">
-              <button onClick={onDone} className="rounded-md bg-primary px-3 py-1.5 font-medium text-primary-foreground">Done</button>
-            </div>
+      ) : (
+        <div className="space-y-4">
+          <div>
+            <div className="mb-1.5 text-sm font-medium">1. Upload CSV</div>
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              onChange={onFile}
+              className="block w-full cursor-pointer rounded-md border border-input bg-card text-sm text-muted-foreground file:mr-3 file:cursor-pointer file:border-0 file:bg-muted file:px-3 file:py-2 file:text-sm file:font-medium file:text-foreground hover:file:bg-muted/70"
+            />
+            <button onClick={downloadTemplate} className="mt-2 text-xs font-medium text-primary hover:underline">Download template</button>
           </div>
-        ) : (
-          <div className="space-y-4">
-            <div>
-              <div className="mb-1 font-medium">1. Upload CSV</div>
-              <input type="file" accept=".csv,text/csv" onChange={onFile} className="block w-full text-sm" />
-              <button onClick={downloadTemplate} className="mt-2 text-xs text-primary hover:underline">Download template</button>
-            </div>
 
-            {parsed && (
-              <div className="space-y-3">
-                <div className="rounded-md border p-3">
-                  <div className="font-medium">2. Preview</div>
-                  <p className="mt-1 text-success">✓ {parsed.valid.length} valid ({parsed.newCount} new, {parsed.updateCount} existing)</p>
-                  {parsed.errors.length > 0 && (
-                    <details className="mt-1">
-                      <summary className="cursor-pointer text-destructive">✗ {parsed.errors.length} problem row(s)</summary>
-                      <ul className="mt-1 max-h-40 overflow-y-auto text-xs text-destructive">
-                        {parsed.errors.slice(0, 50).map((e, i) => (
-                          <li key={i}>Line {e.line}: {e.msg}</li>
-                        ))}
-                      </ul>
-                    </details>
-                  )}
-                </div>
-
-                <div>
-                  <div className="mb-1 font-medium">3. Import mode</div>
-                  <label className="flex items-center gap-2">
-                    <input type="radio" checked={mode === 'upsert'} onChange={() => setMode('upsert')} />
-                    Upsert by item_code (add new, update existing)
-                  </label>
-                  <label className="flex items-center gap-2">
-                    <input type="radio" checked={mode === 'add_new'} onChange={() => setMode('add_new')} />
-                    Add new only (skip existing item_codes)
-                  </label>
-                  <p className="mt-1 text-xs text-muted-foreground">Replace-all is deferred; invalid rows are skipped either way.</p>
-                </div>
-
-                {error && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-destructive">{error}</p>}
-
-                <div className="flex justify-end gap-2">
-                  <button onClick={onClose} className="rounded-md border px-3 py-1.5 hover:bg-muted">Cancel</button>
-                  <button
-                    onClick={doImport}
-                    disabled={isPending || parsed.valid.length === 0}
-                    className="rounded-md bg-primary px-3 py-1.5 font-medium text-primary-foreground disabled:opacity-50"
-                  >
-                    {isPending ? 'Importing…' : `Import ${parsed.valid.length} valid row(s)`}
-                  </button>
-                </div>
+          {parsed && (
+            <div className="space-y-3">
+              <div className="rounded-md border border-border p-3">
+                <div className="text-sm font-medium">2. Preview</div>
+                <p className="mt-1 flex items-center gap-1.5 text-sm text-success">
+                  <CheckCircle2 className="h-4 w-4" /> {parsed.valid.length} valid ({parsed.newCount} new, {parsed.updateCount} existing)
+                </p>
+                {parsed.errors.length > 0 && (
+                  <details className="mt-1">
+                    <summary className="cursor-pointer text-sm text-destructive">{parsed.errors.length} problem row(s)</summary>
+                    <ul className="mt-1 max-h-40 overflow-y-auto text-xs text-destructive">
+                      {parsed.errors.slice(0, 50).map((e, i) => (
+                        <li key={i}>Line {e.line}: {e.msg}</li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
               </div>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
+
+              <div>
+                <div className="mb-1.5 text-sm font-medium">3. Import mode</div>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="radio" checked={mode === 'upsert'} onChange={() => setMode('upsert')} />
+                  Upsert by item_code (add new, update existing)
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="radio" checked={mode === 'add_new'} onChange={() => setMode('add_new')} />
+                  Add new only (skip existing item_codes)
+                </label>
+                <p className="mt-1 text-xs text-muted-foreground">Replace-all is deferred; invalid rows are skipped either way.</p>
+              </div>
+
+              {error && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
+
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={onClose}>Cancel</Button>
+                <Button onClick={doImport} disabled={isPending || parsed.valid.length === 0}>
+                  {isPending ? 'Importing…' : `Import ${parsed.valid.length} valid row(s)`}
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </Dialog>
   );
 }

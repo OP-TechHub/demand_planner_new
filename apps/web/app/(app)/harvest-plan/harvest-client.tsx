@@ -2,11 +2,14 @@
 
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Download, Upload } from 'lucide-react';
+import Link from 'next/link';
+import { Download, Upload, Boxes } from 'lucide-react';
 import { monthLabel, type Bucket, type HarvestCell } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 import { toCsv, downloadCsv } from '@/lib/csv';
 import { Button } from '@/components/ui/button';
+import { EmptyState } from '@/components/ui/empty-state';
+import { ScrollX } from '@/components/ui/scroll-x';
 import { WideGridImport } from '@/components/wide-grid-import';
 import { HarvestEditor } from './harvest-editor';
 import { importHarvest } from './actions';
@@ -30,6 +33,9 @@ export function HarvestClient({
   const [editing, setEditing] = useState<Bucket | null>(null);
   const [importing, setImporting] = useState(false);
   const months = useMemo(() => Array.from({ length: horizon }, (_, i) => i + 1), [horizon]);
+  const yearStart = (mo: number) => mo > 1 && (mo - 1) % 12 === 0;
+  const stickyCol =
+    'sticky left-0 z-10 transition-shadow group-data-[scrolled=true]/scrollx:shadow-[6px_0_8px_-6px_rgba(0,0,0,0.18)]';
 
   const capacity = useMemo(() => {
     const m = new Map<string, number>();
@@ -71,17 +77,27 @@ export function HarvestClient({
       </p>
 
       {buckets.length === 0 ? (
-        <div className="rounded-lg border p-8 text-center text-sm text-muted-foreground">
-          No buckets found. Seed the buckets first.
-        </div>
+        <EmptyState
+          icon={Boxes}
+          title="No supply buckets yet"
+          description="Harvest capacity is entered per bucket. Create your buckets first, then set their monthly capacity here."
+          action={
+            <Link
+              href="/buckets"
+              className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+            >
+              Go to Buckets
+            </Link>
+          }
+        />
       ) : (
-        <div className="overflow-x-auto rounded-lg border">
+        <ScrollX className="rounded-lg border border-border">
           <table className="w-max text-xs">
             <thead className="bg-muted/50 text-muted-foreground">
               <tr>
-                <th className="sticky left-0 z-10 min-w-[10rem] bg-muted/50 px-3 py-2 text-left font-semibold">Bucket</th>
+                <th className={cn(stickyCol, 'min-w-[10rem] bg-muted/50 px-3 py-2 text-left font-semibold')}>Bucket</th>
                 {months.map((mo) => (
-                  <th key={mo} className="min-w-[4.5rem] px-2 py-2 text-right font-medium">{monthLabel(planStartDate, mo)}</th>
+                  <th key={mo} className={cn('min-w-[4.5rem] px-2 py-2 text-right font-medium', yearStart(mo) && 'border-l border-border')}>{monthLabel(planStartDate, mo)}</th>
                 ))}
                 <th className="min-w-[6rem] border-l bg-muted/50 px-3 py-2 text-right font-semibold">60mo total</th>
               </tr>
@@ -93,11 +109,11 @@ export function HarvestClient({
                   className={cn('border-t hover:bg-muted/30', canEdit && 'cursor-pointer')}
                   onClick={canEdit ? () => setEditing(b) : undefined}
                 >
-                  <td className="sticky left-0 z-10 min-w-[10rem] border-r bg-card px-3 py-1.5 font-medium">{b.name}</td>
+                  <td className={cn(stickyCol, 'min-w-[10rem] border-r bg-card px-3 py-1.5 font-medium')}>{b.name}</td>
                   {months.map((mo) => {
                     const v = cell(b.id, mo);
                     return (
-                      <td key={mo} className={cn('px-2 py-1.5 text-right tabular-nums', v === 0 && 'text-muted-foreground/50')}>
+                      <td key={mo} className={cn('px-2 py-1.5 text-right tabular-nums', yearStart(mo) && 'border-l border-border/60', v === 0 && 'text-muted-foreground/40')}>
                         {v.toLocaleString()}
                       </td>
                     );
@@ -106,9 +122,9 @@ export function HarvestClient({
                 </tr>
               ))}
               <tr className="border-t-2 bg-muted/40 font-semibold">
-                <td className="sticky left-0 z-10 bg-muted/40 px-3 py-1.5">TOTAL</td>
+                <td className={cn(stickyCol, 'bg-muted/40 px-3 py-1.5')}>TOTAL</td>
                 {monthTotals.map((t, i) => (
-                  <td key={i} className="px-2 py-1.5 text-right tabular-nums">{t.toLocaleString()}</td>
+                  <td key={i} className={cn('px-2 py-1.5 text-right tabular-nums', yearStart(i + 1) && 'border-l border-border/60')}>{t.toLocaleString()}</td>
                 ))}
                 <td className="border-l px-3 py-1.5 text-right tabular-nums">
                   {monthTotals.reduce((s, t) => s + t, 0).toLocaleString()}
@@ -116,7 +132,7 @@ export function HarvestClient({
               </tr>
             </tbody>
           </table>
-        </div>
+        </ScrollX>
       )}
 
       <p className="text-xs text-muted-foreground">Utilization coloring arrives with the calc engine (Phase 2).</p>

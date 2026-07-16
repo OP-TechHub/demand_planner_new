@@ -1,7 +1,10 @@
 'use client';
 
 import { useActionState, useEffect, useState } from 'react';
+import { X } from 'lucide-react';
 import type { Bucket, Program } from '@oceanpick/shared';
+import { Button } from '@/components/ui/button';
+import { toast } from '@/components/ui/toast';
 import { saveProgram, type ProgramFormState } from './actions';
 
 const initial: ProgramFormState = { error: null, ok: false };
@@ -23,26 +26,29 @@ export function ProgramPanel({
   const [secondary, setSecondary] = useState<string>(program?.secondary_bucket_id ?? '');
   const [tertiary, setTertiary] = useState<string>(program?.tertiary_bucket_id ?? '');
 
-  useEffect(() => {
-    if (state.ok) onSaved();
-  }, [state.ok, onSaved]);
-
   const editing = Boolean(program);
 
+  useEffect(() => {
+    if (state.ok) {
+      toast.success(editing ? 'Program saved' : 'Program created');
+      onSaved();
+    }
+  }, [state.ok, onSaved, editing]);
+
   return (
-    <div className="fixed inset-0 z-40 flex justify-end bg-black/50 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-sm animate-fade-in" onClick={onClose}>
       <div
-        className="h-full w-full max-w-md overflow-y-auto bg-card shadow-xl"
+        className="h-full w-full max-w-md animate-slide-in-right overflow-y-auto border-l border-border bg-card shadow-lg"
         onClick={(e) => e.stopPropagation()}
       >
         <form action={formAction} className="flex min-h-full flex-col">
           <input type="hidden" name="plan_id" value={planId} />
           {program && <input type="hidden" name="id" value={program.id} />}
 
-          <div className="flex items-center justify-between border-b px-5 py-3">
+          <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-card px-5 py-3">
             <h2 className="text-sm font-semibold">{editing ? 'Edit program' : 'New program'}</h2>
-            <button type="button" onClick={onClose} className="text-muted-foreground hover:text-foreground">
-              ✕
+            <button type="button" onClick={onClose} aria-label="Close" className="text-muted-foreground transition-colors hover:text-foreground">
+              <X className="h-4 w-4" />
             </button>
           </div>
 
@@ -141,17 +147,11 @@ export function ProgramPanel({
             )}
           </div>
 
-          <div className="sticky bottom-0 flex justify-end gap-2 border-t bg-card px-5 py-3">
-            <button type="button" onClick={onClose} className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted">
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={pending}
-              className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-50"
-            >
+          <div className="sticky bottom-0 flex justify-end gap-2 border-t border-border bg-card px-5 py-3">
+            <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+            <Button type="submit" disabled={pending}>
               {pending ? 'Saving…' : editing ? 'Save changes' : 'Create program'}
-            </button>
+            </Button>
           </div>
         </form>
       </div>
@@ -160,7 +160,7 @@ export function ProgramPanel({
 }
 
 const inputCls =
-  'mt-1 w-full rounded-md border px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-primary disabled:bg-muted disabled:opacity-60';
+  'mt-1 w-full rounded-md border border-input bg-card px-2.5 py-1.5 text-sm shadow-xs transition-colors focus-visible:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:bg-muted disabled:opacity-60';
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (

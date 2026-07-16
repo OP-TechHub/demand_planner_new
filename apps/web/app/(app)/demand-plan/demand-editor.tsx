@@ -4,6 +4,7 @@ import { useMemo, useState, useTransition } from 'react';
 import { monthLabel, type DemandCell, type Program } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 import { MonthlyLineChart } from '@/components/charts/monthly-line-chart';
+import { toast } from '@/components/ui/toast';
 import { saveDemandOverrides } from './actions';
 
 type Overrides = Record<number, string>; // month -> override string ('' = none)
@@ -73,7 +74,7 @@ export function DemandEditor({
     startTransition(async () => {
       const res = await saveDemandOverrides(planId, program.id, upserts, deletes);
       if (res.error) setError(res.error);
-      else onSaved();
+      else { toast.success('Demand updated'); onSaved(); }
     });
   }
 

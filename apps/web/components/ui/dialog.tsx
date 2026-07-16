@@ -21,7 +21,7 @@ export function Dialog({
   onClose: () => void;
   title?: React.ReactNode;
   description?: React.ReactNode;
-  children: React.ReactNode;
+  children?: React.ReactNode;
   footer?: React.ReactNode;
   className?: string;
 }) {

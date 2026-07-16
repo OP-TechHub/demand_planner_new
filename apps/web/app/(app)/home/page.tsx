@@ -6,6 +6,7 @@ import { fetchAllByPlan } from '@/lib/fetch-all';
 import { MonthlyLineChart } from '@/components/charts/monthly-line-chart';
 import { Card } from '@/components/ui/card';
 import { RecalculateButton } from '../recalculate-button';
+import { StalePlanNotice } from '../stale-banner';
 
 function kg(n: number) {
   return n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(0) + 'k' : String(Math.round(n));
@@ -89,6 +90,8 @@ export default async function HomePage() {
         </div>
         {plan && <RecalculateButton planId={plan.id} />}
       </div>
+
+      {plan && <StalePlanNotice planId={plan.id} lastComputedAt={plan.last_computed_at} />}
 
       {summary ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
