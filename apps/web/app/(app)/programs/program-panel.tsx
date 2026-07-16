@@ -30,7 +30,7 @@ export function ProgramPanel({
   const editing = Boolean(program);
 
   return (
-    <div className="fixed inset-0 z-40 flex justify-end bg-black/30" onClick={onClose}>
+    <div className="fixed inset-0 z-40 flex justify-end bg-black/50 backdrop-blur-sm" onClick={onClose}>
       <div
         className="h-full w-full max-w-md overflow-y-auto bg-card shadow-xl"
         onClick={(e) => e.stopPropagation()}

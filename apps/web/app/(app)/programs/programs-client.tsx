@@ -2,9 +2,11 @@
 
 import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
+import { Download, Upload, Plus } from 'lucide-react';
 import { PROGRAM_STATUS_META, type Bucket, type Program, type ProgramStatus } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 import { toCsv, downloadCsv } from '@/lib/csv';
+import { Button } from '@/components/ui/button';
 import { archiveProgram } from './actions';
 import { ProgramPanel } from './program-panel';
 import { ImportPrograms, PROGRAM_CSV_HEADER } from './import-programs';
@@ -85,21 +87,12 @@ export function ProgramsClient({
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">Programs</h1>
         <div className="flex items-center gap-2">
-          <button onClick={onExport} className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted">
-            Export CSV
-          </button>
+          <Button variant="outline" size="sm" onClick={onExport}><Download />Export CSV</Button>
           {canEdit && (
-            <button onClick={() => setImporting(true)} className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted">
-              Import CSV
-            </button>
+            <Button variant="outline" size="sm" onClick={() => setImporting(true)}><Upload />Import CSV</Button>
           )}
           {canEdit && (
-            <button
-              onClick={() => setPanel({ mode: 'new' })}
-              className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground"
-            >
-              + New Program
-            </button>
+            <Button size="sm" onClick={() => setPanel({ mode: 'new' })}><Plus />New Program</Button>
           )}
         </div>
       </div>

@@ -121,7 +121,7 @@ function BucketModal({
   useEffect(() => { if (state.ok) onSaved(); }, [state.ok, onSaved]);
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={onClose}>
       <form action={formAction} className="w-full max-w-sm rounded-lg bg-card p-5 text-sm shadow-xl" onClick={(e) => e.stopPropagation()}>
         <input type="hidden" name="org_id" value={orgId} />
         {bucket && <input type="hidden" name="id" value={bucket.id} />}

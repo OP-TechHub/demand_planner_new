@@ -40,7 +40,7 @@ export function Dialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 animate-fade-in bg-foreground/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 animate-fade-in bg-black/50 backdrop-blur-sm" onClick={onClose} />
       <div
         role="dialog"
         aria-modal="true"
