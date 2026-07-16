@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils';
 import { toCsv, downloadCsv } from '@/lib/csv';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
+import { ScrollX } from '@/components/ui/scroll-x';
 import { WideGridImport } from '@/components/wide-grid-import';
 import { DemandEditor } from './demand-editor';
 import { importDemand } from './actions';
@@ -36,7 +37,8 @@ export function DemandClient({
 
   const months = useMemo(() => Array.from({ length: horizon }, (_, i) => i + 1), [horizon]);
   const yearStart = (mo: number) => mo > 1 && (mo - 1) % 12 === 0;
-  const stickyCol = 'sticky left-0 z-10 shadow-[6px_0_8px_-6px_rgba(0,0,0,0.18)]';
+  const stickyCol =
+    'sticky left-0 z-10 transition-shadow group-data-[scrolled=true]/scrollx:shadow-[6px_0_8px_-6px_rgba(0,0,0,0.18)]';
 
   // override lookup: `${programId}:${month}` -> demand_fp
   const overrides = useMemo(() => {
@@ -122,7 +124,7 @@ export function DemandClient({
           }
         />
       ) : (
-        <div className="overflow-x-auto rounded-lg border">
+        <ScrollX className="rounded-lg border border-border">
           <table className="w-max text-xs">
             <thead className="bg-muted/50 text-muted-foreground">
               <tr>
@@ -169,7 +171,7 @@ export function DemandClient({
               </tr>
             </tbody>
           </table>
-        </div>
+        </ScrollX>
       )}
 
       <p className="text-xs text-muted-foreground">

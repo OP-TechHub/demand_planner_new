@@ -1,6 +1,7 @@
 import { BarChart3 } from 'lucide-react';
 import { monthLabel } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
+import { ScrollX } from '@/components/ui/scroll-x';
 
 export interface GridRow {
   key: string;
@@ -50,10 +51,11 @@ export function OutputGrid({
   const colTotal = (m: number) => rows.reduce((s: number, r) => s + (r.values[m] ?? 0), 0);
   // A vertical divider at each fiscal-year boundary (M13, M25, …) to orient the eye.
   const yearStart = (mo: number) => mo > 1 && (mo - 1) % 12 === 0;
-  const stickyCol = 'sticky left-0 z-10 shadow-[6px_0_8px_-6px_rgba(0,0,0,0.18)]';
+  const stickyCol =
+    'sticky left-0 z-10 transition-shadow group-data-[scrolled=true]/scrollx:shadow-[6px_0_8px_-6px_rgba(0,0,0,0.18)]';
 
   return (
-    <div className="overflow-x-auto rounded-lg border">
+    <ScrollX className="rounded-lg border border-border">
       <table className="w-max text-xs">
         <thead className="bg-muted/50 text-muted-foreground">
           <tr>
@@ -90,7 +92,7 @@ export function OutputGrid({
           )}
         </tbody>
       </table>
-    </div>
+    </ScrollX>
   );
 }
 
