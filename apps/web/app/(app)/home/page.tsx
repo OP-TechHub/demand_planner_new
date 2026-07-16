@@ -110,8 +110,7 @@ export default async function HomePage() {
               { key: 'demand', name: 'Demand', color: '#2a78d6', dashed: true },
               { key: 'fulfilled', name: 'Fulfilled', color: '#eb6834' },
             ]}
-            formatY={(v) => (v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 1e3 ? (v / 1e3).toFixed(0) + 'k' : String(Math.round(v)))}
-            formatValue={(v) => Math.round(v).toLocaleString() + ' kg'}
+            format="kg"
           />
         </div>
       )}

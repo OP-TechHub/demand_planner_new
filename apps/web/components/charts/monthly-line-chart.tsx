@@ -15,15 +15,23 @@ export function MonthlyLineChart({
   data,
   series,
   height = 260,
-  formatY,
-  formatValue,
+  format = 'count',
 }: {
   data: Record<string, number | string>[]; // each row: { label, ...seriesKeys }
   series: ChartSeries[];
   height?: number;
-  formatY?: (v: number) => string;
-  formatValue?: (v: number) => string;
+  /**
+   * How to format axis/tooltip numbers. A serializable string (not a function),
+   * so this chart can be rendered from a Server Component — functions can't cross
+   * the server→client boundary. 'kg' appends the unit in tooltips; 'count' doesn't.
+   */
+  format?: 'kg' | 'count';
 }) {
+  // Defined here (client side), never passed in as props.
+  const formatY = (v: number) =>
+    v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 1e3 ? (v / 1e3).toFixed(0) + 'k' : String(Math.round(v));
+  const formatValue = (v: number) => Math.round(v).toLocaleString() + (format === 'kg' ? ' kg' : '');
+
   return (
     <ResponsiveContainer width="100%" height={height}>
       <LineChart data={data} margin={{ top: 8, right: 20, bottom: 4, left: 4 }}>
@@ -31,7 +39,7 @@ export function MonthlyLineChart({
         <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#64748b' }} interval={5} tickLine={false} axisLine={{ stroke: '#94a3b8', strokeOpacity: 0.3 }} />
         <YAxis tick={{ fontSize: 10, fill: '#64748b' }} width={46} tickLine={false} axisLine={false} tickFormatter={formatY} />
         <Tooltip
-          formatter={formatValue ? ((v) => formatValue(Number(v))) : undefined}
+          formatter={(v) => formatValue(Number(v))}
           contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }}
         />
         {series.length > 1 && <Legend wrapperStyle={{ fontSize: 12 }} />}
