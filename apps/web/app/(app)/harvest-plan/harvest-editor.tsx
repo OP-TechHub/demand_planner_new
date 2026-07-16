@@ -88,8 +88,6 @@ export function HarvestEditor({
             height={150}
             data={months.map((mo) => ({ label: monthLabel(planStartDate, mo), capacity: Number(cells[mo] ?? '') || 0 }))}
             series={[{ key: 'capacity', name: 'Capacity (kg WR)', color: '#1baf7a' }]}
-            formatY={(v) => (v >= 1e3 ? (v / 1e3).toFixed(0) + 'k' : String(Math.round(v)))}
-            formatValue={(v) => Math.round(v).toLocaleString()}
           />
         </div>
 

@@ -105,8 +105,6 @@ export function DemandEditor({
               { key: 'baseline', name: 'Baseline', color: '#94a3b8', dashed: true },
               { key: 'effective', name: 'Effective', color: '#2a78d6' },
             ]}
-            formatY={(v) => (v >= 1e3 ? (v / 1e3).toFixed(0) + 'k' : String(Math.round(v)))}
-            formatValue={(v) => Math.round(v).toLocaleString()}
           />
         </div>
 
