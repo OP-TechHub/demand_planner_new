@@ -100,6 +100,88 @@ export async function createScenario(name: string, description: string): Promise
   return { error: null, scenarioId: sid };
 }
 
+/**
+ * Create a fresh plan for a financial year: a new user-owned plan seeded with a
+ * chosen subset of the master's programs, starting on the given month. Optionally
+ * copies the demand overrides (for the chosen programs) and harvest from master;
+ * otherwise the new plan starts from program baselines with empty harvest.
+ */
+export async function createPlan(input: {
+  name: string;
+  planStartDate: string; // 'YYYY-MM-DD' (financial-year start, April 1)
+  programIds: string[];
+  copyData: boolean;
+}): Promise<ScenarioResult> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: 'Your session expired. Sign in again.' };
+  if (!input.name?.trim()) return { error: 'Name is required.' };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.planStartDate ?? '')) return { error: 'Pick a start month.' };
+  if (!input.programIds?.length) return { error: 'Select at least one program to include.' };
+
+  const { data: master } = await supabase.from('plans').select('*').eq('type', 'master').is('deleted_at', null).maybeSingle();
+  if (!master) return { error: 'No master plan to base this on.' };
+
+  const { data: plan, error: se } = await supabase.from('plans').insert({
+    org_id: master.org_id, type: 'scenario', parent_plan_id: master.id,
+    name: input.name.trim(), description: '', owner_user_id: user.id, is_locked: false,
+    plan_start_date: input.planStartDate, horizon_months: master.horizon_months,
+    settings_margin_metric: master.settings_margin_metric, settings_allocation_mode: master.settings_allocation_mode,
+    settings_scope: master.settings_scope, settings_lookback_months: master.settings_lookback_months,
+    forked_at: new Date().toISOString(), created_by: user.id, updated_by: user.id,
+  }).select('id').maybeSingle();
+  if (se || !plan) {
+    const m = (se?.message ?? '').toLowerCase();
+    if (m.includes('scenario') || m.includes('limit')) return { error: 'You have reached the 20-plan limit.' };
+    return { error: se?.message ?? 'Could not create the plan.' };
+  }
+  const pid = plan.id as string;
+  const fail = async (msg: string): Promise<ScenarioResult> => {
+    await supabase.from('plans').delete().eq('id', pid);
+    return { error: msg };
+  };
+
+  const idSet = new Set(input.programIds);
+  const { data: masterProgs } = await supabase.from('programs').select('*').eq('plan_id', master.id).is('deleted_at', null);
+  const selected = (masterProgs ?? []).filter((p: any) => idSet.has(p.id));
+  if (!selected.length) return fail('None of the selected programs were found.');
+
+  const progRows = selected.map((p: any) => {
+    const row: any = { plan_id: pid, created_by: user.id, updated_by: user.id };
+    for (const c of PROGRAM_COLS) row[c] = p[c];
+    return row;
+  });
+  const { error: pe } = await supabase.from('programs').insert(progRows);
+  if (pe) return fail(`adding programs: ${pe.message}`);
+
+  if (input.copyData) {
+    const { data: newProgs } = await supabase.from('programs').select('id, item_code').eq('plan_id', pid);
+    const newIdByCode = new Map((newProgs ?? []).map((p: any) => [p.item_code, p.id]));
+    const codeByOldId = new Map(selected.map((p: any) => [p.id, p.item_code]));
+
+    const demand = await fetchAllByPlan(supabase, 'demand_plan', 'program_id, month_index, demand_fp', master.id);
+    const demandRows = demand
+      .filter((d: any) => idSet.has(d.program_id))
+      .map((d: any) => ({ plan_id: pid, program_id: newIdByCode.get(codeByOldId.get(d.program_id)), month_index: d.month_index, demand_fp: d.demand_fp, created_by: user.id, updated_by: user.id }))
+      .filter((d) => d.program_id);
+    for (let i = 0; i < demandRows.length; i += 800) {
+      const { error } = await supabase.from('demand_plan').insert(demandRows.slice(i, i + 800));
+      if (error) return fail(`copying demand: ${error.message}`);
+    }
+
+    const harvest = await fetchAllByPlan(supabase, 'harvest_plan', 'bucket_id, month_index, capacity_kg_wr', master.id);
+    const harvestRows = harvest.map((h: any) => ({ plan_id: pid, bucket_id: h.bucket_id, month_index: h.month_index, capacity_kg_wr: h.capacity_kg_wr, created_by: user.id, updated_by: user.id }));
+    for (let i = 0; i < harvestRows.length; i += 800) {
+      const { error } = await supabase.from('harvest_plan').insert(harvestRows.slice(i, i + 800));
+      if (error) return fail(`copying harvest: ${error.message}`);
+    }
+  }
+
+  setActiveCookie(await cookies(), pid);
+  revalidatePath('/', 'layout');
+  return { error: null, scenarioId: pid };
+}
+
 export async function renameScenario(id: string, name: string): Promise<{ error: string | null }> {
   if (!name?.trim()) return { error: 'Name is required.' };
   const supabase = await createClient();
