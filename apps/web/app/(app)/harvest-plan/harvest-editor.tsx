@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useTransition } from 'react';
 import { monthLabel, type Bucket, type HarvestCell } from '@oceanpick/shared';
+import { MonthlyLineChart } from '@/components/charts/monthly-line-chart';
 import { saveHarvestCapacity } from './actions';
 
 type Cells = Record<number, string>; // month -> capacity string ('' = 0/none)
@@ -80,6 +81,16 @@ export function HarvestEditor({
         <div className="flex items-center gap-2 border-b px-5 py-2 text-sm">
           <button onClick={() => setCells({})} className="rounded-md border px-2.5 py-1 hover:bg-muted">Clear all</button>
           <button onClick={() => setPattern(true)} className="rounded-md border px-2.5 py-1 hover:bg-muted">Apply pattern…</button>
+        </div>
+
+        <div className="border-b px-5 py-2">
+          <MonthlyLineChart
+            height={150}
+            data={months.map((mo) => ({ label: monthLabel(planStartDate, mo), capacity: Number(cells[mo] ?? '') || 0 }))}
+            series={[{ key: 'capacity', name: 'Capacity (kg WR)', color: '#1baf7a' }]}
+            formatY={(v) => (v >= 1e3 ? (v / 1e3).toFixed(0) + 'k' : String(Math.round(v)))}
+            formatValue={(v) => Math.round(v).toLocaleString()}
+          />
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-3">

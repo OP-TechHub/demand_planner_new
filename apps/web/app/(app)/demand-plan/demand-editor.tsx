@@ -3,6 +3,7 @@
 import { useMemo, useState, useTransition } from 'react';
 import { monthLabel, type DemandCell, type Program } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
+import { MonthlyLineChart } from '@/components/charts/monthly-line-chart';
 import { saveDemandOverrides } from './actions';
 
 type Overrides = Record<number, string>; // month -> override string ('' = none)
@@ -94,6 +95,19 @@ export function DemandEditor({
           <button onClick={() => setPattern(true)} className="rounded-md border px-2.5 py-1 hover:bg-muted">
             Apply pattern…
           </button>
+        </div>
+
+        <div className="border-b px-5 py-2">
+          <MonthlyLineChart
+            height={150}
+            data={months.map((mo) => ({ label: monthLabel(planStartDate, mo), baseline, effective: effective(mo) }))}
+            series={[
+              { key: 'baseline', name: 'Baseline', color: '#94a3b8', dashed: true },
+              { key: 'effective', name: 'Effective', color: '#2a78d6' },
+            ]}
+            formatY={(v) => (v >= 1e3 ? (v / 1e3).toFixed(0) + 'k' : String(Math.round(v)))}
+            formatValue={(v) => Math.round(v).toLocaleString()}
+          />
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-3">

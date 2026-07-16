@@ -1,5 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { monthLabel } from '@oceanpick/shared';
+import { fetchAllByPlan } from '@/lib/fetch-all';
+import { MonthlyLineChart } from '@/components/charts/monthly-line-chart';
 import { RecalculateButton } from '../recalculate-button';
 
 function kg(n: number) {
@@ -24,6 +26,19 @@ export default async function HomePage() {
   const fulfilled = summary && summary.demand_fp > 0 ? summary.allocated_fp / summary.demand_fp : 0;
   const lastComputed = plan?.last_computed_at ? new Date(plan.last_computed_at).toLocaleString() : null;
 
+  // Monthly demand vs fulfilled (FP) for the chart, aggregated from rolling_results.
+  let chartData: { label: string; demand: number; fulfilled: number }[] = [];
+  if (plan && summary) {
+    const rr = await fetchAllByPlan(supabase, 'rolling_results', 'month_index, demand_fp, rolling_fp', plan.id);
+    const dem = new Array<number>(plan.horizon_months).fill(0);
+    const ful = new Array<number>(plan.horizon_months).fill(0);
+    for (const r of rr) {
+      const i = r.month_index - 1;
+      if (i >= 0 && i < plan.horizon_months) { dem[i] += r.demand_fp; ful[i] += r.rolling_fp; }
+    }
+    chartData = dem.map((d, i) => ({ label: monthLabel(plan.plan_start_date, i + 1), demand: d, fulfilled: ful[i] ?? 0 }));
+  }
+
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div className="flex items-start justify-between">
@@ -47,6 +62,21 @@ export default async function HomePage() {
         <div className="rounded-lg border border-dashed bg-muted/30 p-5 text-sm text-muted-foreground">
           No computed results yet. Add programs, demand, and harvest capacity, then <b>Recalculate now</b> to see
           fulfilment, revenue, and margin.
+        </div>
+      )}
+
+      {chartData.length > 0 && (
+        <div className="rounded-lg border bg-card p-5">
+          <h2 className="mb-3 text-sm font-semibold">Monthly demand vs. fulfilled (kg FP)</h2>
+          <MonthlyLineChart
+            data={chartData}
+            series={[
+              { key: 'demand', name: 'Demand', color: '#2a78d6', dashed: true },
+              { key: 'fulfilled', name: 'Fulfilled', color: '#eb6834' },
+            ]}
+            formatY={(v) => (v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 1e3 ? (v / 1e3).toFixed(0) + 'k' : String(Math.round(v)))}
+            formatValue={(v) => Math.round(v).toLocaleString() + ' kg'}
+          />
         </div>
       )}
 
