@@ -35,6 +35,17 @@ export async function saveHarvestCapacity(
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: 'Your session expired. Sign in again.' };
 
+  // Snapshot current capacity BEFORE writing, so the audit can show old → new.
+  // A cleared cell reverts to 0 (no capacity).
+  const { data: existingRows } = await supabase
+    .from('harvest_plan')
+    .select('month_index, capacity_kg_wr')
+    .eq('plan_id', planId)
+    .eq('bucket_id', bucketId);
+  const existing = new Map<number, number>(
+    (existingRows ?? []).map((r: { month_index: number; capacity_kg_wr: number }) => [r.month_index, Number(r.capacity_kg_wr)])
+  );
+
   if (upserts.length) {
     const rows = upserts.map((c) => ({
       plan_id: planId,
@@ -60,7 +71,21 @@ export async function saveHarvestCapacity(
     if (error) return { error: error.message };
   }
 
-  await logAudit(supabase, { planId, entityType: 'harvest_plan', entityId: bucketId, action: 'update', changes: { set: upserts.length, cleared: deletes.length } });
+  const edits: { m: number; old: number; new: number }[] = [];
+  for (const c of upserts) {
+    const old = existing.get(c.month_index) ?? 0;
+    if (old !== c.capacity_kg_wr) edits.push({ m: c.month_index, old, new: c.capacity_kg_wr });
+  }
+  for (const m of deletes) {
+    const old = existing.get(m) ?? 0;
+    if (old !== 0) edits.push({ m, old, new: 0 });
+  }
+  edits.sort((a, b) => a.m - b.m);
+  const CAP = 40;
+  await logAudit(supabase, {
+    planId, entityType: 'harvest_plan', entityId: bucketId, action: 'update',
+    changes: { set: upserts.length, cleared: deletes.length, edits: edits.slice(0, CAP), more: Math.max(0, edits.length - CAP) },
+  });
   revalidatePath('/harvest-plan');
   return { error: null };
 }
