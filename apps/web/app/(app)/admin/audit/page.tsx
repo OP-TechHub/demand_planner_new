@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
-import { Badge } from '@/components/ui/badge';
+import { AuditTable, type AuditRow } from './audit-table';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -16,17 +16,6 @@ function actionVerb(action: string, changes: any): string {
   if (action === 'insert') return 'Created';
   if (action === 'delete') return changes?.archived ? 'Archived' : 'Deleted';
   return 'Updated';
-}
-
-function actionTone(action: string): string {
-  if (action === 'insert') return 'text-success';
-  if (action === 'delete') return 'text-destructive';
-  return 'text-primary';
-}
-
-function initials(name: string) {
-  const p = name.trim().split(/\s+/);
-  return ((p[0]?.[0] ?? '') + (p[1]?.[0] ?? '')).toUpperCase() || name.slice(0, 2).toUpperCase();
 }
 
 function relativeTime(iso: string): string {
@@ -94,7 +83,6 @@ export default async function AuditPage() {
   const bucketById = new Map<string, string>((buckets ?? []).map((b: any) => [b.id, b.name]));
   const planById = new Map<string, any>((plans ?? []).map((p: any) => [p.id, p]));
 
-  // Resolve the human label for whatever entity an entry points at.
   const entityLabel = (e: any): string => {
     const c = e.changes ?? {};
     switch (e.entity_type) {
@@ -108,68 +96,40 @@ export default async function AuditPage() {
     }
   };
 
+  const rows: AuditRow[] = (entries ?? []).map((e: any) => {
+    const plan = e.plan_id ? planById.get(e.plan_id) : null;
+    return {
+      id: e.id,
+      whoId: e.user_id ?? '',
+      who: userById.get(e.user_id) ?? 'Unknown',
+      sectionKey: e.entity_type,
+      section: SECTION[e.entity_type] ?? e.entity_type,
+      action: actionVerb(e.action, e.changes),
+      actionKey: e.action,
+      entity: entityLabel(e),
+      detail: describeChanges(e.changes),
+      scenario: plan && plan.type === 'scenario' ? plan.name : null,
+      rel: relativeTime(e.at),
+      abs: new Date(e.at).toLocaleString(),
+      dateStr: new Date(e.at).toLocaleDateString(),
+    };
+  });
+
   return (
     <div className="mx-auto max-w-4xl space-y-4">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Audit Log</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Append-only record of every change — who did it, in which section, and when. Showing the latest {Math.min(entries?.length ?? 0, 200)}.
+          Append-only record of every change — who did it, in which section, and when. Latest {rows.length}.
         </p>
       </div>
 
-      {!entries || entries.length === 0 ? (
+      {rows.length === 0 ? (
         <div className="rounded-lg border border-dashed border-border bg-muted/20 p-10 text-center text-sm text-muted-foreground">
           No activity recorded yet.
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full min-w-[42rem] text-sm">
-            <thead className="border-b border-border bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
-              <tr>
-                <th className="px-4 py-2.5 font-medium">Who</th>
-                <th className="px-4 py-2.5 font-medium">Section</th>
-                <th className="px-4 py-2.5 font-medium">What changed</th>
-                <th className="px-4 py-2.5 text-right font-medium">When</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(entries as any[]).map((e) => {
-                const who = userById.get(e.user_id) ?? 'Unknown';
-                const detail = describeChanges(e.changes);
-                const plan = e.plan_id ? planById.get(e.plan_id) : null;
-                return (
-                  <tr key={e.id} className="border-b border-border align-top last:border-0 hover:bg-muted/30">
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2.5">
-                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-semibold text-primary">
-                          {initials(who)}
-                        </span>
-                        <span className="truncate font-medium">{who}</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <Badge variant="secondary">{SECTION[e.entity_type] ?? e.entity_type}</Badge>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div>
-                        <span className={`font-medium ${actionTone(e.action)}`}>{actionVerb(e.action, e.changes)}</span>{' '}
-                        <span className="text-foreground">{entityLabel(e)}</span>
-                        {plan && plan.type === 'scenario' && (
-                          <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">in “{plan.name}”</span>
-                        )}
-                      </div>
-                      {detail && <div className="mt-0.5 text-xs text-muted-foreground">{detail}</div>}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-right text-muted-foreground">
-                      <div title={new Date(e.at).toLocaleString()}>{relativeTime(e.at)}</div>
-                      <div className="text-xs text-muted-foreground/70">{new Date(e.at).toLocaleDateString()}</div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <AuditTable rows={rows} />
       )}
     </div>
   );
