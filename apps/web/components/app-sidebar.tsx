@@ -41,8 +41,8 @@ const SECTIONS: Section[] = [
     title: 'Admin',
     adminOnly: true,
     items: [
-      { label: 'Users', href: '/admin/users', soon: true },
-      { label: 'Audit log', href: '/admin/audit', soon: true },
+      { label: 'Users', href: '/admin/users' },
+      { label: 'Audit log', href: '/admin/audit' },
     ],
   },
 ];
