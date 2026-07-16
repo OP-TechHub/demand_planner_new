@@ -33,6 +33,7 @@ export default async function ScenariosPage() {
       activeId={active?.id ?? ''}
       hasMaster={!!master}
       canCreate={canCreate}
+      yearsAhead={master?.settings_plan_years_ahead ?? 10}
       programs={programs}
     />
   );

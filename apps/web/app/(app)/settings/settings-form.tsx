@@ -78,6 +78,23 @@ export function SettingsForm({ plan, canEdit }: { plan: Plan; canEdit: boolean }
             </label>
           </div>
 
+          {plan.type === 'master' && (
+            <label className="block">
+              <span className="text-xs font-medium text-muted-foreground">Financial years offered when creating a plan</span>
+              <input
+                type="number"
+                name="settings_plan_years_ahead"
+                min={1}
+                max={30}
+                defaultValue={String(plan.settings_plan_years_ahead ?? 10)}
+                className={inputCls}
+              />
+              <span className="mt-1 block text-xs text-muted-foreground">
+                How far ahead the “New Plan” financial-year dropdown reaches (1–30 years).
+              </span>
+            </label>
+          )}
+
           {state.error && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-destructive">{state.error}</p>}
 
           {canEdit && (

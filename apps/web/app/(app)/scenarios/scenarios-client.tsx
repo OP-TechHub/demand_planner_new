@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Plus, CalendarPlus } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog } from '@/components/ui/dialog';
@@ -20,12 +21,14 @@ export function ScenariosClient({
   activeId,
   hasMaster,
   canCreate,
+  yearsAhead,
   programs,
 }: {
   scenarios: ScenarioRow[];
   activeId: string;
   hasMaster: boolean;
   canCreate: boolean;
+  yearsAhead: number;
   programs: PickProgram[];
 }) {
   const router = useRouter();
@@ -125,6 +128,7 @@ export function ScenariosClient({
       {planning && (
         <NewPlanModal
           programs={programs}
+          yearsAhead={yearsAhead}
           pending={isPending}
           error={error}
           onClose={() => setPlanning(false)}
@@ -255,13 +259,13 @@ function CreateModal({
   );
 }
 
-function fyStartOptions(): { value: string; label: string }[] {
+function fyStartOptions(yearsAhead: number): { value: string; label: string }[] {
   const now = new Date();
   // Financial year starts in April; before April we're still in the prior FY.
   const base = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
   const out: { value: string; label: string }[] = [];
-  // One prior FY through ten years ahead.
-  for (let y = base - 1; y <= base + 10; y++) {
+  // One prior FY through `yearsAhead` years ahead (admin-configurable).
+  for (let y = base - 1; y <= base + Math.max(1, yearsAhead); y++) {
     out.push({ value: `${y}-04-01`, label: `FY ${y}/${String(y + 1).slice(2)} · Apr ${y} – Mar ${y + 1}` });
   }
   return out;
@@ -269,20 +273,25 @@ function fyStartOptions(): { value: string; label: string }[] {
 
 function NewPlanModal({
   programs,
+  yearsAhead,
   pending,
   error,
   onClose,
   onCreate,
 }: {
   programs: PickProgram[];
+  yearsAhead: number;
   pending: boolean;
   error: string | null;
   onClose: () => void;
   onCreate: (input: { name: string; planStartDate: string; programIds: string[]; copyData: boolean }) => void;
 }) {
-  const options = fyStartOptions();
+  const options = fyStartOptions(yearsAhead);
   const [name, setName] = useState('');
-  const [startDate, setStartDate] = useState(options[1]?.value ?? options[0]?.value ?? '');
+  const [startMode, setStartMode] = useState<'fy' | 'custom'>('fy');
+  const [fyStart, setFyStart] = useState(options[1]?.value ?? options[0]?.value ?? '');
+  const [customMonth, setCustomMonth] = useState(''); // 'YYYY-MM'
+  const startDate = startMode === 'fy' ? fyStart : customMonth ? `${customMonth}-01` : '';
   const [selected, setSelected] = useState<Set<string>>(new Set(programs.map((p) => p.id)));
   const [copyData, setCopyData] = useState(false);
 
@@ -294,7 +303,7 @@ function NewPlanModal({
       return next;
     });
 
-  const disabled = pending || !name.trim() || selected.size === 0;
+  const disabled = pending || !name.trim() || !startDate || selected.size === 0;
 
   return (
     <Dialog
@@ -320,12 +329,34 @@ function NewPlanModal({
             <span className="text-xs font-medium text-muted-foreground">Plan name</span>
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder='e.g. "FY 2027 Plan"' autoFocus />
           </label>
-          <label className="block space-y-1.5">
-            <span className="text-xs font-medium text-muted-foreground">Financial year (starts April)</span>
-            <Select value={startDate} onChange={(e) => setStartDate(e.target.value)}>
-              {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </Select>
-          </label>
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-muted-foreground">Plan start</span>
+              <div className="inline-flex rounded-md border border-border bg-card p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setStartMode('fy')}
+                  className={cn('rounded px-2 py-0.5 text-xs font-medium transition-colors', startMode === 'fy' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground')}
+                >
+                  Financial year
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStartMode('custom')}
+                  className={cn('rounded px-2 py-0.5 text-xs font-medium transition-colors', startMode === 'custom' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground')}
+                >
+                  Custom month
+                </button>
+              </div>
+            </div>
+            {startMode === 'fy' ? (
+              <Select value={fyStart} onChange={(e) => setFyStart(e.target.value)}>
+                {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </Select>
+            ) : (
+              <Input type="month" value={customMonth} onChange={(e) => setCustomMonth(e.target.value)} />
+            )}
+          </div>
         </div>
 
         <div>

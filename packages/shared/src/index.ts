@@ -63,6 +63,7 @@ export interface Plan {
   settings_allocation_mode: AllocationMode;
   settings_scope: PlanScope;
   settings_lookback_months: number;
+  settings_plan_years_ahead: number;
   last_computed_at: string | null;
   forked_at: string | null;
 }
