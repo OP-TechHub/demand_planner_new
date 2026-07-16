@@ -34,6 +34,10 @@ const SECTIONS: Section[] = [
     ],
   },
   {
+    title: 'Scenarios',
+    items: [{ label: 'My scenarios', href: '/scenarios' }],
+  },
+  {
     title: 'Admin',
     adminOnly: true,
     items: [

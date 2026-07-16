@@ -3,6 +3,9 @@ import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { AppSidebar } from '@/components/app-sidebar';
 import type { UserRole } from '@oceanpick/shared';
+import { getActivePlan, getSelectablePlans } from '@/lib/plan';
+import { PlanSelector } from './plan-selector';
+import { ScenarioBanner } from './scenario-banner';
 import { logout } from '../login/actions';
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -49,6 +52,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     );
   }
 
+  const [activePlan, plans] = await Promise.all([getActivePlan(), getSelectablePlans()]);
+  const master = plans.find((p) => p.type === 'master') ?? null;
+
   return (
     <div className="flex min-h-screen">
       <AppSidebar role={profile.role as UserRole} />
@@ -58,9 +64,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             <Link href="/home" className="text-sm font-semibold tracking-tight">
               Oceanpick Demand Planner
             </Link>
-            <span className="rounded-md border px-2 py-0.5 text-xs text-muted-foreground">
-              Plan: Master
-            </span>
+            {activePlan && <PlanSelector plans={plans} activeId={activePlan.id} />}
           </div>
           <div className="flex items-center gap-4">
             <div className="text-right leading-tight">
@@ -74,6 +78,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             </form>
           </div>
         </header>
+        {activePlan?.type === 'scenario' && master && (
+          <ScenarioBanner name={activePlan.name} masterId={master.id} />
+        )}
         <main className="flex-1 p-6">{children}</main>
       </div>
     </div>
