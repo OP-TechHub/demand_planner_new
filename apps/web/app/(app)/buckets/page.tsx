@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
-import { getActivePlan } from '@/lib/plan';
+import { getActivePlan, getProfile } from '@/lib/plan';
 import { canEditSection, type Bucket, type Program, type HarvestCell, type UserRole } from '@oceanpick/shared';
 import { BucketsClient, type BucketRow } from './buckets-client';
 
@@ -17,12 +17,11 @@ export default async function BucketsPage() {
   }
 
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  const [{ data: buckets }, { data: programs }, { data: harvest }, { data: me }] = await Promise.all([
+  const [{ data: buckets }, { data: programs }, { data: harvest }, profile] = await Promise.all([
     supabase.from('buckets').select('*').order('sort_order'),
     supabase.from('programs').select('primary_bucket_id, secondary_bucket_id, tertiary_bucket_id').eq('plan_id', plan.id).is('deleted_at', null),
     supabase.from('harvest_plan').select('bucket_id, capacity_kg_wr').eq('plan_id', plan.id),
-    supabase.from('users').select('role, edit_sections').eq('id', user!.id).maybeSingle(),
+    getProfile(),
   ]);
 
   // Programs using a bucket in any of its three paths.
@@ -48,7 +47,7 @@ export default async function BucketsPage() {
     <BucketsClient
       orgId={plan.org_id}
       rows={rows}
-      canEdit={canEditSection((me?.role ?? 'viewer') as UserRole, me?.edit_sections, 'buckets')}
+      canEdit={canEditSection((profile?.role ?? 'viewer') as UserRole, profile?.edit_sections, 'buckets')}
     />
   );
 }

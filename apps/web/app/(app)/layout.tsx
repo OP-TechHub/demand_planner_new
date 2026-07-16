@@ -1,9 +1,8 @@
 import { redirect } from 'next/navigation';
 import { LogOut } from 'lucide-react';
-import { createClient } from '@/lib/supabase/server';
 import { AppSidebar } from '@/components/app-sidebar';
 import type { UserRole } from '@oceanpick/shared';
-import { getActivePlan, getSelectablePlans } from '@/lib/plan';
+import { getActivePlan, getSelectablePlans, getCurrentUser, getProfile } from '@/lib/plan';
 import { PlanSelector } from './plan-selector';
 import { ScenarioBanner } from './scenario-banner';
 import { ThemeToggle } from '@/components/theme-toggle';
@@ -13,17 +12,11 @@ import { RecalculateButton } from './recalculate-button';
 import { logout } from '../login/actions';
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
-  const supabase = await createClient();
-
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getCurrentUser();
   if (!user) redirect('/login');
 
-  // RLS restricts this to the caller's own org.
-  const { data: profile } = await supabase
-    .from('users')
-    .select('full_name, email, role, is_active, last_login_at')
-    .eq('id', user.id)
-    .single();
+  // Request-cached: shared with every page under this layout on the same render.
+  const profile = await getProfile();
 
   // A profile row is created by the handle_new_user() trigger. If it's missing,
   // something went wrong at signup rather than the user being unauthorised —

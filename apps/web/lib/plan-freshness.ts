@@ -13,17 +13,20 @@ export async function getPlanFreshness(planId: string, lastComputedAt: string | 
   const supabase = await createClient();
   const computedMs = new Date(lastComputedAt).getTime();
 
-  for (const table of ['programs', 'harvest_plan', 'demand_plan'] as const) {
-    const { data } = await supabase
-      .from(table)
-      .select('updated_at')
-      .eq('plan_id', planId)
-      .order('updated_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (data?.updated_at && new Date(data.updated_at as string).getTime() > computedMs) {
-      return { computed: true, stale: true };
-    }
-  }
-  return { computed: true, stale: false };
+  // Run the three freshness probes in parallel (was sequential).
+  const latest = await Promise.all(
+    (['programs', 'harvest_plan', 'demand_plan'] as const).map((table) =>
+      supabase
+        .from(table)
+        .select('updated_at')
+        .eq('plan_id', planId)
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+    )
+  );
+  const stale = latest.some(
+    ({ data }) => data?.updated_at && new Date(data.updated_at as string).getTime() > computedMs
+  );
+  return { computed: true, stale };
 }
