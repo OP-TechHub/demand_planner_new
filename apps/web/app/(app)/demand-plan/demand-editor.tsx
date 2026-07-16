@@ -78,7 +78,7 @@ export function DemandEditor({
   }
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={onClose}>
       <div className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-lg bg-card shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b px-5 py-3">
           <div>
@@ -146,7 +146,7 @@ export function DemandEditor({
           </table>
         </div>
 
-        {error && <p role="alert" className="mx-5 mb-2 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+        {error && <p role="alert" className="mx-5 mb-2 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
 
         <div className="flex justify-end gap-2 border-t px-5 py-3">
           <button onClick={onClose} className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted">Cancel</button>
@@ -224,7 +224,7 @@ function PatternModal({
   const inp = 'w-24 rounded-md border px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-primary';
 
   return (
-    <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+    <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={onClose}>
       <div className="w-full max-w-sm rounded-lg bg-card p-5 text-sm shadow-xl" onClick={(e) => e.stopPropagation()}>
         <h3 className="mb-3 text-sm font-semibold">Apply pattern</h3>
         <div className="space-y-1">

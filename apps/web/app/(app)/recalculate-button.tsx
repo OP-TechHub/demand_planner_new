@@ -2,6 +2,9 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
+import { RefreshCw } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
 import { recompute } from './recompute';
 
 export function RecalculateButton({ planId }: { planId: string }) {
@@ -21,13 +24,10 @@ export function RecalculateButton({ planId }: { planId: string }) {
 
   return (
     <div className="flex items-center gap-3">
-      <button
-        onClick={onClick}
-        disabled={pending}
-        className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-50"
-      >
+      <Button onClick={onClick} disabled={pending}>
+        <RefreshCw className={cn(pending && 'animate-spin')} />
         {pending ? 'Recalculating…' : 'Recalculate now'}
-      </button>
+      </Button>
       {msg && <span className={err ? 'text-sm text-destructive' : 'text-sm text-muted-foreground'}>{msg}</span>}
     </div>
   );

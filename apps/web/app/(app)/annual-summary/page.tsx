@@ -85,8 +85,8 @@ export default async function AnnualSummaryPage() {
 
 function NoPlan() {
   return (
-    <div className="rounded-lg border border-amber-200 bg-amber-50 p-5 text-sm">
-      <p className="font-semibold text-amber-900">No master plan found</p>
+    <div className="rounded-lg border border-warning/30 bg-warning/10 p-5 text-sm">
+      <p className="font-semibold text-warning">No master plan found</p>
     </div>
   );
 }

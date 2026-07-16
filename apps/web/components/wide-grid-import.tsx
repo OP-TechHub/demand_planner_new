@@ -1,7 +1,10 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import { CheckCircle2 } from 'lucide-react';
 import { parseCsv } from '@/lib/csv';
+import { Dialog } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
 
 export type WideRow = { key: string; cells: { month: number; value: number }[] };
 export type WideImportResult = { error: string | null; count: number; unknown: string[] };
@@ -97,60 +100,59 @@ export function WideGridImport({
   }
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 p-4" onClick={onClose}>
-      <div className="w-full max-w-lg rounded-lg bg-card p-5 text-sm shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold">{title}</h2>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">✕</button>
+    <Dialog
+      open
+      onClose={onClose}
+      title={title}
+      description={<>Columns: <code className="rounded bg-muted px-1">{keyColumn}</code> plus <code className="rounded bg-muted px-1">M1</code>…<code className="rounded bg-muted px-1">M{horizon}</code>. Export first to get the exact shape.</>}
+    >
+      {result ? (
+        <div className="space-y-4">
+          <p className="flex items-center gap-1.5 rounded-md bg-success/10 px-3 py-2 text-sm text-success">
+            <CheckCircle2 className="h-4 w-4" /> {result}
+          </p>
+          <div className="flex justify-end">
+            <Button onClick={onDone}>Done</Button>
+          </div>
         </div>
-
-        {result ? (
-          <div className="space-y-4">
-            <p className="rounded-md bg-green-50 px-3 py-2 text-green-800">{result}</p>
-            <div className="flex justify-end">
-              <button onClick={onDone} className="rounded-md bg-primary px-3 py-1.5 font-medium text-primary-foreground">Done</button>
-            </div>
+      ) : (
+        <div className="space-y-4">
+          <div>
+            <div className="mb-1.5 text-sm font-medium">Upload CSV</div>
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              onChange={onFile}
+              className="block w-full cursor-pointer rounded-md border border-input bg-card text-sm text-muted-foreground file:mr-3 file:cursor-pointer file:border-0 file:bg-muted file:px-3 file:py-2 file:text-sm file:font-medium file:text-foreground hover:file:bg-muted/70"
+            />
           </div>
-        ) : (
-          <div className="space-y-4">
-            <div>
-              <div className="mb-1 font-medium">Upload CSV</div>
-              <input type="file" accept=".csv,text/csv" onChange={onFile} className="block w-full text-sm" />
-              <p className="mt-1 text-xs text-muted-foreground">
-                Columns: <code>{keyColumn}</code> plus month columns <code>M1</code>…<code>M{horizon}</code>.
-                Tip: export first to get the exact shape.
-              </p>
-            </div>
 
-            {parsed && (
-              <div className="space-y-3">
-                <div className="rounded-md border p-3">
-                  <p className="text-green-700">✓ {parsed.rows.length} rows, {parsed.cellCount} cells to write</p>
-                  {parsed.errors.length > 0 && (
-                    <details className="mt-1">
-                      <summary className="cursor-pointer text-red-700">✗ {parsed.errors.length} problem(s)</summary>
-                      <ul className="mt-1 max-h-40 overflow-y-auto text-xs text-red-700">
-                        {parsed.errors.slice(0, 50).map((e, i) => <li key={i}>Line {e.line}: {e.msg}</li>)}
-                      </ul>
-                    </details>
-                  )}
-                </div>
-                {error && <p role="alert" className="rounded-md bg-red-50 px-3 py-2 text-red-700">{error}</p>}
-                <div className="flex justify-end gap-2">
-                  <button onClick={onClose} className="rounded-md border px-3 py-1.5 hover:bg-muted">Cancel</button>
-                  <button
-                    onClick={doImport}
-                    disabled={isPending || parsed.rows.length === 0}
-                    className="rounded-md bg-primary px-3 py-1.5 font-medium text-primary-foreground disabled:opacity-50"
-                  >
-                    {isPending ? 'Importing…' : `Import ${parsed.cellCount} cells`}
-                  </button>
-                </div>
+          {parsed && (
+            <div className="space-y-3">
+              <div className="rounded-md border border-border p-3">
+                <p className="flex items-center gap-1.5 text-sm text-success">
+                  <CheckCircle2 className="h-4 w-4" /> {parsed.rows.length} rows, {parsed.cellCount} cells to write
+                </p>
+                {parsed.errors.length > 0 && (
+                  <details className="mt-1">
+                    <summary className="cursor-pointer text-sm text-destructive">{parsed.errors.length} problem(s)</summary>
+                    <ul className="mt-1 max-h-40 overflow-y-auto text-xs text-destructive">
+                      {parsed.errors.slice(0, 50).map((e, i) => <li key={i}>Line {e.line}: {e.msg}</li>)}
+                    </ul>
+                  </details>
+                )}
               </div>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
+              {error && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={onClose}>Cancel</Button>
+                <Button onClick={doImport} disabled={isPending || parsed.rows.length === 0}>
+                  {isPending ? 'Importing…' : `Import ${parsed.cellCount} cells`}
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </Dialog>
   );
 }

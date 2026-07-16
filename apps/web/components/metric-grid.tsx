@@ -1,9 +1,11 @@
 'use client';
 
 import { useState } from 'react';
+import { Download } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { kg, usd, num0, pct } from '@/lib/format';
 import { toCsv, downloadCsv } from '@/lib/csv';
+import { Button } from '@/components/ui/button';
 import { OutputGrid, gridCsvRows, type GridRow } from './output-grid';
 
 const FMT = { kg, usd, num0, pct } as const;
@@ -36,23 +38,28 @@ export function MetricGrid({
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-        <div className="flex gap-2">
+        <div className="inline-flex rounded-md border border-border bg-card p-0.5">
           {metrics.map((x) => (
             <button
               key={x.key}
               onClick={() => setSel(x.key)}
-              className={cn('rounded-md border px-3 py-1.5', sel === x.key ? 'bg-primary text-primary-foreground' : 'hover:bg-muted')}
+              className={cn(
+                'rounded px-3 py-1 text-sm font-medium transition-colors',
+                sel === x.key ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+              )}
             >
               {x.label}
             </button>
           ))}
         </div>
-        <button
+        <Button
+          variant="outline"
+          size="sm"
           onClick={() => downloadCsv(`${filenameBase}-${m.key}.csv`, toCsv(gridCsvRows(firstColLabel, planStartDate, horizon, m.rows)))}
-          className="rounded-md border px-3 py-1.5 hover:bg-muted"
         >
+          <Download />
           Export CSV
-        </button>
+        </Button>
       </div>
       <OutputGrid planStartDate={planStartDate} horizon={horizon} rows={m.rows} format={FMT[m.format]} firstColLabel={firstColLabel} />
     </div>

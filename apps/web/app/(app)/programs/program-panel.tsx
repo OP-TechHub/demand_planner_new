@@ -30,7 +30,7 @@ export function ProgramPanel({
   const editing = Boolean(program);
 
   return (
-    <div className="fixed inset-0 z-40 flex justify-end bg-black/30" onClick={onClose}>
+    <div className="fixed inset-0 z-40 flex justify-end bg-black/50 backdrop-blur-sm" onClick={onClose}>
       <div
         className="h-full w-full max-w-md overflow-y-auto bg-card shadow-xl"
         onClick={(e) => e.stopPropagation()}
@@ -137,7 +137,7 @@ export function ProgramPanel({
             </div>
 
             {state.error && (
-              <p role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{state.error}</p>
+              <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{state.error}</p>
             )}
           </div>
 

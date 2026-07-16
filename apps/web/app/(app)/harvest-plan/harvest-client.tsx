@@ -2,9 +2,11 @@
 
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { Download, Upload } from 'lucide-react';
 import { monthLabel, type Bucket, type HarvestCell } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 import { toCsv, downloadCsv } from '@/lib/csv';
+import { Button } from '@/components/ui/button';
 import { WideGridImport } from '@/components/wide-grid-import';
 import { HarvestEditor } from './harvest-editor';
 import { importHarvest } from './actions';
@@ -57,9 +59,9 @@ export function HarvestClient({
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">Monthly Harvest Plan</h1>
         <div className="flex items-center gap-2">
-          <button onClick={onExport} className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted">Export CSV</button>
+          <Button variant="outline" size="sm" onClick={onExport}><Download />Export CSV</Button>
           {canEdit && (
-            <button onClick={() => setImporting(true)} className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted">Import CSV</button>
+            <Button variant="outline" size="sm" onClick={() => setImporting(true)}><Upload />Import CSV</Button>
           )}
         </div>
       </div>
