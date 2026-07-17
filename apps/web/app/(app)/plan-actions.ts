@@ -317,6 +317,70 @@ export async function rollPlanForward(
   return { error: null, months, archiveId };
 }
 
+/**
+ * Restore a plan's start date, demand and harvest from a snapshot — the inverse
+ * of rollPlanForward, and the way to undo a roll.
+ *
+ * The plan's CURRENT state is snapshotted first, so the restore is itself
+ * reversible: you can flip back and forth between windows. Programs aren't
+ * replaced (a roll never touches them); demand is remapped onto the target's
+ * own programs by item_code inside the SQL function.
+ */
+export async function restorePlanFromSnapshot(
+  targetPlanId: string,
+  snapshotPlanId: string
+): Promise<{ error: string | null; archiveId?: string }> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: 'Your session expired. Sign in again.' };
+
+  const { data: target } = await supabase.from('plans').select('*').eq('id', targetPlanId).is('deleted_at', null).maybeSingle();
+  if (!target) return { error: 'Plan not found.' };
+  const { data: snapshot } = await supabase.from('plans').select('*').eq('id', snapshotPlanId).is('deleted_at', null).maybeSingle();
+  if (!snapshot) return { error: 'Snapshot not found, or you can’t access it.' };
+
+  const { data: me } = await supabase.from('users').select('role').eq('id', user.id).maybeSingle();
+  const isAdmin = me?.role === 'admin';
+  const isOwner = target.owner_user_id === user.id;
+  if (!isAdmin && !isOwner) return { error: 'Only an admin (or the plan’s owner) can restore a plan.' };
+  if (target.is_locked) return { error: 'This plan is locked (read-only) and can’t be restored into.' };
+  if (target.id === snapshot.id) return { error: 'Pick a different snapshot.' };
+  if (target.horizon_months !== snapshot.horizon_months) {
+    return { error: `That snapshot is ${snapshot.horizon_months} months long but this plan is ${target.horizon_months} — the month slots wouldn’t line up.` };
+  }
+
+  const svc = createServiceClient();
+
+  // Snapshot where we are now, so this restore can itself be undone.
+  let archiveId: string;
+  try {
+    archiveId = await snapshotPlan(
+      svc, target, user.id,
+      `${target.name} — archive (${target.plan_start_date.slice(0, 7)} start)`,
+      `Read-only snapshot taken before restoring “${target.name}” from “${snapshot.name}”.`
+    );
+  } catch (e) {
+    return { error: `Snapshot failed, so nothing was restored: ${e instanceof Error ? e.message : 'unknown error'}` };
+  }
+
+  const { error } = await svc.rpc('restore_plan_from_snapshot', { p_target: targetPlanId, p_source: snapshotPlanId });
+  if (error) {
+    await svc.from('plans').delete().eq('id', archiveId);
+    return { error: error.message };
+  }
+
+  await logAudit(supabase, {
+    planId: targetPlanId, entityType: 'plans', entityId: targetPlanId, action: 'update',
+    changes: {
+      plan_start_date: { old: target.plan_start_date.slice(0, 7), new: snapshot.plan_start_date.slice(0, 7) },
+      restored_from: snapshot.name,
+    },
+  });
+
+  revalidatePath('/', 'layout');
+  return { error: null, archiveId };
+}
+
 export async function renameScenario(id: string, name: string): Promise<{ error: string | null }> {
   if (!name?.trim()) return { error: 'Name is required.' };
   const supabase = await createClient();
