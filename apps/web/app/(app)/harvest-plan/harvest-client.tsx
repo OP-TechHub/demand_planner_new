@@ -69,7 +69,7 @@ export function HarvestClient({
   // Exports what's on screen — the month range still round-trips through import,
   // which maps columns by their M<n> header rather than by position.
   function onExport() {
-    const header = ['bucket', ...visibleMonths.map((mo) => `M${mo}`)];
+    const header = ['bucket', ...visibleMonths.map((mo) => monthLabel(planStartDate, mo))];
     const data = buckets.map((b) => [
       b.name,
       ...visibleMonths.map((mo) => { const v = cell(b.id, mo); return v === 0 ? '' : v; }),
@@ -195,8 +195,10 @@ export function HarvestClient({
         <WideGridImport
           title="Import Monthly Harvest"
           keyColumn="bucket"
-          knownKeys={new Set(buckets.map((b) => b.name))}
+          keys={buckets.map((b) => ({ key: b.name }))}
+          planStartDate={planStartDate}
           horizon={horizon}
+          templateName="harvest-plan-template.csv"
           onImport={(rows) => importHarvest(planId, rows)}
           onClose={() => setImporting(false)}
           onDone={() => { setImporting(false); router.refresh(); }}

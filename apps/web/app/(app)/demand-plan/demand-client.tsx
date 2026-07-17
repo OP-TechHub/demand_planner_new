@@ -84,9 +84,9 @@ export function DemandClient({
   );
 
   // Exports what's on screen — the month range still round-trips through import,
-  // which maps columns by their M<n> header rather than by position.
+  // which maps columns by their month heading rather than by position.
   function onExport() {
-    const header = ['item_code', 'item_description', ...visibleMonths.map((mo) => `M${mo}`)];
+    const header = ['item_code', 'item_description', ...visibleMonths.map((mo) => monthLabel(planStartDate, mo))];
     const data = programs.map((p) => [
       p.item_code,
       p.item_description,
@@ -231,8 +231,11 @@ export function DemandClient({
         <WideGridImport
           title="Import Monthly Demand"
           keyColumn="item_code"
-          knownKeys={new Set(programs.map((p) => p.item_code))}
+          keys={programs.map((p) => ({ key: p.item_code, note: p.item_description }))}
+          noteColumn="item_description"
+          planStartDate={planStartDate}
           horizon={horizon}
+          templateName="demand-plan-template.csv"
           onImport={(rows) => importDemand(planId, rows)}
           onClose={() => setImporting(false)}
           onDone={() => { setImporting(false); router.refresh(); }}
