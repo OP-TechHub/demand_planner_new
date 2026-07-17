@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
-import { getActivePlan, getSelectablePlans } from '@/lib/plan';
+import { getActivePlan, getSelectablePlans, getProfile } from '@/lib/plan';
 import { can, type UserRole } from '@oceanpick/shared';
 import { ScenariosClient, type PickProgram } from './scenarios-client';
 
@@ -11,13 +11,12 @@ export default async function ScenariosPage() {
 
   const master = plans.find((p) => p.type === 'master') ?? null;
 
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  const { data: me } = await supabase.from('users').select('role').eq('id', user!.id).maybeSingle();
-  const canCreate = can.createScenario((me?.role ?? 'viewer') as UserRole);
+  const profile = await getProfile();
+  const canCreate = can.createScenario((profile?.role ?? 'viewer') as UserRole);
 
   let programs: PickProgram[] = [];
   if (master) {
+    const supabase = await createClient();
     const { data } = await supabase
       .from('programs')
       .select('id, item_code, item_description, customer')

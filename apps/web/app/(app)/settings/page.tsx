@@ -1,5 +1,4 @@
-import { createClient } from '@/lib/supabase/server';
-import { getActivePlan } from '@/lib/plan';
+import { getActivePlan, getProfile } from '@/lib/plan';
 import { SettingsForm } from './settings-form';
 
 export default async function SettingsPage() {
@@ -15,9 +14,7 @@ export default async function SettingsPage() {
     );
   }
 
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  const { data: me } = await supabase.from('users').select('role').eq('id', user!.id).maybeSingle();
+  const profile = await getProfile();
 
-  return <SettingsForm plan={plan} canEdit={me?.role === 'admin'} />;
+  return <SettingsForm plan={plan} canEdit={profile?.role === 'admin'} />;
 }
