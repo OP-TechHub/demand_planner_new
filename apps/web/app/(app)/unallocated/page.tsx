@@ -1,10 +1,10 @@
 import { createClient } from '@/lib/supabase/server';
 import { getActivePlan } from '@/lib/plan';
-import { OutputGrid, NotComputed, gridCsvRows, type GridRow } from '@/components/output-grid';
+import { OutputGrid, NotComputed } from '@/components/output-grid';
+import { gridCsvRows, type GridRow } from '@/lib/grid-csv';
 import { StalePlanNotice } from '../stale-banner';
 import { ExportCsvButton } from '@/components/export-csv-button';
 import { fetchAllByPlan } from '@/lib/fetch-all';
-import { num0 } from '@/lib/format';
 
 export default async function UnallocatedPage() {
   const plan = await getActivePlan();
@@ -34,7 +34,7 @@ export default async function UnallocatedPage() {
       ) : (
         <>
           <p className="text-xs text-muted-foreground">Spare whole-round capacity (kg WR) per bucket × month, after own-month consumption and all borrowings.</p>
-          <OutputGrid planStartDate={plan.plan_start_date} horizon={plan.horizon_months} rows={rows} format={num0} firstColLabel="Bucket" />
+          <OutputGrid planStartDate={plan.plan_start_date} horizon={plan.horizon_months} rows={rows} format="num0" firstColLabel="Bucket" />
         </>
       )}
     </div>

@@ -34,8 +34,21 @@ export function DemandClient({
   const [importing, setImporting] = useState(false);
   const [customer, setCustomer] = useState('all');
   const [search, setSearch] = useState('');
+  const [fromMonth, setFromMonth] = useState(1);
+  const [toMonth, setToMonth] = useState(horizon);
 
   const months = useMemo(() => Array.from({ length: horizon }, (_, i) => i + 1), [horizon]);
+  // The columns actually rendered — the month-range filter narrows the 60-wide grid.
+  const visibleMonths = useMemo(
+    () => months.filter((m) => m >= fromMonth && m <= toMonth),
+    [months, fromMonth, toMonth]
+  );
+  const fullRange = fromMonth === 1 && toMonth === horizon;
+
+  // Keep the range coherent: dragging one end past the other pushes the other end.
+  const onFrom = (v: number) => { setFromMonth(v); if (v > toMonth) setToMonth(v); };
+  const onTo = (v: number) => { setToMonth(v); if (v < fromMonth) setFromMonth(v); };
+
   const yearStart = (mo: number) => mo > 1 && (mo - 1) % 12 === 0;
   const stickyCol =
     'sticky left-0 z-10 transition-shadow group-data-[scrolled=true]/scrollx:shadow-[6px_0_8px_-6px_rgba(0,0,0,0.18)]';
@@ -66,16 +79,18 @@ export function DemandClient({
 
   // TOTAL row: sum of effective demand across in-scope (non-inactive) visible programs.
   const totals = useMemo(
-    () => months.map((mo) => visible.filter((p) => p.status !== 'inactive').reduce((s, p) => s + effective(p, mo), 0)),
-    [months, visible, overrides] // eslint-disable-line react-hooks/exhaustive-deps
+    () => visibleMonths.map((mo) => visible.filter((p) => p.status !== 'inactive').reduce((s, p) => s + effective(p, mo), 0)),
+    [visibleMonths, visible, overrides] // eslint-disable-line react-hooks/exhaustive-deps
   );
 
+  // Exports what's on screen — the month range still round-trips through import,
+  // which maps columns by their M<n> header rather than by position.
   function onExport() {
-    const header = ['item_code', 'item_description', ...months.map((mo) => `M${mo}`)];
+    const header = ['item_code', 'item_description', ...visibleMonths.map((mo) => `M${mo}`)];
     const data = programs.map((p) => [
       p.item_code,
       p.item_description,
-      ...months.map((mo) => overrides.get(`${p.id}:${mo}`) ?? ''),
+      ...visibleMonths.map((mo) => overrides.get(`${p.id}:${mo}`) ?? ''),
     ]);
     downloadCsv('demand-plan.csv', toCsv([header, ...data]));
   }
@@ -103,7 +118,29 @@ export function DemandClient({
           placeholder="Search program…"
           className={cn(filterCls, 'min-w-[14rem]')}
         />
+
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs font-medium text-muted-foreground">Months</span>
+          <select value={fromMonth} onChange={(e) => onFrom(Number(e.target.value))} className={filterCls} aria-label="From month">
+            {months.map((mo) => <option key={mo} value={mo}>{monthLabel(planStartDate, mo)}</option>)}
+          </select>
+          <span className="text-xs text-muted-foreground">to</span>
+          <select value={toMonth} onChange={(e) => onTo(Number(e.target.value))} className={filterCls} aria-label="To month">
+            {months.map((mo) => <option key={mo} value={mo}>{monthLabel(planStartDate, mo)}</option>)}
+          </select>
+          {!fullRange && (
+            <button
+              type="button"
+              onClick={() => { setFromMonth(1); setToMonth(horizon); }}
+              className="text-xs font-medium text-primary hover:underline"
+            >
+              Reset
+            </button>
+          )}
+        </div>
+
         <span className="text-xs text-muted-foreground">
+          {!fullRange && <>Showing {visibleMonths.length} of {horizon} months. </>}
           Effective demand (override where set, else program baseline).
           {canEdit ? ' Click a program to edit its timeline.' : ''}
         </span>
@@ -131,7 +168,7 @@ export function DemandClient({
                 <th className={cn(stickyCol, 'min-w-[16rem] bg-muted/50 px-3 py-2 text-left font-semibold')}>
                   Program
                 </th>
-                {months.map((mo) => (
+                {visibleMonths.map((mo) => (
                   <th key={mo} className={cn('min-w-[4.5rem] px-2 py-2 text-right font-medium', yearStart(mo) && 'border-l border-border')}>
                     {monthLabel(planStartDate, mo)}
                   </th>
@@ -149,7 +186,7 @@ export function DemandClient({
                     <span className="font-medium">{p.customer}</span>{' '}
                     <span className="text-muted-foreground">{p.item_description}</span>
                   </td>
-                  {months.map((mo) => {
+                  {visibleMonths.map((mo) => {
                     const isOverride = overrides.has(`${p.id}:${mo}`);
                     return (
                       <td
@@ -166,7 +203,7 @@ export function DemandClient({
               <tr className="border-t-2 bg-muted/40 font-semibold">
                 <td className={cn(stickyCol, 'bg-muted/40 px-3 py-1.5')}>TOTAL (Active + Pipeline)</td>
                 {totals.map((t, i) => (
-                  <td key={i} className={cn('px-2 py-1.5 text-right tabular-nums', yearStart(i + 1) && 'border-l border-border/60')}>{t.toLocaleString()}</td>
+                  <td key={visibleMonths[i]} className={cn('px-2 py-1.5 text-right tabular-nums', yearStart(visibleMonths[i]) && 'border-l border-border/60')}>{t.toLocaleString()}</td>
                 ))}
               </tr>
             </tbody>

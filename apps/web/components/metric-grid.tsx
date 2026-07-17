@@ -3,13 +3,12 @@
 import { useState } from 'react';
 import { Download } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { kg, usd, num0, pct } from '@/lib/format';
 import { toCsv, downloadCsv } from '@/lib/csv';
+import { gridCsvRows, type GridRow } from '@/lib/grid-csv';
 import { Button } from '@/components/ui/button';
-import { OutputGrid, gridCsvRows, type GridRow } from './output-grid';
+import { OutputGrid, type FmtKey } from './output-grid';
 
-const FMT = { kg, usd, num0, pct } as const;
-export type FmtKey = keyof typeof FMT;
+export type { FmtKey };
 
 export interface Metric {
   key: string;
@@ -61,7 +60,7 @@ export function MetricGrid({
           Export CSV
         </Button>
       </div>
-      <OutputGrid planStartDate={planStartDate} horizon={horizon} rows={m.rows} format={FMT[m.format]} firstColLabel={firstColLabel} />
+      <OutputGrid planStartDate={planStartDate} horizon={horizon} rows={m.rows} format={m.format} firstColLabel={firstColLabel} />
     </div>
   );
 }
