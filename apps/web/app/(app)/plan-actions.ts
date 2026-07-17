@@ -5,6 +5,7 @@ import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { fetchAllByPlan } from '@/lib/fetch-all';
+import { logAudit } from '@/lib/audit';
 import { ACTIVE_PLAN_COOKIE } from '@/lib/plan';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -187,6 +188,133 @@ export async function createPlan(input: {
   setActiveCookie(await cookies(), pid);
   revalidatePath('/', 'layout');
   return { error: null, scenarioId: pid };
+}
+
+/** Inclusive month distance between two 'YYYY-MM' values (b - a). */
+function monthsBetweenYM(a: string, b: string): number {
+  const m1 = /^(\d{4})-(\d{2})$/.exec(a);
+  const m2 = /^(\d{4})-(\d{2})$/.exec(b);
+  if (!m1 || !m2) return NaN;
+  return (Number(m2[1]) - Number(m1[1])) * 12 + (Number(m2[2]) - Number(m1[2]));
+}
+
+/** Copy a plan (programs + demand + harvest) into a locked, read-only snapshot. */
+async function snapshotPlan(svc: any, plan: any, userId: string, name: string, description: string): Promise<string> {
+  const { data: archive, error: ae } = await svc.from('plans').insert({
+    org_id: plan.org_id,
+    type: 'scenario',
+    // A scenario must hang off the master: if we're archiving the master itself
+    // it becomes the parent; otherwise reuse the source's parent.
+    parent_plan_id: plan.type === 'master' ? plan.id : plan.parent_plan_id,
+    name, description,
+    owner_user_id: userId,
+    is_locked: true, // read-only — can_write_section() requires `not is_locked`
+    plan_start_date: plan.plan_start_date,
+    horizon_months: plan.horizon_months,
+    settings_margin_metric: plan.settings_margin_metric,
+    settings_allocation_mode: plan.settings_allocation_mode,
+    settings_scope: plan.settings_scope,
+    settings_lookback_months: plan.settings_lookback_months,
+    forked_at: new Date().toISOString(),
+    created_by: userId, updated_by: userId,
+  }).select('id').maybeSingle();
+  if (ae || !archive) throw new Error(ae?.message ?? 'Could not create the snapshot.');
+  const aid = archive.id as string;
+
+  const { data: srcProgs } = await svc.from('programs').select('*').eq('plan_id', plan.id).is('deleted_at', null);
+  const progRows = (srcProgs ?? []).map((p: any) => {
+    const row: any = { plan_id: aid, created_by: userId, updated_by: userId };
+    for (const c of PROGRAM_COLS) row[c] = p[c];
+    return row;
+  });
+  if (progRows.length) {
+    const { error } = await svc.from('programs').insert(progRows);
+    if (error) throw new Error(`snapshot programs: ${error.message}`);
+  }
+
+  const { data: newProgs } = await svc.from('programs').select('id, item_code').eq('plan_id', aid);
+  const newIdByCode = new Map((newProgs ?? []).map((p: any) => [p.item_code, p.id]));
+  const codeByOldId = new Map((srcProgs ?? []).map((p: any) => [p.id, p.item_code]));
+
+  const demand = await fetchAllByPlan(svc, 'demand_plan', 'program_id, month_index, demand_fp', plan.id);
+  const demandRows = demand
+    .map((d: any) => ({ plan_id: aid, program_id: newIdByCode.get(codeByOldId.get(d.program_id)), month_index: d.month_index, demand_fp: d.demand_fp, created_by: userId, updated_by: userId }))
+    .filter((d) => d.program_id);
+  for (let i = 0; i < demandRows.length; i += 800) {
+    const { error } = await svc.from('demand_plan').insert(demandRows.slice(i, i + 800));
+    if (error) throw new Error(`snapshot demand: ${error.message}`);
+  }
+
+  const harvest = await fetchAllByPlan(svc, 'harvest_plan', 'bucket_id, month_index, capacity_kg_wr', plan.id);
+  const harvestRows = harvest.map((h: any) => ({ plan_id: aid, bucket_id: h.bucket_id, month_index: h.month_index, capacity_kg_wr: h.capacity_kg_wr, created_by: userId, updated_by: userId }));
+  for (let i = 0; i < harvestRows.length; i += 800) {
+    const { error } = await svc.from('harvest_plan').insert(harvestRows.slice(i, i + 800));
+    if (error) throw new Error(`snapshot harvest: ${error.message}`);
+  }
+
+  return aid;
+}
+
+/**
+ * Roll a plan's window forward to a later start month, keeping the same plan.
+ *
+ * Month data is stored relative to the plan start, so the surviving months must
+ * shift down as the start advances — otherwise every cell silently re-labels
+ * itself. A read-only snapshot of the plan is taken first, so the rolled-off
+ * period is never lost. The freed tail is left empty, and computed results are
+ * cleared (a recompute is required).
+ */
+export async function rollPlanForward(
+  planId: string,
+  newStartMonth: string // 'YYYY-MM'
+): Promise<{ error: string | null; months?: number; archiveId?: string }> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: 'Your session expired. Sign in again.' };
+
+  const { data: plan } = await supabase.from('plans').select('*').eq('id', planId).is('deleted_at', null).maybeSingle();
+  if (!plan) return { error: 'Plan not found.' };
+
+  const { data: me } = await supabase.from('users').select('role').eq('id', user.id).maybeSingle();
+  const isAdmin = me?.role === 'admin';
+  const isOwner = plan.owner_user_id === user.id;
+  if (!isAdmin && !isOwner) return { error: 'Only an admin (or the plan’s owner) can roll a plan forward.' };
+  if (plan.is_locked) return { error: 'This plan is locked (read-only) and can’t be rolled forward.' };
+
+  if (!/^\d{4}-\d{2}$/.test(newStartMonth ?? '')) return { error: 'Pick a new start month.' };
+  const months = monthsBetweenYM(plan.plan_start_date.slice(0, 7), newStartMonth);
+  if (!Number.isFinite(months) || months < 1) return { error: 'The new start must be later than the current start.' };
+  if (months >= plan.horizon_months) {
+    return { error: `You can roll forward at most ${plan.horizon_months - 1} months — beyond that nothing of the plan would remain.` };
+  }
+
+  const svc = createServiceClient();
+
+  let archiveId: string;
+  try {
+    archiveId = await snapshotPlan(
+      svc, plan, user.id,
+      `${plan.name} — archive (${plan.plan_start_date.slice(0, 7)} start)`,
+      `Read-only snapshot taken before rolling “${plan.name}” forward ${months} month${months === 1 ? '' : 's'}.`
+    );
+  } catch (e) {
+    return { error: `Snapshot failed, so the plan was not rolled: ${e instanceof Error ? e.message : 'unknown error'}` };
+  }
+
+  const { error } = await svc.rpc('roll_plan_forward', { p_plan_id: planId, p_months: months });
+  if (error) {
+    // The snapshot exists but the roll didn't happen — leave the plan untouched.
+    await svc.from('plans').delete().eq('id', archiveId);
+    return { error: error.message };
+  }
+
+  await logAudit(supabase, {
+    planId, entityType: 'plans', entityId: planId, action: 'update',
+    changes: { plan_start_date: { old: plan.plan_start_date.slice(0, 7), new: newStartMonth }, rolled_forward_months: months },
+  });
+
+  revalidatePath('/', 'layout');
+  return { error: null, months, archiveId };
 }
 
 export async function renameScenario(id: string, name: string): Promise<{ error: string | null }> {

@@ -1,5 +1,6 @@
 import { getActivePlan, getProfile } from '@/lib/plan';
 import { SettingsForm } from './settings-form';
+import { RollForwardCard } from './roll-forward';
 
 export default async function SettingsPage() {
   const plan = await getActivePlan();
@@ -15,6 +16,19 @@ export default async function SettingsPage() {
   }
 
   const profile = await getProfile();
+  const isAdmin = profile?.role === 'admin';
 
-  return <SettingsForm plan={plan} canEdit={profile?.role === 'admin'} />;
+  return (
+    <div className="mx-auto max-w-2xl space-y-4">
+      <SettingsForm plan={plan} canEdit={isAdmin} />
+      {isAdmin && !plan.is_locked && (
+        <RollForwardCard
+          planId={plan.id}
+          planName={plan.name}
+          planStartDate={plan.plan_start_date}
+          horizon={plan.horizon_months}
+        />
+      )}
+    </div>
+  );
 }
