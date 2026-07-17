@@ -10,7 +10,7 @@ export type SaveResult = { error: string | null };
 /** Map a raw RLS rejection to a clear message about section access. */
 function permError(message: string): string {
   return /row-level security|violates row-level/i.test(message)
-    ? 'You don’t have permission to edit the harvest plan. Ask an admin for access.'
+    ? 'Can’t edit the harvest plan here — this plan may be a read-only snapshot, or you may not have edit access to this section.'
     : message;
 }
 

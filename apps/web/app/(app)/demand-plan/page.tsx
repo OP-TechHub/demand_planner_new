@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { getActivePlan, getProfile } from '@/lib/plan';
-import { canEditSection, type DemandCell, type Program, type UserRole } from '@oceanpick/shared';
+import { canEditPlanSection, type DemandCell, type Program, type UserRole } from '@oceanpick/shared';
 import { DemandClient } from './demand-client';
 
 export default async function DemandPlanPage() {
@@ -23,7 +23,11 @@ export default async function DemandPlanPage() {
     getProfile(),
   ]);
 
-  const canEdit = canEditSection((profile?.role ?? 'viewer') as UserRole, profile?.edit_sections, 'demand_plan');
+  const canEdit = canEditPlanSection(
+    plan,
+    { id: profile?.id ?? '', role: (profile?.role ?? 'viewer') as UserRole, edit_sections: profile?.edit_sections },
+    'demand_plan'
+  );
 
   return (
     <DemandClient

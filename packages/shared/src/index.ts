@@ -170,6 +170,25 @@ export function canEditSection(
 }
 
 /**
+ * Can this user edit a section OF THIS PLAN?
+ *
+ * Mirrors the DB's can_write_section() exactly, so the UI never offers an edit
+ * the database will reject:
+ *   • a locked plan (read-only snapshot) is never editable
+ *   • a scenario is editable only by its owner
+ *   • the master honours role + section grants
+ */
+export function canEditPlanSection(
+  plan: { type: PlanType; owner_user_id: string | null; is_locked: boolean },
+  user: { id: string; role: UserRole; edit_sections?: string[] | null },
+  section: EditableSection
+): boolean {
+  if (plan.is_locked) return false;
+  if (plan.type === 'scenario') return plan.owner_user_id === user.id;
+  return canEditSection(user.role, user.edit_sections, section);
+}
+
+/**
  * Month index (1-60) -> calendar label, derived from the plan's start date.
  * M1 = plan_start_date. Matches the workbook: 2026-04-01 -> "Apr 26".
  */
@@ -179,6 +198,64 @@ export function monthLabel(planStartDate: string, monthIndex: number): string {
   const month = d.toLocaleString('en-US', { month: 'short', timeZone: 'UTC' });
   const year = String(d.getUTCFullYear()).slice(2);
   return `${month} ${year}`;
+}
+
+const MONTH_ABBR = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+
+/**
+ * Read a CSV month column heading back into a month index (inverse of
+ * monthLabel). Returns null when the heading names no month, or names one
+ * outside the plan's window.
+ *
+ * Deliberately liberal, because a heading rarely survives a round-trip intact:
+ * Excel reads "Apr 26" as a date and writes it back as "26-Apr", so the year
+ * and the day-of-month swap places. Both are accepted — a bare 1-2 digit number
+ * beside a month name is read as a 2-digit year either way, which lands on the
+ * right month because our labels only ever carry a year. "M1" is still accepted
+ * so CSVs exported before the headings changed continue to import.
+ */
+export function parseMonthHeader(
+  planStartDate: string,
+  header: string,
+  horizon: number
+): number | null {
+  const h = header.trim().toLowerCase();
+  if (!h) return null;
+
+  const legacy = /^m(\d+)$/.exec(h);
+  if (legacy) {
+    const i = Number(legacy[1]);
+    return i >= 1 && i <= horizon ? i : null;
+  }
+
+  // Split on anything that isn't alphanumeric: "Apr 26", "26-Apr", "Apr/2026".
+  const tokens = h.split(/[^a-z0-9]+/).filter(Boolean);
+
+  let month0 = -1;
+  let year = -1;
+  for (const t of tokens) {
+    const named = MONTH_ABBR.findIndex((a) => t.startsWith(a));
+    if (named !== -1 && month0 === -1) { month0 = named; continue; }
+    if (/^\d{1,4}$/.test(t) && year === -1) year = Number(t);
+  }
+
+  // Numeric-only form: "2026-04" (a bare month number needs the year first, or
+  // there's no telling which of the two numbers is which).
+  if (month0 === -1) {
+    if (tokens.length !== 2) return null;
+    const [a, b] = tokens.map(Number);
+    if (!(a >= 1000 && b >= 1 && b <= 12)) return null;
+    year = a;
+    month0 = b - 1;
+  }
+
+  if (month0 === -1 || year === -1) return null;
+  if (year < 100) year += 2000;
+
+  const start = new Date(planStartDate + 'T00:00:00Z');
+  const index =
+    (year - start.getUTCFullYear()) * 12 + (month0 - start.getUTCMonth()) + 1;
+  return index >= 1 && index <= horizon ? index : null;
 }
 
 /**

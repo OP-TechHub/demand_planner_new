@@ -86,7 +86,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           </div>
         </header>
         {activePlan?.type === 'scenario' && master && (
-          <ScenarioBanner name={activePlan.name} masterId={master.id} />
+          <ScenarioBanner name={activePlan.name} masterId={master.id} locked={activePlan.is_locked} />
         )}
         <main className="flex-1 p-6">{children}</main>
       </div>
