@@ -170,6 +170,25 @@ export function canEditSection(
 }
 
 /**
+ * Can this user edit a section OF THIS PLAN?
+ *
+ * Mirrors the DB's can_write_section() exactly, so the UI never offers an edit
+ * the database will reject:
+ *   • a locked plan (read-only snapshot) is never editable
+ *   • a scenario is editable only by its owner
+ *   • the master honours role + section grants
+ */
+export function canEditPlanSection(
+  plan: { type: PlanType; owner_user_id: string | null; is_locked: boolean },
+  user: { id: string; role: UserRole; edit_sections?: string[] | null },
+  section: EditableSection
+): boolean {
+  if (plan.is_locked) return false;
+  if (plan.type === 'scenario') return plan.owner_user_id === user.id;
+  return canEditSection(user.role, user.edit_sections, section);
+}
+
+/**
  * Month index (1-60) -> calendar label, derived from the plan's start date.
  * M1 = plan_start_date. Matches the workbook: 2026-04-01 -> "Apr 26".
  */

@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { getActivePlan, getProfile } from '@/lib/plan';
-import { canEditSection, type Bucket, type Program, type UserRole } from '@oceanpick/shared';
+import { canEditPlanSection, type Bucket, type Program, type UserRole } from '@oceanpick/shared';
 import { ProgramsClient } from './programs-client';
 
 export default async function ProgramsPage() {
@@ -23,7 +23,11 @@ export default async function ProgramsPage() {
     getProfile(),
   ]);
 
-  const canEdit = canEditSection((profile?.role ?? 'viewer') as UserRole, profile?.edit_sections, 'programs');
+  const canEdit = canEditPlanSection(
+    plan,
+    { id: profile?.id ?? '', role: (profile?.role ?? 'viewer') as UserRole, edit_sections: profile?.edit_sections },
+    'programs'
+  );
 
   return (
     <ProgramsClient
