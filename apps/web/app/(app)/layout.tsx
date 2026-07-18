@@ -2,9 +2,9 @@ import { redirect } from 'next/navigation';
 import { LogOut } from 'lucide-react';
 import { AppSidebar } from '@/components/app-sidebar';
 import type { UserRole } from '@oceanpick/shared';
-import { getActivePlan, getSelectablePlans, getCurrentUser, getProfile } from '@/lib/plan';
+import { getActivePlan, getSelectablePlans, getCurrentUser, getProfile, getUserName } from '@/lib/plan';
 import { PlanSelector } from './plan-selector';
-import { ScenarioBanner } from './scenario-banner';
+import { ScenarioBanner, type ScenarioAccess } from './scenario-banner';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { Toaster } from '@/components/ui/toast';
 import { ConfirmHost } from '@/components/ui/confirm';
@@ -60,6 +60,18 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const [activePlan, plans] = await Promise.all([getActivePlan(), getSelectablePlans()]);
   const master = plans.find((p) => p.type === 'master') ?? null;
 
+  // An editor may read any scenario but only its owner may write to it, so a
+  // scenario someone else owns is view-only — say whose it is rather than just
+  // leaving the edit controls out. Only costs a query in that case.
+  const scenarioAccess: ScenarioAccess =
+    activePlan?.is_locked ? 'locked'
+    : activePlan?.owner_user_id === profile.id ? 'owner'
+    : 'foreign';
+  const scenarioOwner =
+    activePlan?.type === 'scenario' && scenarioAccess === 'foreign'
+      ? await getUserName(activePlan.owner_user_id)
+      : undefined;
+
   return (
     <div className="flex min-h-screen">
       <AppSidebar role={profile.role as UserRole} />
@@ -86,7 +98,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           </div>
         </header>
         {activePlan?.type === 'scenario' && master && (
-          <ScenarioBanner name={activePlan.name} masterId={master.id} locked={activePlan.is_locked} />
+          <ScenarioBanner
+            name={activePlan.name}
+            masterId={master.id}
+            access={scenarioAccess}
+            ownerName={scenarioOwner}
+          />
         )}
         <main className="flex-1 p-6">{children}</main>
       </div>

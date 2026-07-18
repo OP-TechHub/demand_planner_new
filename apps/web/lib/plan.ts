@@ -41,6 +41,19 @@ export const getProfile = cache(async () => {
 });
 
 /**
+ * Display name for another user in the org — for attributing a scenario to its
+ * owner. Falls back to the email, then to null if the row is unreadable.
+ */
+export const getUserName = cache(async (id: string | null): Promise<string | undefined> => {
+  if (!id) return undefined;
+  const supabase = await createClient();
+  const { data } = await supabase.from('users').select('full_name, email').eq('id', id).maybeSingle();
+  if (!data) return undefined;
+  const row = data as { full_name: string | null; email: string | null };
+  return row.full_name || row.email || undefined;
+});
+
+/**
  * The plan the app is currently operating on. Defaults to the org's master
  * plan, but if a scenario is selected (cookie) and the caller can read it under
  * RLS, that scenario becomes active — switching every page to its data.

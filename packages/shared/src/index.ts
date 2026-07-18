@@ -200,6 +200,27 @@ export function monthLabel(planStartDate: string, monthIndex: number): string {
   return `${month} ${year}`;
 }
 
+/**
+ * Which month index a calendar date falls in, relative to the plan start.
+ * A date anywhere in M1's month returns 1. Returns null when the date lands
+ * outside the plan's window (before M1, or past the horizon). The day of month
+ * is ignored — planning is monthly, so a delivery on the 7th and the 28th of
+ * the same month are the same slot.
+ */
+export function monthIndexOfDate(
+  planStartDate: string,
+  date: string,
+  horizon: number
+): number | null {
+  const start = new Date(planStartDate + 'T00:00:00Z');
+  const d = new Date(date + 'T00:00:00Z');
+  if (Number.isNaN(d.getTime())) return null;
+  const index =
+    (d.getUTCFullYear() - start.getUTCFullYear()) * 12 +
+    (d.getUTCMonth() - start.getUTCMonth()) + 1;
+  return index >= 1 && index <= horizon ? index : null;
+}
+
 const MONTH_ABBR = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 
 /**
