@@ -3,6 +3,8 @@ import { getActivePlan, getProfile } from '@/lib/plan';
 import { SettingsForm } from './settings-form';
 import { RollForwardCard } from './roll-forward';
 import { RestoreSnapshotCard, type SnapshotOption } from './restore-snapshot';
+import { ApiKeysCard } from './api-keys';
+import { listApiKeys } from './api-keys-actions';
 
 export default async function SettingsPage() {
   const plan = await getActivePlan();
@@ -19,6 +21,7 @@ export default async function SettingsPage() {
 
   const profile = await getProfile();
   const isAdmin = profile?.role === 'admin';
+  const apiKeys = isAdmin ? await listApiKeys() : [];
 
   // Snapshots are the locked, read-only archives left behind by a roll/restore.
   // Only those with a matching horizon can line up slot-for-slot.
@@ -61,6 +64,7 @@ export default async function SettingsPage() {
           />
         </>
       )}
+      {isAdmin && <ApiKeysCard keys={apiKeys} />}
     </div>
   );
 }

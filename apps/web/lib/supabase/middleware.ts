@@ -12,6 +12,13 @@ type CookiesToSet = Parameters<SetAllCookies>[0];
 const PUBLIC_ROUTES = ['/login', '/signup', '/auth'];
 
 export async function updateSession(request: NextRequest) {
+  // API routes authenticate themselves (API key for /api/v1, the caller's own
+  // session inside /api/recompute). They must return JSON, never a 307 to the
+  // HTML login page — so skip the browser session/redirect dance entirely.
+  if (request.nextUrl.pathname.startsWith('/api')) {
+    return NextResponse.next({ request });
+  }
+
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient(
