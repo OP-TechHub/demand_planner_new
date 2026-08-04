@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type CSSProperties } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Download, Upload, LineChart } from 'lucide-react';
@@ -14,12 +14,15 @@ import { WideGridImport } from '@/components/wide-grid-import';
 import { DemandEditor } from './demand-editor';
 import { importDemand } from './actions';
 
+export type FulfilCell = { program_id: string; month_index: number; demand_fp: number; rolling_fp: number };
+
 export function DemandClient({
   planId,
   planStartDate,
   horizon,
   programs,
   demandRows,
+  fulfilment,
   canEdit,
 }: {
   planId: string;
@@ -27,6 +30,7 @@ export function DemandClient({
   horizon: number;
   programs: Program[];
   demandRows: DemandCell[];
+  fulfilment: FulfilCell[];
   canEdit: boolean;
 }) {
   const router = useRouter();
@@ -66,6 +70,26 @@ export function DemandClient({
 
   const effective = (p: Program, month: number) =>
     overrides.get(`${p.id}:${month}`) ?? p.max_monthly_demand_fp;
+
+  // Fulfilment from the last recompute: `${programId}:${month}` -> {demand, fulfilled}.
+  const fulfil = useMemo(() => {
+    const m = new Map<string, { demand: number; fulfilled: number }>();
+    for (const f of fulfilment) m.set(`${f.program_id}:${f.month_index}`, { demand: f.demand_fp, fulfilled: f.rolling_fp });
+    return m;
+  }, [fulfilment]);
+  const hasFulfil = fulfilment.length > 0;
+
+  // A green→red gradient cell (green = fulfilled fraction) + hover breakdown.
+  const fulfilCell = (p: Program, mo: number): { style?: CSSProperties; title?: string } => {
+    const f = fulfil.get(`${p.id}:${mo}`);
+    if (!f || f.demand <= 0) return {};
+    const ful = Math.min(f.fulfilled, f.demand);
+    const s = Math.round(Math.max(0, Math.min(1, ful / f.demand)) * 100);
+    return {
+      style: { background: `linear-gradient(90deg, #bbf7d0 0 ${s}%, #fecaca ${s}% 100%)`, color: '#1e293b' },
+      title: `Fulfilled ${Math.round(ful).toLocaleString()} of ${Math.round(f.demand).toLocaleString()} kg (${s}%) — short ${Math.round(f.demand - ful).toLocaleString()} kg`,
+    };
+  };
 
   const customers = useMemo(
     () => Array.from(new Set(programs.map((p) => p.customer).filter(Boolean))).sort(),
@@ -254,11 +278,13 @@ export function DemandClient({
                   </td>
                   {visibleMonths.map((mo) => {
                     const isOverride = overrides.has(`${p.id}:${mo}`);
+                    const f = fulfilCell(p, mo);
                     return (
                       <td
                         key={mo}
-                        className={cn('px-2 py-1.5 text-right tabular-nums', yearStart(mo) && 'border-l border-border/60', isOverride && 'font-semibold text-primary')}
-                        title={isOverride ? 'Overridden (baseline: ' + p.max_monthly_demand_fp.toLocaleString() + ')' : 'Baseline'}
+                        style={f.style}
+                        className={cn('px-2 py-1.5 text-right tabular-nums', yearStart(mo) && 'border-l border-border/60', isOverride && !f.style && 'font-semibold text-primary')}
+                        title={f.title ?? (isOverride ? 'Overridden (baseline: ' + p.max_monthly_demand_fp.toLocaleString() + ')' : 'Baseline')}
                       >
                         {effective(p, mo).toLocaleString()}
                       </td>
@@ -277,9 +303,18 @@ export function DemandClient({
         </ScrollX>
       )}
 
-      <p className="text-xs text-muted-foreground">
-        Fulfilment coloring arrives with the calc engine (Phase 2).
-      </p>
+      {hasFulfil ? (
+        <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+          Cells are shaded by fulfilment from the last recalculation —
+          <span className="rounded px-1" style={{ background: '#bbf7d0', color: '#1e293b' }}>fully met</span>,
+          <span className="rounded px-1" style={{ background: '#fecaca', color: '#1e293b' }}>short</span>,
+          or a green/red split for partial. Hover a cell for the fulfilled vs short split.
+        </p>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          Recalculate to shade cells by fulfilment (green = met, red = short). Pipeline fulfilment shows only when the plan&apos;s scope includes pipeline.
+        </p>
+      )}
 
       {editing && canEdit && (
         <DemandEditor
