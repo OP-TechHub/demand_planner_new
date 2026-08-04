@@ -40,14 +40,24 @@ export function PlansAdminClient({ plans, users }: { plans: AdminPlan[]; users: 
   const [accessPlan, setAccessPlan] = useState<AdminPlan | null>(null);
   const [newOpen, setNewOpen] = useState(false);
   const [newName, setNewName] = useState('');
+  const [newSource, setNewSource] = useState('');
   const [newErr, setNewErr] = useState<string | null>(null);
   const [creating, startCreate] = useTransition();
+
+  const master = plans.find((p) => p.type === 'master');
+
+  function openNew() {
+    setNewErr(null);
+    setNewName('');
+    setNewSource(master?.id ?? '');
+    setNewOpen(true);
+  }
 
   function createOfficial() {
     setNewErr(null);
     if (!newName.trim()) { setNewErr('Name is required.'); return; }
     startCreate(async () => {
-      const res = await createScenario(newName.trim(), '', { official: true });
+      const res = await createScenario(newName.trim(), '', { official: true, sourcePlanId: newSource || undefined });
       if (res.error) { setNewErr(res.error); return; }
       toast.success('Official plan created.');
       setNewOpen(false); setNewName(''); router.refresh();
@@ -87,7 +97,7 @@ export function PlansAdminClient({ plans, users }: { plans: AdminPlan[]; users: 
             Sandboxes are users’ private scenarios; you can see and delete them, but their owner edits them.
           </p>
         </div>
-        <Button onClick={() => { setNewErr(null); setNewOpen(true); }}><Plus className="h-4 w-4" /> New official plan</Button>
+        <Button onClick={openNew}><Plus className="h-4 w-4" /> New official plan</Button>
       </div>
 
       <div className="flex items-start gap-2 rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
@@ -168,12 +178,27 @@ export function PlansAdminClient({ plans, users }: { plans: AdminPlan[]; users: 
         open={newOpen}
         onClose={() => setNewOpen(false)}
         title="New official plan"
-        description="Clones the current master into a new official plan you can then set access on and lock. Not a personal sandbox."
+        description="Clones a plan into a new official plan you can then set access on and lock. Not a personal sandbox."
       >
         <div className="space-y-3">
           <label className="block text-sm">
             <span className="mb-1 block font-medium">Plan name</span>
             <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. FY26 DFCC approved" autoFocus />
+          </label>
+          <label className="block text-sm">
+            <span className="mb-1 block font-medium">Clone from</span>
+            <select
+              value={newSource}
+              onChange={(e) => setNewSource(e.target.value)}
+              className="w-full rounded-md border px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-primary"
+            >
+              {plans.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} ({kindOf(p)}{p.is_locked ? ', locked' : ''})
+                </option>
+              ))}
+            </select>
+            <span className="mt-1 block text-xs text-muted-foreground">Copies that plan’s programs, demand, harvest, window, and settings.</span>
           </label>
           {newErr && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{newErr}</p>}
           <div className="flex justify-end gap-2">

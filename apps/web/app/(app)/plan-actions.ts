@@ -35,15 +35,19 @@ export type ScenarioResult = { error: string | null; scenarioId?: string };
 
 /** Fork the master plan into a new scenario (Option A full clone) and switch to it. */
 /**
- * Clone the master into a new plan. Default (`official` false) makes a private
+ * Clone a plan into a new plan. Default (`official` false) makes a private
  * SANDBOX owned by the caller (any non-viewer). `official: true` makes an
  * official plan (is_sandbox = false) and requires admin — used by Admin → Plans
  * for the approved/DFCC-style copies.
+ *
+ * By default the source is the master; pass `sourcePlanId` to clone a different
+ * plan (its settings, window, and data). The new plan still hangs off the
+ * master as its parent so "compare to master" keeps working.
  */
 export async function createScenario(
   name: string,
   description: string,
-  opts?: { official?: boolean }
+  opts?: { official?: boolean; sourcePlanId?: string }
 ): Promise<ScenarioResult> {
   const official = opts?.official ?? false;
   const supabase = await createClient();
@@ -58,12 +62,21 @@ export async function createScenario(
   const { data: master } = await supabase.from('plans').select('*').eq('type', 'master').is('deleted_at', null).maybeSingle();
   if (!master) return { error: 'No master plan to fork.' };
 
+  // The plan we copy settings + data from. Defaults to the master; RLS makes
+  // sure the caller may actually read the chosen source.
+  let source = master;
+  if (opts?.sourcePlanId && opts.sourcePlanId !== master.id) {
+    const { data: chosen } = await supabase.from('plans').select('*').eq('id', opts.sourcePlanId).is('deleted_at', null).maybeSingle();
+    if (!chosen) return { error: 'Source plan not found or not accessible.' };
+    source = chosen;
+  }
+
   const { data: scenario, error: se } = await supabase.from('plans').insert({
     org_id: master.org_id, type: 'scenario', parent_plan_id: master.id,
     name: name.trim(), description: (description ?? '').trim(), owner_user_id: user.id, is_locked: false, is_sandbox: !official,
-    plan_start_date: master.plan_start_date, horizon_months: master.horizon_months,
-    settings_margin_metric: master.settings_margin_metric, settings_allocation_mode: master.settings_allocation_mode,
-    settings_scope: master.settings_scope, settings_lookback_months: master.settings_lookback_months,
+    plan_start_date: source.plan_start_date, horizon_months: source.horizon_months,
+    settings_margin_metric: source.settings_margin_metric, settings_allocation_mode: source.settings_allocation_mode,
+    settings_scope: source.settings_scope, settings_lookback_months: source.settings_lookback_months,
     forked_at: new Date().toISOString(), created_by: user.id, updated_by: user.id,
   }).select('id').maybeSingle();
   if (se || !scenario) {
@@ -78,9 +91,9 @@ export async function createScenario(
     return { error: msg };
   };
 
-  // Clone programs, then map old→new by item_code (unique per plan).
-  const { data: masterProgs } = await supabase.from('programs').select('*').eq('plan_id', master.id).is('deleted_at', null);
-  const progRows = (masterProgs ?? []).map((p: any) => {
+  // Clone programs from the source, then map old→new by item_code (unique per plan).
+  const { data: srcProgs } = await supabase.from('programs').select('*').eq('plan_id', source.id).is('deleted_at', null);
+  const progRows = (srcProgs ?? []).map((p: any) => {
     const row: any = { plan_id: sid, created_by: user.id, updated_by: user.id };
     for (const c of PROGRAM_COLS) row[c] = p[c];
     return row;
@@ -91,10 +104,10 @@ export async function createScenario(
   }
   const { data: newProgs } = await supabase.from('programs').select('id, item_code').eq('plan_id', sid);
   const newIdByCode = new Map((newProgs ?? []).map((p: any) => [p.item_code, p.id]));
-  const codeByOldId = new Map((masterProgs ?? []).map((p: any) => [p.id, p.item_code]));
+  const codeByOldId = new Map((srcProgs ?? []).map((p: any) => [p.id, p.item_code]));
 
   // Clone demand overrides (remap program_id).
-  const demand = await fetchAllByPlan(supabase, 'demand_plan', 'program_id, month_index, demand_fp', master.id);
+  const demand = await fetchAllByPlan(supabase, 'demand_plan', 'program_id, month_index, demand_fp', source.id);
   const demandRows = demand
     .map((d: any) => ({ plan_id: sid, program_id: newIdByCode.get(codeByOldId.get(d.program_id)), month_index: d.month_index, demand_fp: d.demand_fp, created_by: user.id, updated_by: user.id }))
     .filter((d) => d.program_id);
@@ -104,7 +117,7 @@ export async function createScenario(
   }
 
   // Clone harvest (buckets are org-scoped — same bucket_id).
-  const harvest = await fetchAllByPlan(supabase, 'harvest_plan', 'bucket_id, month_index, capacity_kg_wr', master.id);
+  const harvest = await fetchAllByPlan(supabase, 'harvest_plan', 'bucket_id, month_index, capacity_kg_wr', source.id);
   const harvestRows = harvest.map((h: any) => ({ plan_id: sid, bucket_id: h.bucket_id, month_index: h.month_index, capacity_kg_wr: h.capacity_kg_wr, created_by: user.id, updated_by: user.id }));
   for (let i = 0; i < harvestRows.length; i += 800) {
     const { error } = await supabase.from('harvest_plan').insert(harvestRows.slice(i, i + 800));
