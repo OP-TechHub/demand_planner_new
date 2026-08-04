@@ -218,13 +218,20 @@ export function DemandClient({
                   className={cn('border-t hover:bg-muted/30', canEdit && 'cursor-pointer', p.status === 'inactive' && 'opacity-60')}
                   onClick={canEdit ? () => setEditing(p) : undefined}
                 >
-                  <td className={cn(stickyCol, 'min-w-[16rem] max-w-[16rem] truncate border-r bg-card px-3 py-1.5')} title={`${p.customer} — ${p.item_description}`}>
+                  <td
+                    className={cn(
+                      stickyCol,
+                      'min-w-[16rem] max-w-[16rem] truncate border-r bg-card px-3 py-1.5',
+                      statusView === 'all' && cn('border-l-4', STATUS_ACCENT[p.status])
+                    )}
+                    title={`${p.customer} — ${p.item_description}`}
+                  >
                     <span className="font-medium">{p.customer}</span>{' '}
                     <span className="text-muted-foreground">{p.item_description}</span>
-                    {statusView === 'all' && p.status !== 'active' && (
+                    {statusView === 'all' && (
                       <span className={cn(
                         'ml-1.5 rounded px-1 py-0.5 text-[10px] font-medium uppercase tracking-wide',
-                        p.status === 'pipeline' ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'
+                        STATUS_BADGE[p.status]
                       )}>
                         {p.status}
                       </span>
@@ -297,3 +304,16 @@ const STATUS_TABS: { key: StatusView; label: string }[] = [
   { key: 'pipeline', label: 'Pipeline' },
   { key: 'all', label: 'All programs' },
 ];
+
+// Colour cues used in the All view: active = green, pipeline = yellow,
+// inactive = muted grey. Left accent bar + matching badge on each row.
+const STATUS_ACCENT: Record<string, string> = {
+  active: 'border-l-success',
+  pipeline: 'border-l-warning',
+  inactive: 'border-l-border',
+};
+const STATUS_BADGE: Record<string, string> = {
+  active: 'bg-success/10 text-success',
+  pipeline: 'bg-warning/10 text-warning',
+  inactive: 'bg-muted text-muted-foreground',
+};
