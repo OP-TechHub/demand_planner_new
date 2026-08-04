@@ -290,9 +290,15 @@ function cleanEntries(entries: InquiryEntry[]): InquiryEntry[] {
 }
 
 /**
- * Save an existing-program inquiry into the plan: mark the program 'pipeline'
- * and write the inquiry quantities as demand overrides for the chosen months.
- * RLS enforces edit access; the writes fail cleanly if the caller can't.
+ * Add inquiry demand to an EXISTING pipeline program (used only when the picked
+ * program is already 'pipeline'). It writes the quantities as demand for the
+ * chosen months and does NOT change status — so an active program is never
+ * flipped wholesale to pipeline. For an active program, the inquiry becomes a
+ * separate pipeline sibling instead (see saveNewInquiry). Because the engine
+ * scopes pipeline demand per month, this correctly models a product that is
+ * active in some months and only a pipeline inquiry in others.
+ *
+ * RLS enforces edit access; the write fails cleanly if the caller can't.
  */
 export async function saveExistingInquiry(
   planId: string,
@@ -300,15 +306,12 @@ export async function saveExistingInquiry(
   entries: InquiryEntry[]
 ): Promise<SaveResult> {
   if (!planId || !programId) return { ok: false, error: 'Missing selection.' };
-  const rows0 = cleanEntries(entries);
-  if (rows0.length === 0) return { ok: false, error: 'Nothing to save — enter a quantity first.' };
+  const rows0 = cleanEntries(entries).filter((e) => e.demand_fp > 0);
+  if (rows0.length === 0) return { ok: false, error: 'Enter a quantity for at least one month.' };
 
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: 'Your session expired. Sign in again.' };
-
-  const { error: pe } = await supabase.from('programs').update({ status: 'pipeline', updated_by: user.id }).eq('id', programId);
-  if (pe) return { ok: false, error: permError(pe.message) };
 
   const rows = rows0.map((e) => ({
     plan_id: planId, program_id: programId, month_index: e.month_index, demand_fp: e.demand_fp,
@@ -317,10 +320,6 @@ export async function saveExistingInquiry(
   const { error: de } = await supabase.from('demand_plan').upsert(rows, { onConflict: 'program_id,month_index' });
   if (de) return { ok: false, error: permError(de.message) };
 
-  await logAudit(supabase, {
-    planId, entityType: 'programs', entityId: programId, action: 'update',
-    changes: { status: { old: null, new: 'pipeline' }, saved_from: 'inquiry' },
-  });
   await logAudit(supabase, {
     planId, entityType: 'demand_plan', entityId: programId, action: 'update',
     changes: { saved_from: 'inquiry', months: rows.length },

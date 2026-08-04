@@ -157,21 +157,45 @@ function ExistingInquiry({
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const [saving, startSave] = useTransition();
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [saveErr, setSaveErr] = useState<string | null>(null);
 
-  async function save() {
-    if (!ctx) return;
-    const entries = entriesFrom(ctx.months.map((m) => m.month_index), qtyByMonth);
-    if (entries.length === 0) { toast.error('Enter a quantity first.'); return; }
+  const sourceIsPipeline = ctx?.program.status === 'pipeline';
+  const filledMonths = ctx ? entriesFrom(ctx.months.map((m) => m.month_index), qtyByMonth).filter((e) => e.demand_fp > 0) : [];
+
+  // Already a pipeline program → just add the inquiry demand to it.
+  async function saveOntoPipeline() {
+    if (!ctx || filledMonths.length === 0) { toast.error('Enter a quantity first.'); return; }
     const ok = await confirmDialog({
-      title: 'Save to pipeline?',
-      description: `This sets ${ctx.program.item_code} to pipeline and writes demand for ${entries.length} month${entries.length > 1 ? 's' : ''} in the current plan.`,
+      title: 'Add to pipeline demand?',
+      description: `Writes demand for ${filledMonths.length} month${filledMonths.length > 1 ? 's' : ''} onto ${ctx.program.item_code} (already pipeline).`,
       confirmLabel: 'Save',
     });
     if (!ok) return;
     startSave(async () => {
-      const res = await saveExistingInquiry(planId, programId, entries);
+      const res = await saveExistingInquiry(planId, programId, filledMonths);
       if (res.ok) { toast.success('Saved to pipeline.'); router.refresh(); }
       else toast.error(res.error ?? 'Could not save.');
+    });
+  }
+
+  // Active/inactive program → keep it as-is; create a pipeline sibling for these months.
+  function saveAsSibling(itemCode: string, price: number) {
+    if (!ctx) return;
+    setSaveErr(null);
+    const paths = (ctx.months[0]?.paths ?? []).map((p) => ({ bucket_id: p.bucket_id, yield: p.yield }));
+    startSave(async () => {
+      const res = await saveNewInquiry({
+        planId,
+        customer: ctx.program.customer,
+        itemCode,
+        itemDescription: ctx.program.item_description,
+        pricePerFp: price,
+        paths,
+        entries: filledMonths,
+      });
+      if (res.ok) { toast.success('Saved as a pipeline program.'); setSaveOpen(false); router.refresh(); }
+      else setSaveErr(res.error ?? 'Could not save.');
     });
   }
 
@@ -224,12 +248,33 @@ function ExistingInquiry({
           <AllocationTable months={ctx.months} qtyByMonth={qtyByMonth} setQtyByMonth={setQtyByMonth} planStartDate={planStartDate} />
           {canSave && (
             <div className="flex items-center justify-end gap-2">
-              <span className="text-xs text-muted-foreground">Saving marks this program pipeline and writes the demand above.</span>
-              <Button onClick={save} disabled={saving}><Save className="h-4 w-4" />{saving ? 'Saving…' : 'Save to pipeline'}</Button>
+              <span className="text-xs text-muted-foreground">
+                {sourceIsPipeline
+                  ? 'Adds the demand above to this pipeline program.'
+                  : 'Keeps this program active and adds a pipeline program for these months.'}
+              </span>
+              <Button onClick={sourceIsPipeline ? saveOntoPipeline : () => { setSaveErr(null); setSaveOpen(true); }} disabled={saving}>
+                <Save className="h-4 w-4" /> {saving ? 'Saving…' : 'Save to pipeline'}
+              </Button>
             </div>
           )}
           <OtherActivePanel customer={ctx.program.customer} otherActive={ctx.otherActive} />
         </>
+      )}
+
+      {ctx && (
+        <PipelineSaveDialog
+          open={saveOpen}
+          onClose={() => setSaveOpen(false)}
+          customer={ctx.program.customer}
+          description={ctx.program.item_description}
+          monthCount={filledMonths.length}
+          defaultItemCode={`${ctx.program.item_code}-P`}
+          defaultPrice={String(ctx.program.price_per_fp)}
+          submitting={saving}
+          error={saveErr}
+          onSubmit={saveAsSibling}
+        />
       )}
 
       {!ctx && !pending && !error && <PickHint />}
@@ -271,8 +316,6 @@ function NewInquiry({
 
   // Save dialog state.
   const [saveOpen, setSaveOpen] = useState(false);
-  const [itemCode, setItemCode] = useState('');
-  const [price, setPrice] = useState('');
   const [saveErr, setSaveErr] = useState<string | null>(null);
   const [saving, startSave] = useTransition();
 
@@ -333,22 +376,22 @@ function NewInquiry({
 
   const ready = validPaths.length > 0 && selectedMonths.length > 0;
 
-  function doSave() {
+  const filledMonths = useMemo(
+    () => entriesFrom(selectedMonths, qtyByMonth).filter((e) => e.demand_fp > 0),
+    [selectedMonths, qtyByMonth]
+  );
+
+  function doSave(itemCode: string, price: number) {
     setSaveErr(null);
-    const entries = entriesFrom(selectedMonths, qtyByMonth).filter((e) => e.demand_fp > 0);
-    if (!customer.trim()) { setSaveErr('Customer is required.'); return; }
-    if (!itemCode.trim()) { setSaveErr('Item code is required.'); return; }
-    if (!(Number(price) > 0)) { setSaveErr('Price must be greater than 0.'); return; }
-    if (entries.length === 0) { setSaveErr('Enter a quantity for at least one month.'); return; }
     startSave(async () => {
       const res = await saveNewInquiry({
         planId,
         customer: customer.trim(),
-        itemCode: itemCode.trim(),
+        itemCode,
         itemDescription: description.trim(),
-        pricePerFp: Number(price),
+        pricePerFp: price,
         paths: validPaths.map((p) => ({ bucket_id: p.bucketId, yield: p.yield })),
-        entries,
+        entries: filledMonths,
       });
       if (res.ok) { toast.success('Saved to pipeline.'); setSaveOpen(false); router.refresh(); }
       else setSaveErr(res.error ?? 'Could not save.');
@@ -445,32 +488,18 @@ function NewInquiry({
         </p>
       )}
 
-      <Dialog
+      <PipelineSaveDialog
         open={saveOpen}
         onClose={() => setSaveOpen(false)}
-        title="Save inquiry to pipeline"
-        description="Creates a new pipeline program with the sourcing and demand above."
-      >
-        <div className="space-y-3">
-          <div className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-            <div><span className="font-medium text-foreground">{customer.trim() || '—'}</span>{description.trim() ? ` · ${description.trim()}` : ''}</div>
-            <div className="mt-0.5">{validPaths.length} bucket{validPaths.length > 1 ? 's' : ''} · demand in {selectedMonths.length} month{selectedMonths.length > 1 ? 's' : ''}</div>
-          </div>
-          <label className="block text-sm">
-            <span className="mb-1 block font-medium">Item code</span>
-            <Input value={itemCode} onChange={(e) => setItemCode(e.target.value)} placeholder="e.g. 7499" />
-          </label>
-          <label className="block text-sm">
-            <span className="mb-1 block font-medium">Price ($/kg FP)</span>
-            <Input type="number" min={0} step="0.01" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="e.g. 7.95" />
-          </label>
-          {saveErr && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{saveErr}</p>}
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setSaveOpen(false)}>Cancel</Button>
-            <Button onClick={doSave} disabled={saving}>{saving ? 'Saving…' : 'Create pipeline program'}</Button>
-          </div>
-        </div>
-      </Dialog>
+        customer={customer.trim()}
+        description={description.trim()}
+        monthCount={filledMonths.length}
+        defaultItemCode=""
+        defaultPrice=""
+        submitting={saving}
+        error={saveErr}
+        onSubmit={doSave}
+      />
     </div>
   );
 }
@@ -716,6 +745,62 @@ function AllocationTable({
         Each month is checked against its own spare whole-round capacity (capacity already committed to the plan is excluded). Click a month to see the per-bucket breakdown.
       </p>
     </>
+  );
+}
+
+/** Collects the two schema-required fields (item code + price) to mint a pipeline program. */
+function PipelineSaveDialog({
+  open,
+  onClose,
+  customer,
+  description,
+  monthCount,
+  defaultItemCode,
+  defaultPrice,
+  submitting,
+  error,
+  onSubmit,
+}: {
+  open: boolean;
+  onClose: () => void;
+  customer: string;
+  description: string;
+  monthCount: number;
+  defaultItemCode: string;
+  defaultPrice: string;
+  submitting: boolean;
+  error: string | null;
+  onSubmit: (itemCode: string, price: number) => void;
+}) {
+  const [itemCode, setItemCode] = useState(defaultItemCode);
+  const [price, setPrice] = useState(defaultPrice);
+  // Reset to the fresh defaults each time the dialog opens.
+  useEffect(() => { if (open) { setItemCode(defaultItemCode); setPrice(defaultPrice); } }, [open, defaultItemCode, defaultPrice]);
+
+  return (
+    <Dialog open={open} onClose={onClose} title="Save inquiry to pipeline" description="Creates a new pipeline program carrying the sourcing and demand above.">
+      <div className="space-y-3">
+        <div className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+          <div><span className="font-medium text-foreground">{customer || '—'}</span>{description ? ` · ${description}` : ''}</div>
+          <div className="mt-0.5">demand in {monthCount} month{monthCount === 1 ? '' : 's'}</div>
+        </div>
+        <label className="block text-sm">
+          <span className="mb-1 block font-medium">Item code</span>
+          <Input value={itemCode} onChange={(e) => setItemCode(e.target.value)} placeholder="e.g. 7499" />
+        </label>
+        <label className="block text-sm">
+          <span className="mb-1 block font-medium">Price ($/kg FP)</span>
+          <Input type="number" min={0} step="0.01" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="e.g. 7.95" />
+        </label>
+        {error && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={() => onSubmit(itemCode.trim(), Number(price))} disabled={submitting}>
+            {submitting ? 'Saving…' : 'Create pipeline program'}
+          </Button>
+        </div>
+      </div>
+    </Dialog>
   );
 }
 
