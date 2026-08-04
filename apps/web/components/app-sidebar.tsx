@@ -8,6 +8,7 @@ import {
   Waves,
   Boxes,
   Settings,
+  ClipboardCheck,
   LayoutDashboard,
   CalendarRange,
   Target,
@@ -32,6 +33,7 @@ const SECTIONS: Section[] = [
     title: 'Inputs',
     items: [
       { label: 'Programs', href: '/programs', icon: Package },
+      { label: 'New Inquiry', href: '/inquiry', icon: ClipboardCheck },
       { label: 'Demand Plan', href: '/demand-plan', icon: LineChart },
       { label: 'Harvest Plan', href: '/harvest-plan', icon: Waves },
       { label: 'Buckets', href: '/buckets', icon: Boxes },
