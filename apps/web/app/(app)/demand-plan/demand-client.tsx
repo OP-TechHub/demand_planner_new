@@ -51,8 +51,11 @@ export function DemandClient({
   const onTo = (v: number) => { setToMonth(v); if (v < fromMonth) setFromMonth(v); };
 
   const yearStart = (mo: number) => mo > 1 && (mo - 1) % 12 === 0;
-  const stickyCol =
-    'sticky left-0 z-10 transition-shadow group-data-[scrolled=true]/scrollx:shadow-[6px_0_8px_-6px_rgba(0,0,0,0.18)]';
+  // Two frozen left columns: Customer (left-0, 12rem) then Product (left-12rem,
+  // 16rem). The scroll shadow rides the rightmost (Product) column only.
+  const custCol = 'sticky left-0 z-10 min-w-[12rem] max-w-[12rem]';
+  const prodCol =
+    'sticky left-[12rem] z-10 min-w-[16rem] max-w-[16rem] transition-shadow group-data-[scrolled=true]/scrollx:shadow-[6px_0_8px_-6px_rgba(0,0,0,0.18)]';
 
   // override lookup: `${programId}:${month}` -> demand_fp
   const overrides = useMemo(() => {
@@ -155,7 +158,7 @@ export function DemandClient({
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search program…"
+          placeholder="Search customer or product…"
           className={cn(filterCls, 'min-w-[14rem]')}
         />
 
@@ -205,8 +208,11 @@ export function DemandClient({
           <table className="w-max text-xs">
             <thead className="bg-muted/50 text-muted-foreground">
               <tr>
-                <th className={cn(stickyCol, 'min-w-[16rem] bg-muted/50 px-3 py-2 text-left font-semibold')}>
-                  Program
+                <th className={cn(custCol, 'bg-muted/50 px-3 py-2 text-left font-semibold')}>
+                  Customer
+                </th>
+                <th className={cn(prodCol, 'bg-muted/50 px-3 py-2 text-left font-semibold')}>
+                  Product
                 </th>
                 {visibleMonths.map((mo) => (
                   <th key={mo} className={cn('min-w-[4.5rem] px-2 py-2 text-right font-medium', yearStart(mo) && 'border-l border-border')}>
@@ -224,14 +230,19 @@ export function DemandClient({
                 >
                   <td
                     className={cn(
-                      stickyCol,
-                      'min-w-[16rem] max-w-[16rem] truncate border-r bg-card px-3 py-1.5',
+                      custCol,
+                      'truncate border-r bg-card px-3 py-1.5 font-medium',
                       statusView === 'all' && cn('border-l-4', STATUS_ACCENT[p.status])
                     )}
-                    title={`${p.customer} — ${p.item_description}`}
+                    title={p.customer}
                   >
-                    <span className="font-medium">{p.customer}</span>{' '}
-                    <span className="text-muted-foreground">{p.item_description}</span>
+                    {p.customer}
+                  </td>
+                  <td
+                    className={cn(prodCol, 'truncate border-r bg-card px-3 py-1.5 text-muted-foreground')}
+                    title={p.item_description}
+                  >
+                    {p.item_description}
                     {statusView === 'all' && (
                       <span className={cn(
                         'ml-1.5 rounded px-1 py-0.5 text-[10px] font-medium uppercase tracking-wide',
@@ -256,7 +267,7 @@ export function DemandClient({
                 </tr>
               ))}
               <tr className="border-t-2 bg-muted/40 font-semibold">
-                <td className={cn(stickyCol, 'bg-muted/40 px-3 py-1.5')}>{totalLabel}</td>
+                <td colSpan={2} className={cn('sticky left-0 z-10 min-w-[28rem] bg-muted/40 px-3 py-1.5 transition-shadow group-data-[scrolled=true]/scrollx:shadow-[6px_0_8px_-6px_rgba(0,0,0,0.18)]')}>{totalLabel}</td>
                 {totals.map((t, i) => (
                   <td key={visibleMonths[i]} className={cn('px-2 py-1.5 text-right tabular-nums', yearStart(visibleMonths[i]) && 'border-l border-border/60')}>{t.toLocaleString()}</td>
                 ))}
