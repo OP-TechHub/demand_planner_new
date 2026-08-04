@@ -154,15 +154,16 @@ export const can = {
  * Sections whose edit access can be granted per user. Admins always have all;
  * everyone else edits only the sections they've been granted (empty = view-only).
  */
-export const EDITABLE_SECTIONS = ['programs', 'demand_plan', 'harvest_plan', 'buckets'] as const;
+export const EDITABLE_SECTIONS = ['programs', 'demand_plan', 'harvest_plan', 'buckets', 'inquiry'] as const;
 export type EditableSection = (typeof EDITABLE_SECTIONS)[number];
 
 /**
  * The tabs whose edit access is granted PER PLAN (see plan_editor_grants).
  * 'buckets' is excluded — buckets are org-wide (no plan_id), so their grant
- * stays global via canEditSection / users.edit_sections.
+ * stays global via canEditSection / users.edit_sections. 'inquiry' isn't a
+ * table — it's the right to save inquiries into the plan's pipeline.
  */
-export const PLAN_EDITABLE_SECTIONS = ['programs', 'demand_plan', 'harvest_plan'] as const;
+export const PLAN_EDITABLE_SECTIONS = ['programs', 'demand_plan', 'harvest_plan', 'inquiry'] as const;
 export type PlanEditableSection = (typeof PLAN_EDITABLE_SECTIONS)[number];
 
 export const SECTION_LABEL: Record<EditableSection, string> = {
@@ -170,6 +171,7 @@ export const SECTION_LABEL: Record<EditableSection, string> = {
   demand_plan: 'Demand Plan',
   harvest_plan: 'Harvest Plan',
   buckets: 'Buckets',
+  inquiry: 'New Inquiry',
 };
 
 /** Can this user edit a given section? Admin ⇒ everything; others ⇒ granted only. */

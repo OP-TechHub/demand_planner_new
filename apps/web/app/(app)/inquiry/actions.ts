@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { logAudit } from '@/lib/audit';
 
 /** Map an RLS rejection to a message that names the real cause. */
@@ -294,9 +295,43 @@ export type SaveToPipelineResult = SaveResult & {
   needsDetails?: { suggestedItemCode: string; price: number };
 };
 
+/**
+ * Gate an inquiry save on the caller's INQUIRY access to the plan — separate
+ * from full programs/demand editing, so a person can raise inquiries without
+ * being able to edit the base plan. Allowed if: admin, the plan is their own
+ * sandbox, or they hold the plan's 'inquiry' grant. Because inquiry-only users
+ * won't have programs/demand grants, the actual writes then go through the
+ * service role (RLS on those tables checks their own sections, not inquiry).
+ */
+async function assertInquiryAccess(planId: string): Promise<
+  | { ok: true; rls: Awaited<ReturnType<typeof createClient>>; svc: ReturnType<typeof createServiceClient>; userId: string }
+  | { ok: false; error: string }
+> {
+  const rls = await createClient();
+  const { data: { user } } = await rls.auth.getUser();
+  if (!user) return { ok: false, error: 'Your session expired. Sign in again.' };
+  const { data: me } = await rls.from('users').select('role, org_id').eq('id', user.id).maybeSingle();
+  if (!me) return { ok: false, error: 'Account not found.' };
+
+  const svc = createServiceClient();
+  const { data: plan } = await svc
+    .from('plans').select('org_id, is_locked, is_sandbox, owner_user_id').eq('id', planId).is('deleted_at', null).maybeSingle();
+  if (!plan || plan.org_id !== me.org_id) return { ok: false, error: 'Plan not found.' };
+  if (plan.is_locked) return { ok: false, error: 'This plan is locked (read-only).' };
+
+  let allowed = me.role === 'admin' || (plan.is_sandbox && plan.owner_user_id === user.id);
+  if (!allowed) {
+    const { data: g } = await svc
+      .from('plan_editor_grants').select('section').eq('plan_id', planId).eq('user_id', user.id).eq('section', 'inquiry').maybeSingle();
+    allowed = !!g;
+  }
+  if (!allowed) return { ok: false, error: 'You don’t have inquiry access to this plan.' };
+  return { ok: true, rls, svc, userId: user.id };
+}
+
 /** Add `entries` (additional volume) onto a program's existing demand for those months. */
 async function accumulateDemand(
-  supabase: Awaited<ReturnType<typeof createClient>>,
+  supabase: any, // eslint-disable-line @typescript-eslint/no-explicit-any
   planId: string,
   programId: string,
   userId: string,
@@ -308,7 +343,7 @@ async function accumulateDemand(
     .select('month_index, demand_fp')
     .eq('program_id', programId)
     .in('month_index', months);
-  const cur = new Map((existing ?? []).map((r: { month_index: number; demand_fp: number }) => [r.month_index, Number(r.demand_fp)]));
+  const cur = new Map<number, number>((existing ?? []).map((r: { month_index: number; demand_fp: number }) => [r.month_index, Number(r.demand_fp)]));
   const rows = entries.map((e) => ({
     plan_id: planId, program_id: programId, month_index: e.month_index,
     demand_fp: (cur.get(e.month_index) ?? 0) + e.demand_fp,
@@ -340,9 +375,9 @@ export async function saveInquiryToPipeline(
   const rows0 = cleanEntries(entries).filter((e) => e.demand_fp > 0);
   if (rows0.length === 0) return { ok: false, error: 'Enter an additional quantity for at least one month.' };
 
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { ok: false, error: 'Your session expired. Sign in again.' };
+  const access = await assertInquiryAccess(planId);
+  if (!access.ok) return { ok: false, error: access.error };
+  const { rls, svc: supabase, userId } = access;
 
   const { data: srcData } = await supabase
     .from('programs')
@@ -362,9 +397,9 @@ export async function saveInquiryToPipeline(
 
   // Pipeline source: add straight onto it.
   if (source.status === 'pipeline') {
-    const err = await accumulateDemand(supabase, planId, source.id, user.id, rows0);
+    const err = await accumulateDemand(supabase, planId, source.id, userId, rows0);
     if (err) return { ok: false, error: permError(err) };
-    await logAudit(supabase, { planId, entityType: 'demand_plan', entityId: source.id, action: 'update', changes: { saved_from: 'inquiry', months: rows0.length, additional: true } });
+    await logAudit(rls, { planId, entityType: 'demand_plan', entityId: source.id, action: 'update', changes: { saved_from: 'inquiry', months: rows0.length, additional: true } });
     revalidatePath('/demand-plan');
     revalidatePath('/programs');
     return { ok: true };
@@ -402,7 +437,7 @@ export async function saveInquiryToPipeline(
         primary_bucket_id: source.primary_bucket_id, primary_yield: source.primary_yield,
         secondary_bucket_id: source.secondary_bucket_id, secondary_yield: source.secondary_yield,
         tertiary_bucket_id: source.tertiary_bucket_id, tertiary_yield: source.tertiary_yield,
-        price_per_fp: create.price, sort_order: sortOrder, created_by: user.id, updated_by: user.id,
+        price_per_fp: create.price, sort_order: sortOrder, created_by: userId, updated_by: userId,
       })
       .select('id')
       .maybeSingle();
@@ -412,12 +447,12 @@ export async function saveInquiryToPipeline(
     }
     if (!createdTwin) return { ok: false, error: 'Could not create the pipeline program.' };
     targetId = createdTwin.id;
-    await logAudit(supabase, { planId, entityType: 'programs', entityId: targetId, action: 'insert', changes: { item_code: twinCode, customer: source.customer, status: 'pipeline', saved_from: 'inquiry' } });
+    await logAudit(rls, { planId, entityType: 'programs', entityId: targetId, action: 'insert', changes: { item_code: twinCode, customer: source.customer, status: 'pipeline', saved_from: 'inquiry' } });
   }
 
-  const err = await accumulateDemand(supabase, planId, targetId, user.id, rows0);
+  const err = await accumulateDemand(supabase, planId, targetId, userId, rows0);
   if (err) return { ok: false, error: permError(err) };
-  await logAudit(supabase, { planId, entityType: 'demand_plan', entityId: targetId, action: 'update', changes: { saved_from: 'inquiry', months: rows0.length, additional: true } });
+  await logAudit(rls, { planId, entityType: 'demand_plan', entityId: targetId, action: 'update', changes: { saved_from: 'inquiry', months: rows0.length, additional: true } });
 
   revalidatePath('/demand-plan');
   revalidatePath('/programs');
@@ -454,9 +489,9 @@ export async function saveNewInquiry(input: SaveNewInquiryInput): Promise<SaveRe
   const rows0 = cleanEntries(input.entries).filter((e) => e.demand_fp > 0);
   if (rows0.length === 0) return { ok: false, error: 'Enter a quantity for at least one month.' };
 
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { ok: false, error: 'Your session expired. Sign in again.' };
+  const access = await assertInquiryAccess(input.planId);
+  if (!access.ok) return { ok: false, error: access.error };
+  const { rls, svc: supabase, userId } = access;
 
   const { data: last } = await supabase
     .from('programs')
@@ -484,8 +519,8 @@ export async function saveNewInquiry(input: SaveNewInquiryInput): Promise<SaveRe
       tertiary_yield: paths[2]?.yield ?? null,
       price_per_fp: input.pricePerFp,
       sort_order: sortOrder,
-      created_by: user.id,
-      updated_by: user.id,
+      created_by: userId,
+      updated_by: userId,
     })
     .select('id')
     .maybeSingle();
@@ -498,12 +533,12 @@ export async function saveNewInquiry(input: SaveNewInquiryInput): Promise<SaveRe
 
   const drows = rows0.map((e) => ({
     plan_id: input.planId, program_id: created.id, month_index: e.month_index, demand_fp: e.demand_fp,
-    created_by: user.id, updated_by: user.id,
+    created_by: userId, updated_by: userId,
   }));
   const { error: de } = await supabase.from('demand_plan').upsert(drows, { onConflict: 'program_id,month_index' });
   if (de) return { ok: false, error: permError(de.message) };
 
-  await logAudit(supabase, {
+  await logAudit(rls, {
     planId: input.planId, entityType: 'programs', entityId: created.id, action: 'insert',
     changes: { item_code: itemCode, customer, status: 'pipeline', saved_from: 'inquiry' },
   });

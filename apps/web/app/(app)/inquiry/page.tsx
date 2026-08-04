@@ -35,10 +35,10 @@ export default async function InquiryPage() {
   const programs = (progData ?? []) as InquiryProgram[];
   const buckets = (bucketData ?? []) as InquiryBucket[];
 
-  // Saving writes a program and demand, so it needs edit access to both tabs.
+  // Saving an inquiry is its own grant — separate from editing programs/demand
+  // directly. The save action writes via the service role after re-checking.
   const who = { id: profile?.id ?? '', role: (profile?.role ?? 'viewer') as UserRole };
-  const canSave =
-    canEditPlanSection(plan, who, grants.has('programs')) && canEditPlanSection(plan, who, grants.has('demand_plan'));
+  const canSave = canEditPlanSection(plan, who, grants.has('inquiry'));
 
   return (
     <InquiryClient
