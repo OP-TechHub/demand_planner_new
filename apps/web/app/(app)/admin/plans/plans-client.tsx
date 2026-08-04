@@ -3,20 +3,23 @@
 import { useEffect, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Lock, LockOpen, Trash2, Users, KeyRound } from 'lucide-react';
+import { Lock, LockOpen, Trash2, Users, KeyRound, Plus } from 'lucide-react';
 import { monthLabel, PLAN_EDITABLE_SECTIONS, SECTION_LABEL } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Dialog } from '@/components/ui/dialog';
 import { toast } from '@/components/ui/toast';
 import { confirmDialog } from '@/components/ui/confirm';
 import { setPlanLocked, adminDeletePlan, getPlanGrants, setPlanUserSections } from '../actions';
+import { createScenario } from '../../plan-actions';
 
 export type AdminPlan = {
   id: string;
   name: string;
   type: string;
   is_locked: boolean;
+  is_sandbox: boolean;
   owner: string;
   plan_start_date: string;
   horizon_months: number;
@@ -24,12 +27,32 @@ export type AdminPlan = {
 };
 export type AccessUser = { id: string; name: string };
 
-const TYPE_LABEL: Record<string, string> = { master: 'Master', scenario: 'Scenario', snapshot: 'Snapshot' };
+/** What kind of plan a row is, for the Kind column. */
+function kindOf(p: AdminPlan): string {
+  if (p.type === 'master') return 'Master';
+  if (p.is_sandbox) return 'Sandbox';
+  return 'Official';
+}
 
 export function PlansAdminClient({ plans, users }: { plans: AdminPlan[]; users: AccessUser[] }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [accessPlan, setAccessPlan] = useState<AdminPlan | null>(null);
+  const [newOpen, setNewOpen] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newErr, setNewErr] = useState<string | null>(null);
+  const [creating, startCreate] = useTransition();
+
+  function createOfficial() {
+    setNewErr(null);
+    if (!newName.trim()) { setNewErr('Name is required.'); return; }
+    startCreate(async () => {
+      const res = await createScenario(newName.trim(), '', { official: true });
+      if (res.error) { setNewErr(res.error); return; }
+      toast.success('Official plan created.');
+      setNewOpen(false); setNewName(''); router.refresh();
+    });
+  }
 
   function toggleLock(p: AdminPlan) {
     start(async () => {
@@ -56,11 +79,15 @@ export function PlansAdminClient({ plans, users }: { plans: AdminPlan[]; users: 
 
   return (
     <div className="mx-auto max-w-4xl space-y-4">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Plans</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Lock a plan to make it read-only for everyone, or delete plans you no longer need. The master plan can’t be deleted.
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Plans</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Official plans (master + approved copies) are managed here — lock them read-only, set per-tab access, or delete.
+            Sandboxes are users’ private scenarios; you can see and delete them, but their owner edits them.
+          </p>
+        </div>
+        <Button onClick={() => { setNewErr(null); setNewOpen(true); }}><Plus className="h-4 w-4" /> New official plan</Button>
       </div>
 
       <div className="flex items-start gap-2 rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
@@ -76,7 +103,7 @@ export function PlansAdminClient({ plans, users }: { plans: AdminPlan[]; users: 
           <thead className="bg-muted/50 text-muted-foreground">
             <tr>
               <th className="px-3 py-2 text-left font-medium">Plan</th>
-              <th className="px-3 py-2 text-left font-medium">Type</th>
+              <th className="px-3 py-2 text-left font-medium">Kind</th>
               <th className="px-3 py-2 text-left font-medium">Owner</th>
               <th className="px-3 py-2 text-left font-medium">Window</th>
               <th className="px-3 py-2 text-left font-medium">Status</th>
@@ -87,7 +114,7 @@ export function PlansAdminClient({ plans, users }: { plans: AdminPlan[]; users: 
             {plans.map((p) => (
               <tr key={p.id} className="border-t">
                 <td className="px-3 py-2 font-medium">{p.name}</td>
-                <td className="px-3 py-2 text-muted-foreground">{TYPE_LABEL[p.type] ?? p.type}</td>
+                <td className="px-3 py-2 text-muted-foreground">{kindOf(p)}</td>
                 <td className="px-3 py-2 text-muted-foreground">{p.owner}</td>
                 <td className="px-3 py-2 tabular-nums text-muted-foreground">
                   {monthLabel(p.plan_start_date, 1)} – {monthLabel(p.plan_start_date, p.horizon_months)}
@@ -105,12 +132,16 @@ export function PlansAdminClient({ plans, users }: { plans: AdminPlan[]; users: 
                 </td>
                 <td className="px-3 py-2">
                   <div className="flex items-center justify-end gap-2">
-                    <Button variant="outline" size="sm" onClick={() => setAccessPlan(p)}>
-                      <KeyRound className="h-3.5 w-3.5" /> Access
-                    </Button>
-                    <Button variant="outline" size="sm" disabled={pending} onClick={() => toggleLock(p)}>
-                      {p.is_locked ? <><LockOpen className="h-3.5 w-3.5" /> Unlock</> : <><Lock className="h-3.5 w-3.5" /> Lock</>}
-                    </Button>
+                    {!p.is_sandbox && (
+                      <Button variant="outline" size="sm" onClick={() => setAccessPlan(p)}>
+                        <KeyRound className="h-3.5 w-3.5" /> Access
+                      </Button>
+                    )}
+                    {!p.is_sandbox && (
+                      <Button variant="outline" size="sm" disabled={pending} onClick={() => toggleLock(p)}>
+                        {p.is_locked ? <><LockOpen className="h-3.5 w-3.5" /> Unlock</> : <><Lock className="h-3.5 w-3.5" /> Lock</>}
+                      </Button>
+                    )}
                     <Button
                       variant="outline"
                       size="sm"
@@ -132,6 +163,25 @@ export function PlansAdminClient({ plans, users }: { plans: AdminPlan[]; users: 
       {accessPlan && (
         <AccessDialog plan={accessPlan} users={users} onClose={() => setAccessPlan(null)} />
       )}
+
+      <Dialog
+        open={newOpen}
+        onClose={() => setNewOpen(false)}
+        title="New official plan"
+        description="Clones the current master into a new official plan you can then set access on and lock. Not a personal sandbox."
+      >
+        <div className="space-y-3">
+          <label className="block text-sm">
+            <span className="mb-1 block font-medium">Plan name</span>
+            <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. FY26 DFCC approved" autoFocus />
+          </label>
+          {newErr && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{newErr}</p>}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setNewOpen(false)}>Cancel</Button>
+            <Button onClick={createOfficial} disabled={creating}>{creating ? 'Creating…' : 'Create plan'}</Button>
+          </div>
+        </div>
+      </Dialog>
     </div>
   );
 }

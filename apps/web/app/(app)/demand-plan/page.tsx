@@ -29,7 +29,7 @@ export default async function DemandPlanPage() {
 
   const canEdit = canEditPlanSection(
     plan,
-    { role: (profile?.role ?? 'viewer') as UserRole },
+    { id: profile?.id ?? '', role: (profile?.role ?? 'viewer') as UserRole },
     grants.has('demand_plan')
   );
 

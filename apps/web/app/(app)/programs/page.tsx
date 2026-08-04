@@ -26,7 +26,7 @@ export default async function ProgramsPage() {
 
   const canEdit = canEditPlanSection(
     plan,
-    { role: (profile?.role ?? 'viewer') as UserRole },
+    { id: profile?.id ?? '', role: (profile?.role ?? 'viewer') as UserRole },
     grants.has('programs')
   );
 

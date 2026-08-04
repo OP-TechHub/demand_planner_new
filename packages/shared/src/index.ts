@@ -57,6 +57,8 @@ export interface Plan {
   description: string;
   owner_user_id: string | null;
   is_locked: boolean;
+  /** true = a user's private sandbox; false = master or an official plan. */
+  is_sandbox: boolean;
   plan_start_date: string;
   horizon_months: number;
   settings_margin_metric: MarginMetric;
@@ -142,7 +144,10 @@ export const can = {
   manageUsers: (r: UserRole) => r === 'admin',
   editBuckets: (r: UserRole) => r === 'admin',
   editMaster: (r: UserRole) => r === 'admin' || r === 'planner',
-  createScenario: (r: UserRole) => r === 'admin',
+  /** A private sandbox scenario — any non-viewer may create their own. */
+  createScenario: (r: UserRole) => r !== 'viewer',
+  /** An official plan (master or admin copy) — admins only. */
+  createPlan: (r: UserRole) => r === 'admin',
 } as const;
 
 /**
@@ -184,18 +189,20 @@ export function canEditSection(
  * the database will reject:
  *   • a locked plan is never editable (not even by an admin — unlock first)
  *   • an admin edits any unlocked plan
- *   • everyone else needs an explicit per-plan grant for that tab
+ *   • a sandbox scenario is fully editable by its owner (all tabs)
+ *   • an official plan needs an explicit per-plan grant for that tab
  *
  * `hasGrant` is whether a plan_editor_grants row exists for (plan, user, tab);
- * the caller loads it (e.g. via getMyPlanGrants).
+ * the caller loads it (e.g. via getMyPlanGrants). It's ignored for sandboxes.
  */
 export function canEditPlanSection(
-  plan: { is_locked: boolean },
-  user: { role: UserRole },
+  plan: { is_locked: boolean; is_sandbox: boolean; owner_user_id: string | null },
+  user: { id: string; role: UserRole },
   hasGrant: boolean
 ): boolean {
   if (plan.is_locked) return false;
   if (user.role === 'admin') return true;
+  if (plan.is_sandbox) return plan.owner_user_id === user.id;
   return hasGrant;
 }
 

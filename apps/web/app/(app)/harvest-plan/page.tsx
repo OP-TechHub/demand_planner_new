@@ -28,7 +28,7 @@ export default async function HarvestPlanPage() {
 
   const canEdit = canEditPlanSection(
     plan,
-    { role: (profile?.role ?? 'viewer') as UserRole },
+    { id: profile?.id ?? '', role: (profile?.role ?? 'viewer') as UserRole },
     grants.has('harvest_plan')
   );
 

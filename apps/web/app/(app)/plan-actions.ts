@@ -34,20 +34,33 @@ export async function setActivePlan(planId: string): Promise<void> {
 export type ScenarioResult = { error: string | null; scenarioId?: string };
 
 /** Fork the master plan into a new scenario (Option A full clone) and switch to it. */
-export async function createScenario(name: string, description: string): Promise<ScenarioResult> {
+/**
+ * Clone the master into a new plan. Default (`official` false) makes a private
+ * SANDBOX owned by the caller (any non-viewer). `official: true` makes an
+ * official plan (is_sandbox = false) and requires admin — used by Admin → Plans
+ * for the approved/DFCC-style copies.
+ */
+export async function createScenario(
+  name: string,
+  description: string,
+  opts?: { official?: boolean }
+): Promise<ScenarioResult> {
+  const official = opts?.official ?? false;
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: 'Your session expired. Sign in again.' };
-  const { data: me } = await supabase.from('users').select('role').eq('id', user.id).maybeSingle();
-  if (me?.role !== 'admin') return { error: 'Only an admin can create plans.' };
   if (!name?.trim()) return { error: 'Name is required.' };
+  if (official) {
+    const { data: me } = await supabase.from('users').select('role').eq('id', user.id).maybeSingle();
+    if (me?.role !== 'admin') return { error: 'Only an admin can create an official plan.' };
+  }
 
   const { data: master } = await supabase.from('plans').select('*').eq('type', 'master').is('deleted_at', null).maybeSingle();
   if (!master) return { error: 'No master plan to fork.' };
 
   const { data: scenario, error: se } = await supabase.from('plans').insert({
     org_id: master.org_id, type: 'scenario', parent_plan_id: master.id,
-    name: name.trim(), description: (description ?? '').trim(), owner_user_id: user.id, is_locked: false,
+    name: name.trim(), description: (description ?? '').trim(), owner_user_id: user.id, is_locked: false, is_sandbox: !official,
     plan_start_date: master.plan_start_date, horizon_months: master.horizon_months,
     settings_margin_metric: master.settings_margin_metric, settings_allocation_mode: master.settings_allocation_mode,
     settings_scope: master.settings_scope, settings_lookback_months: master.settings_lookback_months,
@@ -119,8 +132,6 @@ export async function createPlan(input: {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: 'Your session expired. Sign in again.' };
-  const { data: me } = await supabase.from('users').select('role').eq('id', user.id).maybeSingle();
-  if (me?.role !== 'admin') return { error: 'Only an admin can create plans.' };
   if (!input.name?.trim()) return { error: 'Name is required.' };
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.planStartDate ?? '')) return { error: 'Pick a start month.' };
   const horizon = Math.trunc(input.horizonMonths);
@@ -134,7 +145,7 @@ export async function createPlan(input: {
 
   const { data: plan, error: se } = await supabase.from('plans').insert({
     org_id: master.org_id, type: 'scenario', parent_plan_id: master.id,
-    name: input.name.trim(), description: '', owner_user_id: user.id, is_locked: false,
+    name: input.name.trim(), description: '', owner_user_id: user.id, is_locked: false, is_sandbox: true,
     plan_start_date: input.planStartDate, horizon_months: horizon,
     settings_margin_metric: master.settings_margin_metric, settings_allocation_mode: master.settings_allocation_mode,
     settings_scope: master.settings_scope, settings_lookback_months: master.settings_lookback_months,
@@ -213,6 +224,7 @@ async function snapshotPlan(svc: any, plan: any, userId: string, name: string, d
     name, description,
     owner_user_id: userId,
     is_locked: true, // read-only — can_write_section() requires `not is_locked`
+    is_sandbox: false, // an official archive, not a personal sandbox
     plan_start_date: plan.plan_start_date,
     horizon_months: plan.horizon_months,
     settings_margin_metric: plan.settings_margin_metric,

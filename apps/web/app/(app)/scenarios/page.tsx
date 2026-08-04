@@ -5,8 +5,10 @@ import { ScenariosClient, type PickProgram } from './scenarios-client';
 
 export default async function ScenariosPage() {
   const [plans, active] = await Promise.all([getSelectablePlans(), getActivePlan()]);
+  // Only the user's private sandboxes here — official plans (is_sandbox = false)
+  // live under Admin → Plans, even though they share the 'scenario' type.
   const scenarios = plans
-    .filter((p) => p.type === 'scenario')
+    .filter((p) => p.type === 'scenario' && p.is_sandbox)
     .map((p) => ({ id: p.id, name: p.name, description: p.description, forked_at: p.forked_at }));
 
   const master = plans.find((p) => p.type === 'master') ?? null;

@@ -36,7 +36,7 @@ export default async function InquiryPage() {
   const buckets = (bucketData ?? []) as InquiryBucket[];
 
   // Saving writes a program and demand, so it needs edit access to both tabs.
-  const who = { role: (profile?.role ?? 'viewer') as UserRole };
+  const who = { id: profile?.id ?? '', role: (profile?.role ?? 'viewer') as UserRole };
   const canSave =
     canEditPlanSection(plan, who, grants.has('programs')) && canEditPlanSection(plan, who, grants.has('demand_plan'));
 
