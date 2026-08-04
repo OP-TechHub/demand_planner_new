@@ -44,21 +44,23 @@ export type InquiryContext =
   | { ok: false; error: string };
 
 /**
- * Gather everything the inquiry screen needs for one program across a month
- * range: per month, the program's sourcing paths with each bucket's spare
- * whole-round (unallocated_wr) and the currently-planned demand (so each month
- * can be overridden). Months are independent — each draws from its own month's
- * spare capacity — so the client cascades each one on its own.
+ * Gather everything the inquiry screen needs for one program across a set of
+ * months (a contiguous range or hand-picked months — the caller decides and
+ * passes the resolved list): per month, the program's sourcing paths with each
+ * bucket's spare whole-round (unallocated_wr) and the currently-planned demand
+ * (so each month can be overridden). Months are independent — each draws from
+ * its own month's spare capacity — so the client cascades each one on its own.
  */
 export async function getInquiryContext(
   planId: string,
   programId: string,
-  fromMonth: number,
-  toMonth: number
+  monthIndices: number[]
 ): Promise<InquiryContext> {
   if (!planId || !programId) return { ok: false, error: 'Missing selection.' };
-  const from = Math.max(1, Math.min(fromMonth, toMonth));
-  const to = Math.max(from, Math.max(fromMonth, toMonth));
+  const monthsSel = [...new Set(monthIndices)]
+    .filter((m) => Number.isInteger(m) && m >= 1)
+    .sort((a, b) => a - b);
+  if (monthsSel.length === 0) return { ok: false, error: 'Pick at least one month.' };
 
   const supabase = await createClient();
   const { data: progData } = await supabase
@@ -100,15 +102,13 @@ export async function getInquiryContext(
       .select('bucket_id, month_index, unallocated_wr')
       .eq('plan_id', planId)
       .in('bucket_id', bucketIds)
-      .gte('month_index', from)
-      .lte('month_index', to),
+      .in('month_index', monthsSel),
     supabase.from('unallocated_wr').select('bucket_id').eq('plan_id', planId).limit(1),
     supabase
       .from('demand_plan')
       .select('month_index, demand_fp')
       .eq('program_id', programId)
-      .gte('month_index', from)
-      .lte('month_index', to),
+      .in('month_index', monthsSel),
   ]);
 
   const nameById = new Map((buckets ?? []).map((b: { id: string; name: string }) => [b.id, b.name]));
@@ -123,18 +123,15 @@ export async function getInquiryContext(
   );
   const computed = (anyResult ?? []).length > 0;
 
-  const months: InquiryMonth[] = [];
-  for (let m = from; m <= to; m++) {
-    months.push({
-      month_index: m,
-      current_demand_fp: demandByMonth.get(m) ?? baseline,
-      paths: rawPaths.map((p) => ({
-        ...p,
-        bucket_name: nameById.get(p.bucket_id) ?? 'Unknown bucket',
-        unallocated_wr: unallocByKey.get(`${p.bucket_id}:${m}`) ?? 0,
-      })),
-    });
-  }
+  const months: InquiryMonth[] = monthsSel.map((m) => ({
+    month_index: m,
+    current_demand_fp: demandByMonth.get(m) ?? baseline,
+    paths: rawPaths.map((p) => ({
+      ...p,
+      bucket_name: nameById.get(p.bucket_id) ?? 'Unknown bucket',
+      unallocated_wr: unallocByKey.get(`${p.bucket_id}:${m}`) ?? 0,
+    })),
+  }));
 
   // Other active programs for the same customer, with total demand across the range.
   const { data: others } = await supabase
@@ -155,8 +152,7 @@ export async function getInquiryContext(
       .from('demand_plan')
       .select('program_id, month_index, demand_fp')
       .in('program_id', otherRows.map((o) => o.id))
-      .gte('month_index', from)
-      .lte('month_index', to);
+      .in('month_index', monthsSel);
     for (const d of (drows ?? []) as { program_id: string; month_index: number; demand_fp: number }[]) {
       const map = overridesByProg.get(d.program_id) ?? new Map<number, number>();
       map.set(d.month_index, Number(d.demand_fp));
@@ -167,7 +163,7 @@ export async function getInquiryContext(
     const ovr = overridesByProg.get(o.id);
     const base = Number(o.max_monthly_demand_fp);
     let total = 0;
-    for (let m = from; m <= to; m++) total += ovr?.get(m) ?? base;
+    for (const m of monthsSel) total += ovr?.get(m) ?? base;
     return { item_code: o.item_code, item_description: o.item_description, demand_fp: total };
   });
 

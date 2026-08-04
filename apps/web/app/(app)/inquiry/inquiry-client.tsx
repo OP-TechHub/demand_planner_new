@@ -57,8 +57,10 @@ export function InquiryClient({
 }) {
   const [mode, setMode] = useState<'existing' | 'new'>('existing');
   const [programId, setProgramId] = useState('');
+  const [monthMode, setMonthMode] = useState<'range' | 'pick'>('range');
   const [fromMonth, setFromMonth] = useState(1);
   const [toMonth, setToMonth] = useState(1);
+  const [picked, setPicked] = useState<number[]>([]);
   // Per-month inquiry quantity (string for a friendly input), keyed by month_index.
   const [qtyByMonth, setQtyByMonth] = useState<Record<number, string>>({});
   const [setAll, setSetAll] = useState('');
@@ -69,11 +71,17 @@ export function InquiryClient({
 
   const months = useMemo(() => Array.from({ length: horizon }, (_, i) => i + 1), [horizon]);
 
-  function load(nextProgram: string, from: number, to: number) {
-    if (!nextProgram) { setCtx(null); return; }
+  // The resolved month list, however it was chosen.
+  const rangeMonths = (from: number, to: number) => {
+    const lo = Math.min(from, to), hi = Math.max(from, to);
+    return Array.from({ length: hi - lo + 1 }, (_, i) => lo + i);
+  };
+
+  function load(nextProgram: string, monthList: number[]) {
+    if (!nextProgram || monthList.length === 0) { setCtx(null); return; }
     setError(null);
     start(async () => {
-      const res = await getInquiryContext(planId, nextProgram, from, to);
+      const res = await getInquiryContext(planId, nextProgram, monthList);
       if (!res.ok) { setError(res.error); setCtx(null); return; }
       setCtx(res);
       // Prefill each month's quantity with its currently-planned demand (override baseline).
@@ -84,14 +92,28 @@ export function InquiryClient({
     });
   }
 
-  const onProgram = (id: string) => { setProgramId(id); load(id, fromMonth, toMonth); };
+  // The current selection, whichever mode is active.
+  const selectedMonths = monthMode === 'range' ? rangeMonths(fromMonth, toMonth) : [...picked].sort((a, b) => a - b);
+
+  const reload = (id: string, monthList: number[]) => load(id, monthList);
+  const onProgram = (id: string) => { setProgramId(id); reload(id, selectedMonths); };
   const onFrom = (v: number) => {
     const to = v > toMonth ? v : toMonth;
-    setFromMonth(v); setToMonth(to); load(programId, v, to);
+    setFromMonth(v); setToMonth(to); reload(programId, rangeMonths(v, to));
   };
   const onTo = (v: number) => {
     const from = v < fromMonth ? v : fromMonth;
-    setToMonth(v); setFromMonth(from); load(programId, from, v);
+    setToMonth(v); setFromMonth(from); reload(programId, rangeMonths(from, v));
+  };
+  const onMonthMode = (m: 'range' | 'pick') => {
+    setMonthMode(m);
+    const list = m === 'range' ? rangeMonths(fromMonth, toMonth) : [...picked].sort((a, b) => a - b);
+    reload(programId, list);
+  };
+  const togglePick = (m: number) => {
+    const next = picked.includes(m) ? picked.filter((x) => x !== m) : [...picked, m];
+    setPicked(next);
+    reload(programId, [...next].sort((a, b) => a - b));
   };
 
   const applySetAll = () => {
@@ -154,9 +176,9 @@ export function InquiryClient({
         </div>
       ) : (
         <div className="space-y-5">
-          {/* Selection: program + month range */}
-          <div className="grid gap-3 rounded-lg border bg-card p-4 sm:grid-cols-2">
-            <label className="text-sm sm:col-span-2">
+          {/* Selection: program + month choice (range or pick) */}
+          <div className="space-y-3 rounded-lg border bg-card p-4">
+            <label className="block text-sm">
               <span className="mb-1 block font-medium">Program</span>
               <select value={programId} onChange={(e) => onProgram(e.target.value)} className={selectCls}>
                 <option value="">Select a program…</option>
@@ -167,18 +189,61 @@ export function InquiryClient({
                 ))}
               </select>
             </label>
-            <label className="text-sm">
-              <span className="mb-1 block font-medium">From month</span>
-              <select value={fromMonth} onChange={(e) => onFrom(Number(e.target.value))} className={selectCls}>
-                {months.map((m) => <option key={m} value={m}>{monthLabel(planStartDate, m)}</option>)}
-              </select>
-            </label>
-            <label className="text-sm">
-              <span className="mb-1 block font-medium">To month</span>
-              <select value={toMonth} onChange={(e) => onTo(Number(e.target.value))} className={selectCls}>
-                {months.map((m) => <option key={m} value={m}>{monthLabel(planStartDate, m)}</option>)}
-              </select>
-            </label>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex w-max items-center gap-0.5 rounded-lg border border-border bg-muted/30 p-0.5 text-sm">
+                {(['range', 'pick'] as const).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => onMonthMode(m)}
+                    className={cn(
+                      'rounded-md px-3 py-1 font-medium transition-colors',
+                      monthMode === m ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    {m === 'range' ? 'Month range' : 'Pick months'}
+                  </button>
+                ))}
+              </div>
+
+              {monthMode === 'range' ? (
+                <div className="flex items-center gap-1.5 text-sm">
+                  <select value={fromMonth} onChange={(e) => onFrom(Number(e.target.value))} className={selectCls} aria-label="From month">
+                    {months.map((m) => <option key={m} value={m}>{monthLabel(planStartDate, m)}</option>)}
+                  </select>
+                  <span className="text-xs text-muted-foreground">to</span>
+                  <select value={toMonth} onChange={(e) => onTo(Number(e.target.value))} className={selectCls} aria-label="To month">
+                    {months.map((m) => <option key={m} value={m}>{monthLabel(planStartDate, m)}</option>)}
+                  </select>
+                </div>
+              ) : (
+                <span className="text-xs text-muted-foreground">
+                  {picked.length ? `${picked.length} month${picked.length > 1 ? 's' : ''} selected` : 'Tap the months the customer is asking for.'}
+                </span>
+              )}
+            </div>
+
+            {monthMode === 'pick' && (
+              <div className="flex flex-wrap gap-1.5">
+                {months.map((m) => {
+                  const on = picked.includes(m);
+                  return (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => togglePick(m)}
+                      className={cn(
+                        'rounded-md border px-2 py-1 text-xs font-medium transition-colors',
+                        on ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-muted'
+                      )}
+                    >
+                      {monthLabel(planStartDate, m)}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {error && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
@@ -345,7 +410,7 @@ export function InquiryClient({
 
           {!ctx && !pending && !error && (
             <p className="text-sm text-muted-foreground">
-              Pick a program and a month range to check what we can supply.{' '}
+              Pick a program and the month(s) to check what we can supply.{' '}
               <Link href="/programs" className="text-primary hover:underline">Manage programs</Link>.
             </p>
           )}
