@@ -12,11 +12,59 @@ export default async function OpenToBuyPage() {
   const supabase = await createClient();
 
   const months = Array.from({ length: plan.horizon_months }, (_, i) => i + 1);
-  const [{ data: buckets }, uw, pw] = await Promise.all([
+  const [{ data: buckets }, uw, pw, { data: pipePrograms }, allocs, rr] = await Promise.all([
     supabase.from('buckets').select('id, name, sort_order').eq('is_archived', false).order('sort_order'),
     fetchAllByPlan(supabase, 'unallocated_wr', 'bucket_id, month_index, unallocated_wr', plan.id),
     fetchAllByPlan(supabase, 'pipeline_wr', 'bucket_id, month_index, pipeline_wr', plan.id),
+    // For the per-cell breakdown: which pipeline programs consumed each bucket-month.
+    supabase.from('programs')
+      .select('id, item_code, item_description, primary_bucket_id, secondary_bucket_id, tertiary_bucket_id')
+      .eq('plan_id', plan.id).eq('status', 'pipeline').is('deleted_at', null),
+    fetchAllByPlan(supabase, 'allocations', 'program_id, month_index, path, allocated_wr', plan.id),
+    fetchAllByPlan(supabase, 'rolling_results',
+      'program_id, month_index, borrow_m1_prim_wr, borrow_m1_alt_wr, borrow_m1_tert_wr, borrow_m2_prim_wr, borrow_m2_alt_wr, borrow_m2_tert_wr', plan.id),
   ]);
+
+  // Reconstruct pipeline_wr's per-program breakdown per (bucket, month), exactly as
+  // the engine attributes it: own-month allocations + the 6 borrow channels (each
+  // sourcing from its path's bucket at month−offset).
+  type Prog = { label: string; buckets: (string | null)[] }; // [primary, secondary, tertiary]
+  const pipe = new Map<string, Prog>();
+  for (const p of (pipePrograms ?? []) as { id: string; item_code: string; item_description: string; primary_bucket_id: string; secondary_bucket_id: string | null; tertiary_bucket_id: string | null }[]) {
+    pipe.set(p.id, { label: `${p.item_code} — ${p.item_description}`, buckets: [p.primary_bucket_id, p.secondary_bucket_id, p.tertiary_bucket_id] });
+  }
+  const contrib = new Map<string, Map<string, number>>(); // `${bucket}:${month}` -> programId -> wr
+  const add = (bucket: string | null | undefined, month: number, progId: string, wr: number) => {
+    if (!bucket || month < 1 || !(wr > 0)) return;
+    const k = `${bucket}:${month}`;
+    let inner = contrib.get(k);
+    if (!inner) { inner = new Map(); contrib.set(k, inner); }
+    inner.set(progId, (inner.get(progId) ?? 0) + wr);
+  };
+  const PATH_IDX = { primary: 0, secondary: 1, tertiary: 2 } as const;
+  for (const a of allocs as { program_id: string; month_index: number; path: keyof typeof PATH_IDX; allocated_wr: number }[]) {
+    const p = pipe.get(a.program_id);
+    if (p) add(p.buckets[PATH_IDX[a.path]], a.month_index, a.program_id, Number(a.allocated_wr));
+  }
+  for (const r of rr as Record<string, number | string>[]) {
+    const p = pipe.get(r.program_id as string);
+    if (!p) continue;
+    const T = r.month_index as number;
+    add(p.buckets[0], T - 1, r.program_id as string, Number(r.borrow_m1_prim_wr));
+    add(p.buckets[1], T - 1, r.program_id as string, Number(r.borrow_m1_alt_wr));
+    add(p.buckets[2], T - 1, r.program_id as string, Number(r.borrow_m1_tert_wr));
+    add(p.buckets[0], T - 2, r.program_id as string, Number(r.borrow_m2_prim_wr));
+    add(p.buckets[1], T - 2, r.program_id as string, Number(r.borrow_m2_alt_wr));
+    add(p.buckets[2], T - 2, r.program_id as string, Number(r.borrow_m2_tert_wr));
+  }
+  const allocatedTitles = new Map<string, string>();
+  for (const [k, inner] of contrib) {
+    const items = [...inner.entries()].filter(([, wr]) => wr > 0.5).sort((a, b) => b[1] - a[1]);
+    if (!items.length) continue;
+    const lines = items.slice(0, 12).map(([pid, wr]) => `${pipe.get(pid)?.label ?? pid}: ${Math.round(wr).toLocaleString()} kg`);
+    const extra = items.length > 12 ? `\n… +${items.length - 12} more` : '';
+    allocatedTitles.set(k, `Inquiries allocated here:\n${lines.join('\n')}${extra}`);
+  }
 
   const gridFor = (rowsByBM: Map<string, number>): GridRow[] =>
     (buckets ?? []).map((b) => ({
@@ -63,8 +111,8 @@ export default async function OpenToBuyPage() {
               <h2 className="text-lg font-semibold">Allocated with inquiries</h2>
               {pw.length > 0 && <ExportCsvButton filename="allocated-with-inquiries.csv" rows={gridCsvRows('Bucket', plan.plan_start_date, plan.horizon_months, allocatedRows)} />}
             </div>
-            <p className="text-xs text-muted-foreground">Whole-round (kg WR) consumed from each month&apos;s harvest by <b>pipeline / inquiry</b> programs (own-month + forward-borrowings sourcing here).</p>
-            <OutputGrid planStartDate={plan.plan_start_date} horizon={plan.horizon_months} rows={allocatedRows} format="num0" firstColLabel="Bucket" />
+            <p className="text-xs text-muted-foreground">Whole-round (kg WR) consumed from each month&apos;s harvest by <b>pipeline / inquiry</b> programs (own-month + forward-borrowings sourcing here). Hover a value to see which inquiries make it up.</p>
+            <OutputGrid planStartDate={plan.plan_start_date} horizon={plan.horizon_months} rows={allocatedRows} format="num0" firstColLabel="Bucket" cellTitle={allocatedTitles} />
           </section>
         </>
       )}
