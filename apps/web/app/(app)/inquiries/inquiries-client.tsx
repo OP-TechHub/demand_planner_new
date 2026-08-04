@@ -1,11 +1,13 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Download, ClipboardCheck } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toCsv, downloadCsv } from '@/lib/csv';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
+import { PromoteDialog } from '../promote-dialog';
 
 export type InquiryRow = {
   id: string;
@@ -17,6 +19,8 @@ export type InquiryRow = {
   item_description: string;
   months: number;
   total_fp: number;
+  target_program_id: string | null;
+  promotable: boolean;
 };
 
 const kg = (n: number) => `${Math.round(n).toLocaleString()} kg`;
@@ -31,10 +35,12 @@ const dayKey = (iso: string) => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
-export function InquiriesClient({ planName, inquiries }: { planName: string; inquiries: InquiryRow[] }) {
+export function InquiriesClient({ planName, planStartDate, inquiries }: { planName: string; planStartDate: string; inquiries: InquiryRow[] }) {
+  const router = useRouter();
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [person, setPerson] = useState('all');
+  const [promoteId, setPromoteId] = useState<string | null>(null);
 
   const people = useMemo(
     () => Array.from(new Set(inquiries.map((i) => i.created_by).filter(Boolean))).sort(),
@@ -112,6 +118,7 @@ export function InquiriesClient({ planName, inquiries }: { planName: string; inq
                 <th className="px-3 py-2 text-left font-medium">Kind</th>
                 <th className="px-3 py-2 text-right font-medium">Months</th>
                 <th className="px-3 py-2 text-right font-medium">Total FP</th>
+                <th className="px-3 py-2 text-right font-medium"></th>
               </tr>
             </thead>
             <tbody>
@@ -130,11 +137,25 @@ export function InquiriesClient({ planName, inquiries }: { planName: string; inq
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums">{i.months}</td>
                   <td className="px-3 py-2 text-right tabular-nums font-medium">{kg(i.total_fp)}</td>
+                  <td className="px-3 py-2 text-right">
+                    {i.promotable && i.target_program_id && (
+                      <Button variant="outline" size="sm" onClick={() => setPromoteId(i.target_program_id)}>Promote</Button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+      )}
+
+      {promoteId && (
+        <PromoteDialog
+          pipelineProgramId={promoteId}
+          planStartDate={planStartDate}
+          onClose={() => setPromoteId(null)}
+          onDone={() => { setPromoteId(null); router.refresh(); }}
+        />
       )}
     </div>
   );
