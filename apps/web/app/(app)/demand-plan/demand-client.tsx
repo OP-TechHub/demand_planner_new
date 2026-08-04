@@ -100,16 +100,18 @@ export function DemandClient({
     : statusView === 'pipeline' ? 'TOTAL (Pipeline)'
     : 'TOTAL (Active + Pipeline)';
 
-  // Exports what's on screen — the month range still round-trips through import,
-  // which maps columns by their month heading rather than by position.
+  // Exports the currently visible set — so the status tab splits it: Active,
+  // Pipeline, or All export separately (filename reflects which). Values are the
+  // effective demand shown on screen (override where set, else baseline). The
+  // month range round-trips through import, which maps columns by month heading.
   function onExport() {
     const header = ['item_code', 'item_description', ...visibleMonths.map((mo) => monthLabel(planStartDate, mo))];
-    const data = programs.map((p) => [
+    const data = visible.map((p) => [
       p.item_code,
       p.item_description,
-      ...visibleMonths.map((mo) => overrides.get(`${p.id}:${mo}`) ?? ''),
+      ...visibleMonths.map((mo) => effective(p, mo)),
     ]);
-    downloadCsv('demand-plan.csv', toCsv([header, ...data]));
+    downloadCsv(`demand-plan-${statusView}.csv`, toCsv([header, ...data]));
   }
 
   return (
@@ -117,7 +119,9 @@ export function DemandClient({
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">Monthly Demand Plan</h1>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={onExport}><Download />Export CSV</Button>
+          <Button variant="outline" size="sm" onClick={onExport} title={`Export the ${EXPORT_LABEL[statusView]} programs shown`}>
+            <Download />Export {EXPORT_LABEL[statusView]}
+          </Button>
           {canEdit && (
             <Button variant="outline" size="sm" onClick={() => setImporting(true)}><Upload />Import CSV</Button>
           )}
@@ -304,6 +308,8 @@ const STATUS_TABS: { key: StatusView; label: string }[] = [
   { key: 'pipeline', label: 'Pipeline' },
   { key: 'all', label: 'All programs' },
 ];
+// Short labels for the export button + filename (one word each).
+const EXPORT_LABEL: Record<StatusView, string> = { active: 'Active', pipeline: 'Pipeline', all: 'All' };
 
 // Colour cues used in the All view: active = green, pipeline = yellow,
 // inactive = muted grey. Left accent bar + matching badge on each row.
