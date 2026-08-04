@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { getActivePlan, getProfile } from '@/lib/plan';
 import { canEditPlanSection, type DemandCell, type Program, type UserRole } from '@oceanpick/shared';
+import { fetchAllByPlan } from '@/lib/fetch-all';
 import { DemandClient } from './demand-client';
 
 export default async function DemandPlanPage() {
@@ -17,9 +18,11 @@ export default async function DemandPlanPage() {
   }
 
   const supabase = await createClient();
-  const [{ data: programs }, { data: rows }, profile] = await Promise.all([
+  // demand_plan can exceed PostgREST's 1000-row cap (programs × 60), so page
+  // through it — otherwise recently-added rows silently render as baseline.
+  const [{ data: programs }, rows, profile] = await Promise.all([
     supabase.from('programs').select('*').eq('plan_id', plan.id).is('deleted_at', null).order('sort_order'),
-    supabase.from('demand_plan').select('*').eq('plan_id', plan.id),
+    fetchAllByPlan(supabase, 'demand_plan', '*', plan.id),
     getProfile(),
   ]);
 
@@ -35,7 +38,7 @@ export default async function DemandPlanPage() {
       planStartDate={plan.plan_start_date}
       horizon={plan.horizon_months}
       programs={(programs ?? []) as Program[]}
-      demandRows={(rows ?? []) as DemandCell[]}
+      demandRows={rows as DemandCell[]}
       canEdit={canEdit}
     />
   );
