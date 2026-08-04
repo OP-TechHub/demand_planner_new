@@ -1,6 +1,15 @@
 'use server';
 
+import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
+import { logAudit } from '@/lib/audit';
+
+/** Map an RLS rejection to a message that names the real cause. */
+function permError(message: string): string {
+  return /row-level security|violates row-level/i.test(message)
+    ? "Can't save here — this plan may be a read-only snapshot, or you may not have edit access to programs and the demand plan."
+    : message;
+}
 
 /** One of a program's sourcing paths, with the spare WR in its bucket that month. */
 export type InquiryPath = {
@@ -265,4 +274,148 @@ export async function getNewInquiryData(
   }
 
   return { ok: true, computed, unallocated, otherActive };
+}
+
+// ---------------------------------------------------------------------------
+// Saving an inquiry into the plan's pipeline
+// ---------------------------------------------------------------------------
+
+export type SaveResult = { ok: boolean; error?: string };
+export type InquiryEntry = { month_index: number; demand_fp: number };
+
+function cleanEntries(entries: InquiryEntry[]): InquiryEntry[] {
+  return entries.filter(
+    (e) => Number.isInteger(e.month_index) && e.month_index >= 1 && e.month_index <= 120 && Number.isFinite(e.demand_fp) && e.demand_fp >= 0
+  );
+}
+
+/**
+ * Save an existing-program inquiry into the plan: mark the program 'pipeline'
+ * and write the inquiry quantities as demand overrides for the chosen months.
+ * RLS enforces edit access; the writes fail cleanly if the caller can't.
+ */
+export async function saveExistingInquiry(
+  planId: string,
+  programId: string,
+  entries: InquiryEntry[]
+): Promise<SaveResult> {
+  if (!planId || !programId) return { ok: false, error: 'Missing selection.' };
+  const rows0 = cleanEntries(entries);
+  if (rows0.length === 0) return { ok: false, error: 'Nothing to save — enter a quantity first.' };
+
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: 'Your session expired. Sign in again.' };
+
+  const { error: pe } = await supabase.from('programs').update({ status: 'pipeline', updated_by: user.id }).eq('id', programId);
+  if (pe) return { ok: false, error: permError(pe.message) };
+
+  const rows = rows0.map((e) => ({
+    plan_id: planId, program_id: programId, month_index: e.month_index, demand_fp: e.demand_fp,
+    created_by: user.id, updated_by: user.id,
+  }));
+  const { error: de } = await supabase.from('demand_plan').upsert(rows, { onConflict: 'program_id,month_index' });
+  if (de) return { ok: false, error: permError(de.message) };
+
+  await logAudit(supabase, {
+    planId, entityType: 'programs', entityId: programId, action: 'update',
+    changes: { status: { old: null, new: 'pipeline' }, saved_from: 'inquiry' },
+  });
+  await logAudit(supabase, {
+    planId, entityType: 'demand_plan', entityId: programId, action: 'update',
+    changes: { saved_from: 'inquiry', months: rows.length },
+  });
+
+  revalidatePath('/demand-plan');
+  revalidatePath('/programs');
+  return { ok: true };
+}
+
+export type SaveNewInquiryInput = {
+  planId: string;
+  customer: string;
+  itemCode: string;
+  itemDescription: string;
+  pricePerFp: number;
+  paths: { bucket_id: string; yield: number }[];
+  entries: InquiryEntry[];
+};
+
+/**
+ * Save a new-program inquiry: create a 'pipeline' program with the given
+ * sourcing and price (baseline demand 0), then write the inquiry quantities as
+ * per-month demand. Item code must be unique within the plan.
+ */
+export async function saveNewInquiry(input: SaveNewInquiryInput): Promise<SaveResult> {
+  const customer = input.customer.trim();
+  const itemCode = input.itemCode.trim();
+  const itemDescription = input.itemDescription.trim();
+  if (!input.planId) return { ok: false, error: 'Missing plan.' };
+  if (!customer) return { ok: false, error: 'Customer is required.' };
+  if (!itemCode) return { ok: false, error: 'Item code is required.' };
+  if (!(input.pricePerFp > 0)) return { ok: false, error: 'Price must be greater than 0.' };
+
+  const paths = input.paths.filter((p) => p.bucket_id && p.yield > 0 && p.yield <= 1);
+  if (paths.length === 0) return { ok: false, error: 'Add at least one bucket with a yield between 0 and 1.' };
+
+  const rows0 = cleanEntries(input.entries).filter((e) => e.demand_fp > 0);
+  if (rows0.length === 0) return { ok: false, error: 'Enter a quantity for at least one month.' };
+
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: 'Your session expired. Sign in again.' };
+
+  const { data: last } = await supabase
+    .from('programs')
+    .select('sort_order')
+    .eq('plan_id', input.planId)
+    .order('sort_order', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const sortOrder = ((last?.sort_order as number | undefined) ?? 0) + 10;
+
+  const { data: created, error: ce } = await supabase
+    .from('programs')
+    .insert({
+      plan_id: input.planId,
+      status: 'pipeline',
+      item_code: itemCode,
+      item_description: itemDescription || itemCode,
+      customer,
+      max_monthly_demand_fp: 0,
+      primary_bucket_id: paths[0].bucket_id,
+      primary_yield: paths[0].yield,
+      secondary_bucket_id: paths[1]?.bucket_id ?? null,
+      secondary_yield: paths[1]?.yield ?? null,
+      tertiary_bucket_id: paths[2]?.bucket_id ?? null,
+      tertiary_yield: paths[2]?.yield ?? null,
+      price_per_fp: input.pricePerFp,
+      sort_order: sortOrder,
+      created_by: user.id,
+      updated_by: user.id,
+    })
+    .select('id')
+    .maybeSingle();
+
+  if (ce) {
+    const dup = /duplicate|unique|item_code/i.test(ce.message);
+    return { ok: false, error: dup ? `Item code "${itemCode}" is already used in this plan.` : permError(ce.message) };
+  }
+  if (!created) return { ok: false, error: 'Could not create the program.' };
+
+  const drows = rows0.map((e) => ({
+    plan_id: input.planId, program_id: created.id, month_index: e.month_index, demand_fp: e.demand_fp,
+    created_by: user.id, updated_by: user.id,
+  }));
+  const { error: de } = await supabase.from('demand_plan').upsert(drows, { onConflict: 'program_id,month_index' });
+  if (de) return { ok: false, error: permError(de.message) };
+
+  await logAudit(supabase, {
+    planId: input.planId, entityType: 'programs', entityId: created.id, action: 'insert',
+    changes: { item_code: itemCode, customer, status: 'pipeline', saved_from: 'inquiry' },
+  });
+
+  revalidatePath('/demand-plan');
+  revalidatePath('/programs');
+  return { ok: true };
 }

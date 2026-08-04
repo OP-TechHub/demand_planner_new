@@ -2,16 +2,25 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition, type Dispatch, type SetStateAction, type ReactNode } from 'react';
 import Link from 'next/link';
-import { ClipboardCheck, CheckCircle2, AlertTriangle, Info, ChevronRight, Plus, X } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { ClipboardCheck, CheckCircle2, AlertTriangle, Info, ChevronRight, Plus, X, Save } from 'lucide-react';
 import { monthLabel } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Dialog } from '@/components/ui/dialog';
+import { toast } from '@/components/ui/toast';
+import { confirmDialog } from '@/components/ui/confirm';
 import {
   getInquiryContext,
   getNewInquiryData,
+  saveExistingInquiry,
+  saveNewInquiry,
   type InquiryContext,
   type InquiryPath,
   type InquiryMonth,
   type InquiryOtherProgram,
+  type InquiryEntry,
 } from './actions';
 
 export type InquiryProgram = {
@@ -25,6 +34,16 @@ export type InquiryBucket = { id: string; name: string };
 
 const EPS = 1e-6;
 const kg = (n: number) => `${Math.round(n).toLocaleString()} kg`;
+
+/** Build the save payload from the per-month quantity inputs. */
+function entriesFrom(monthList: number[], qtyByMonth: Record<number, string>): InquiryEntry[] {
+  const out: InquiryEntry[] = [];
+  for (const m of monthList) {
+    const v = Number(qtyByMonth[m]);
+    if (Number.isFinite(v) && v >= 0) out.push({ month_index: m, demand_fp: v });
+  }
+  return out;
+}
 
 /**
  * Cascade an FP inquiry through a program's paths (primary → secondary →
@@ -60,12 +79,14 @@ export function InquiryClient({
   horizon,
   programs,
   buckets,
+  canSave,
 }: {
   planId: string;
   planStartDate: string;
   horizon: number;
   programs: InquiryProgram[];
   buckets: InquiryBucket[];
+  canSave: boolean;
 }) {
   const [mode, setMode] = useState<'existing' | 'new'>('existing');
   const customers = useMemo(
@@ -101,9 +122,9 @@ export function InquiryClient({
       </div>
 
       {mode === 'existing' ? (
-        <ExistingInquiry planId={planId} planStartDate={planStartDate} horizon={horizon} programs={programs} />
+        <ExistingInquiry planId={planId} planStartDate={planStartDate} horizon={horizon} programs={programs} canSave={canSave} />
       ) : (
-        <NewInquiry planId={planId} planStartDate={planStartDate} horizon={horizon} buckets={buckets} customers={customers} />
+        <NewInquiry planId={planId} planStartDate={planStartDate} horizon={horizon} buckets={buckets} customers={customers} canSave={canSave} />
       )}
     </div>
   );
@@ -120,18 +141,39 @@ function ExistingInquiry({
   planStartDate,
   horizon,
   programs,
+  canSave,
 }: {
   planId: string;
   planStartDate: string;
   horizon: number;
   programs: InquiryProgram[];
+  canSave: boolean;
 }) {
+  const router = useRouter();
   const [programId, setProgramId] = useState('');
   const [selectedMonths, setSelectedMonths] = useState<number[]>([]);
   const [qtyByMonth, setQtyByMonth] = useState<Record<number, string>>({});
   const [ctx, setCtx] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
+  const [saving, startSave] = useTransition();
+
+  async function save() {
+    if (!ctx) return;
+    const entries = entriesFrom(ctx.months.map((m) => m.month_index), qtyByMonth);
+    if (entries.length === 0) { toast.error('Enter a quantity first.'); return; }
+    const ok = await confirmDialog({
+      title: 'Save to pipeline?',
+      description: `This sets ${ctx.program.item_code} to pipeline and writes demand for ${entries.length} month${entries.length > 1 ? 's' : ''} in the current plan.`,
+      confirmLabel: 'Save',
+    });
+    if (!ok) return;
+    startSave(async () => {
+      const res = await saveExistingInquiry(planId, programId, entries);
+      if (res.ok) { toast.success('Saved to pipeline.'); router.refresh(); }
+      else toast.error(res.error ?? 'Could not save.');
+    });
+  }
 
   function load(id: string, monthList: number[]) {
     if (!id || monthList.length === 0) { setCtx(null); return; }
@@ -180,6 +222,12 @@ function ExistingInquiry({
             </div>
           </div>
           <AllocationTable months={ctx.months} qtyByMonth={qtyByMonth} setQtyByMonth={setQtyByMonth} planStartDate={planStartDate} />
+          {canSave && (
+            <div className="flex items-center justify-end gap-2">
+              <span className="text-xs text-muted-foreground">Saving marks this program pipeline and writes the demand above.</span>
+              <Button onClick={save} disabled={saving}><Save className="h-4 w-4" />{saving ? 'Saving…' : 'Save to pipeline'}</Button>
+            </div>
+          )}
           <OtherActivePanel customer={ctx.program.customer} otherActive={ctx.otherActive} />
         </>
       )}
@@ -201,13 +249,16 @@ function NewInquiry({
   horizon,
   buckets,
   customers,
+  canSave,
 }: {
   planId: string;
   planStartDate: string;
   horizon: number;
   buckets: InquiryBucket[];
   customers: string[];
+  canSave: boolean;
 }) {
+  const router = useRouter();
   const [customer, setCustomer] = useState('');
   const [description, setDescription] = useState('');
   const [paths, setPaths] = useState<PathInput[]>([{ bucketId: '', yield: '' }]);
@@ -217,6 +268,13 @@ function NewInquiry({
   const [unalloc, setUnalloc] = useState<Record<string, number>>({});
   const [otherActive, setOtherActive] = useState<InquiryOtherProgram[]>([]);
   const [pending, start] = useTransition();
+
+  // Save dialog state.
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [itemCode, setItemCode] = useState('');
+  const [price, setPrice] = useState('');
+  const [saveErr, setSaveErr] = useState<string | null>(null);
+  const [saving, startSave] = useTransition();
 
   const bucketName = useMemo(() => new Map(buckets.map((b) => [b.id, b.name])), [buckets]);
 
@@ -274,6 +332,28 @@ function NewInquiry({
   const removePath = (i: number) => setPaths((prev) => prev.filter((_, idx) => idx !== i));
 
   const ready = validPaths.length > 0 && selectedMonths.length > 0;
+
+  function doSave() {
+    setSaveErr(null);
+    const entries = entriesFrom(selectedMonths, qtyByMonth).filter((e) => e.demand_fp > 0);
+    if (!customer.trim()) { setSaveErr('Customer is required.'); return; }
+    if (!itemCode.trim()) { setSaveErr('Item code is required.'); return; }
+    if (!(Number(price) > 0)) { setSaveErr('Price must be greater than 0.'); return; }
+    if (entries.length === 0) { setSaveErr('Enter a quantity for at least one month.'); return; }
+    startSave(async () => {
+      const res = await saveNewInquiry({
+        planId,
+        customer: customer.trim(),
+        itemCode: itemCode.trim(),
+        itemDescription: description.trim(),
+        pricePerFp: Number(price),
+        paths: validPaths.map((p) => ({ bucket_id: p.bucketId, yield: p.yield })),
+        entries,
+      });
+      if (res.ok) { toast.success('Saved to pipeline.'); setSaveOpen(false); router.refresh(); }
+      else setSaveErr(res.error ?? 'Could not save.');
+    });
+  }
 
   return (
     <div className="space-y-5">
@@ -349,6 +429,12 @@ function NewInquiry({
       {ready && computed && (
         <>
           <AllocationTable months={months} qtyByMonth={qtyByMonth} setQtyByMonth={setQtyByMonth} planStartDate={planStartDate} />
+          {canSave && (
+            <div className="flex items-center justify-end gap-2">
+              <span className="text-xs text-muted-foreground">Saving creates a pipeline program with this demand.</span>
+              <Button onClick={() => { setSaveErr(null); setSaveOpen(true); }}><Save className="h-4 w-4" /> Save to pipeline</Button>
+            </div>
+          )}
           {customer.trim() && <OtherActivePanel customer={customer.trim()} otherActive={otherActive} />}
         </>
       )}
@@ -358,6 +444,33 @@ function NewInquiry({
           Add at least one bucket with a yield, and choose the month(s), to check what we can supply.
         </p>
       )}
+
+      <Dialog
+        open={saveOpen}
+        onClose={() => setSaveOpen(false)}
+        title="Save inquiry to pipeline"
+        description="Creates a new pipeline program with the sourcing and demand above."
+      >
+        <div className="space-y-3">
+          <div className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+            <div><span className="font-medium text-foreground">{customer.trim() || '—'}</span>{description.trim() ? ` · ${description.trim()}` : ''}</div>
+            <div className="mt-0.5">{validPaths.length} bucket{validPaths.length > 1 ? 's' : ''} · demand in {selectedMonths.length} month{selectedMonths.length > 1 ? 's' : ''}</div>
+          </div>
+          <label className="block text-sm">
+            <span className="mb-1 block font-medium">Item code</span>
+            <Input value={itemCode} onChange={(e) => setItemCode(e.target.value)} placeholder="e.g. 7499" />
+          </label>
+          <label className="block text-sm">
+            <span className="mb-1 block font-medium">Price ($/kg FP)</span>
+            <Input type="number" min={0} step="0.01" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="e.g. 7.95" />
+          </label>
+          {saveErr && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{saveErr}</p>}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setSaveOpen(false)}>Cancel</Button>
+            <Button onClick={doSave} disabled={saving}>{saving ? 'Saving…' : 'Create pipeline program'}</Button>
+          </div>
+        </div>
+      </Dialog>
     </div>
   );
 }

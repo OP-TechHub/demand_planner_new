@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
-import { getActivePlan } from '@/lib/plan';
+import { getActivePlan, getProfile } from '@/lib/plan';
+import { canEditPlanSection, type UserRole } from '@oceanpick/shared';
 import { InquiryClient, type InquiryProgram, type InquiryBucket } from './inquiry-client';
 
 export default async function InquiryPage() {
@@ -14,7 +15,7 @@ export default async function InquiryPage() {
   }
 
   const supabase = await createClient();
-  const [{ data: progData }, { data: bucketData }] = await Promise.all([
+  const [{ data: progData }, { data: bucketData }, profile] = await Promise.all([
     supabase
       .from('programs')
       .select('id, item_code, item_description, customer, status')
@@ -27,10 +28,16 @@ export default async function InquiryPage() {
       .select('id, name')
       .eq('is_archived', false)
       .order('sort_order'),
+    getProfile(),
   ]);
 
   const programs = (progData ?? []) as InquiryProgram[];
   const buckets = (bucketData ?? []) as InquiryBucket[];
+
+  // Saving writes a program and demand, so it needs edit access to both sections.
+  const who = { id: profile?.id ?? '', role: (profile?.role ?? 'viewer') as UserRole, edit_sections: profile?.edit_sections };
+  const canSave =
+    canEditPlanSection(plan, who, 'programs') && canEditPlanSection(plan, who, 'demand_plan');
 
   return (
     <InquiryClient
@@ -39,6 +46,7 @@ export default async function InquiryPage() {
       horizon={plan.horizon_months}
       programs={programs}
       buckets={buckets}
+      canSave={canSave}
     />
   );
 }
