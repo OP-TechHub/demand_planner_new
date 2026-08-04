@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
-import { PlansAdminClient, type AdminPlan } from './plans-client';
+import { PlansAdminClient, type AdminPlan, type AccessUser } from './plans-client';
 
 export default async function AdminPlansPage() {
   const supabase = await createClient();
@@ -23,10 +23,15 @@ export default async function AdminPlansPage() {
       .is('deleted_at', null)
       .order('type', { ascending: true })
       .order('created_at', { ascending: true }),
-    supabase.from('users').select('id, full_name, email'),
+    supabase.from('users').select('id, full_name, email, role, is_active').order('full_name'),
   ]);
 
   const nameById = new Map((users ?? []).map((u) => [u.id, u.full_name || u.email]));
+  // Non-admin active users are the ones you grant per-plan edit access to
+  // (admins always edit; viewers/planners/contributors need a grant).
+  const accessUsers: AccessUser[] = (users ?? [])
+    .filter((u) => u.is_active && u.role !== 'admin')
+    .map((u) => ({ id: u.id, name: u.full_name || u.email }));
   const rows: AdminPlan[] = (plans ?? []).map((p) => ({
     id: p.id,
     name: p.name,
@@ -38,5 +43,5 @@ export default async function AdminPlansPage() {
     created_at: p.created_at,
   }));
 
-  return <PlansAdminClient plans={rows} />;
+  return <PlansAdminClient plans={rows} users={accessUsers} />;
 }

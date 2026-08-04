@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
-import { getActivePlan, getProfile } from '@/lib/plan';
+import { getActivePlan, getProfile, getMyPlanGrants } from '@/lib/plan';
 import { canEditPlanSection, type Bucket, type HarvestCell, type UserRole } from '@oceanpick/shared';
 import { fetchAllByPlan } from '@/lib/fetch-all';
 import { HarvestClient } from './harvest-client';
@@ -19,16 +19,17 @@ export default async function HarvestPlanPage() {
 
   const supabase = await createClient();
   // harvest_plan can exceed PostgREST's 1000-row cap (buckets × 60), so page it.
-  const [{ data: buckets }, rows, profile] = await Promise.all([
+  const [{ data: buckets }, rows, profile, grants] = await Promise.all([
     supabase.from('buckets').select('*').eq('is_archived', false).order('sort_order'),
     fetchAllByPlan(supabase, 'harvest_plan', '*', plan.id),
     getProfile(),
+    getMyPlanGrants(plan.id),
   ]);
 
   const canEdit = canEditPlanSection(
     plan,
-    { id: profile?.id ?? '', role: (profile?.role ?? 'viewer') as UserRole, edit_sections: profile?.edit_sections },
-    'harvest_plan'
+    { role: (profile?.role ?? 'viewer') as UserRole },
+    grants.has('harvest_plan')
   );
 
   return (

@@ -38,6 +38,8 @@ export async function createScenario(name: string, description: string): Promise
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: 'Your session expired. Sign in again.' };
+  const { data: me } = await supabase.from('users').select('role').eq('id', user.id).maybeSingle();
+  if (me?.role !== 'admin') return { error: 'Only an admin can create plans.' };
   if (!name?.trim()) return { error: 'Name is required.' };
 
   const { data: master } = await supabase.from('plans').select('*').eq('type', 'master').is('deleted_at', null).maybeSingle();
@@ -117,6 +119,8 @@ export async function createPlan(input: {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: 'Your session expired. Sign in again.' };
+  const { data: me } = await supabase.from('users').select('role').eq('id', user.id).maybeSingle();
+  if (me?.role !== 'admin') return { error: 'Only an admin can create plans.' };
   if (!input.name?.trim()) return { error: 'Name is required.' };
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.planStartDate ?? '')) return { error: 'Pick a start month.' };
   const horizon = Math.trunc(input.horizonMonths);

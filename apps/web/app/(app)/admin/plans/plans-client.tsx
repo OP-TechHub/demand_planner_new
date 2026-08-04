@@ -1,15 +1,16 @@
 'use client';
 
-import { useTransition } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Lock, LockOpen, Trash2, Users } from 'lucide-react';
-import { monthLabel } from '@oceanpick/shared';
+import { Lock, LockOpen, Trash2, Users, KeyRound } from 'lucide-react';
+import { monthLabel, PLAN_EDITABLE_SECTIONS, SECTION_LABEL } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { Dialog } from '@/components/ui/dialog';
 import { toast } from '@/components/ui/toast';
 import { confirmDialog } from '@/components/ui/confirm';
-import { setPlanLocked, adminDeletePlan } from '../actions';
+import { setPlanLocked, adminDeletePlan, getPlanGrants, setPlanUserSections } from '../actions';
 
 export type AdminPlan = {
   id: string;
@@ -21,12 +22,14 @@ export type AdminPlan = {
   horizon_months: number;
   created_at: string;
 };
+export type AccessUser = { id: string; name: string };
 
 const TYPE_LABEL: Record<string, string> = { master: 'Master', scenario: 'Scenario', snapshot: 'Snapshot' };
 
-export function PlansAdminClient({ plans }: { plans: AdminPlan[] }) {
+export function PlansAdminClient({ plans, users }: { plans: AdminPlan[]; users: AccessUser[] }) {
   const router = useRouter();
   const [pending, start] = useTransition();
+  const [accessPlan, setAccessPlan] = useState<AdminPlan | null>(null);
 
   function toggleLock(p: AdminPlan) {
     start(async () => {
@@ -102,6 +105,9 @@ export function PlansAdminClient({ plans }: { plans: AdminPlan[] }) {
                 </td>
                 <td className="px-3 py-2">
                   <div className="flex items-center justify-end gap-2">
+                    <Button variant="outline" size="sm" onClick={() => setAccessPlan(p)}>
+                      <KeyRound className="h-3.5 w-3.5" /> Access
+                    </Button>
                     <Button variant="outline" size="sm" disabled={pending} onClick={() => toggleLock(p)}>
                       {p.is_locked ? <><LockOpen className="h-3.5 w-3.5" /> Unlock</> : <><Lock className="h-3.5 w-3.5" /> Lock</>}
                     </Button>
@@ -122,6 +128,95 @@ export function PlansAdminClient({ plans }: { plans: AdminPlan[] }) {
           </tbody>
         </table>
       </div>
+
+      {accessPlan && (
+        <AccessDialog plan={accessPlan} users={users} onClose={() => setAccessPlan(null)} />
+      )}
     </div>
+  );
+}
+
+/** Per-plan access editor: for each non-admin user, which input tabs they may edit. */
+function AccessDialog({ plan, users, onClose }: { plan: AdminPlan; users: AccessUser[]; onClose: () => void }) {
+  const router = useRouter();
+  // user_id -> Set of granted sections
+  const [grants, setGrants] = useState<Record<string, Set<string>> | null>(null);
+  const [saving, startSave] = useTransition();
+
+  // Load current grants once, when the dialog opens for this plan.
+  useEffect(() => {
+    let cancelled = false;
+    getPlanGrants(plan.id).then((res) => {
+      if (cancelled) return;
+      const map: Record<string, Set<string>> = {};
+      for (const u of users) map[u.id] = new Set();
+      for (const g of res.grants) (map[g.user_id] ??= new Set()).add(g.section);
+      setGrants(map);
+    });
+    return () => { cancelled = true; };
+  }, [plan.id, users]);
+
+  function toggle(userId: string, section: string, on: boolean) {
+    if (!grants) return;
+    const cur = new Set(grants[userId] ?? []);
+    if (on) cur.add(section); else cur.delete(section);
+    setGrants({ ...grants, [userId]: cur });
+    startSave(async () => {
+      const res = await setPlanUserSections(plan.id, userId, [...cur]);
+      if (res.error) { toast.error(res.error); }
+      else { toast.success('Access updated.'); router.refresh(); }
+    });
+  }
+
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={`Edit access — ${plan.name}`}
+      description={plan.is_locked
+        ? 'This plan is locked, so it’s read-only for everyone right now. Grants take effect once it’s unlocked.'
+        : 'Tick the input tabs each person may edit on this plan. Admins always have full access.'}
+    >
+      {grants === null ? (
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      ) : users.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No non-admin users to grant access to.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="text-muted-foreground">
+              <tr>
+                <th className="px-2 py-1.5 text-left font-medium">User</th>
+                {PLAN_EDITABLE_SECTIONS.map((s) => (
+                  <th key={s} className="px-2 py-1.5 text-center font-medium">{SECTION_LABEL[s]}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {users.map((u) => (
+                <tr key={u.id} className="border-t">
+                  <td className="px-2 py-1.5">{u.name}</td>
+                  {PLAN_EDITABLE_SECTIONS.map((s) => (
+                    <td key={s} className="px-2 py-1.5 text-center">
+                      <input
+                        type="checkbox"
+                        checked={grants[u.id]?.has(s) ?? false}
+                        disabled={saving}
+                        onChange={(e) => toggle(u.id, s, e.target.checked)}
+                        className="h-4 w-4 cursor-pointer accent-primary"
+                        aria-label={`${u.name} — ${SECTION_LABEL[s]}`}
+                      />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <div className="mt-4 flex justify-end">
+        <Button variant="outline" onClick={onClose}>Done</Button>
+      </div>
+    </Dialog>
   );
 }

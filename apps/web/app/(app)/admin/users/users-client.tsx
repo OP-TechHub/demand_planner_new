@@ -2,8 +2,8 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Clock, ChevronDown } from 'lucide-react';
-import { EDITABLE_SECTIONS, SECTION_LABEL, type UserRole } from '@oceanpick/shared';
+import { Clock } from 'lucide-react';
+import { type UserRole } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 import { Select } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
@@ -67,7 +67,7 @@ export function UsersClient({ users, meId }: { users: AdminUser[]; meId: string 
             <tr>
               <th className="px-4 py-2.5 font-medium">User</th>
               <th className="px-4 py-2.5 font-medium">Role</th>
-              <th className="px-4 py-2.5 font-medium">Edit access</th>
+              <th className="px-4 py-2.5 font-medium">Buckets</th>
               <th className="px-4 py-2.5 font-medium">Last login</th>
               <th className="px-4 py-2.5 text-right font-medium">Status</th>
             </tr>
@@ -108,11 +108,16 @@ export function UsersClient({ users, meId }: { users: AdminUser[]; meId: string 
                   {u.role === 'admin' ? (
                     <span className="text-xs text-muted-foreground">Full access</span>
                   ) : (
-                    <SectionAccessDropdown
-                      granted={u.edit_sections ?? []}
-                      disabled={isPending}
-                      onChange={(secs) => run(() => setUserSections(u.id, secs), 'Access updated')}
-                    />
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={(u.edit_sections ?? []).includes('buckets')}
+                        disabled={isPending}
+                        onChange={(e) => run(() => setUserSections(u.id, e.target.checked ? ['buckets'] : []), 'Access updated')}
+                        className="h-4 w-4 cursor-pointer accent-primary"
+                      />
+                      Can edit buckets
+                    </label>
                   )}
                 </td>
                 <td className="px-4 py-3 text-muted-foreground">
@@ -150,52 +155,3 @@ export function UsersClient({ users, meId }: { users: AdminUser[]; meId: string 
   );
 }
 
-function SectionAccessDropdown({
-  granted,
-  disabled,
-  onChange,
-}: {
-  granted: string[];
-  disabled: boolean;
-  onChange: (sections: string[]) => void;
-}) {
-  const set = new Set(granted);
-  const toggle = (s: string) => {
-    const next = new Set(set);
-    if (next.has(s)) next.delete(s);
-    else next.add(s);
-    onChange([...next]);
-  };
-
-  const summary =
-    granted.length === 0
-      ? 'No access'
-      : granted.length === EDITABLE_SECTIONS.length
-        ? 'All sections'
-        : EDITABLE_SECTIONS.filter((s) => set.has(s)).map((s) => SECTION_LABEL[s]).join(', ');
-
-  return (
-    <details className="group relative w-56">
-      <summary
-        className={cn(
-          'flex h-8 cursor-pointer list-none items-center justify-between rounded-md border border-input bg-card px-3 text-sm text-foreground transition-colors [&::-webkit-details-marker]:hidden',
-          disabled ? 'pointer-events-none opacity-50' : 'hover:bg-muted'
-        )}
-      >
-        <span className={cn('truncate', granted.length === 0 && 'text-muted-foreground')}>{summary}</span>
-        <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
-      </summary>
-      <div className="absolute left-0 z-20 mt-1 w-56 rounded-md border border-border bg-popover p-1 shadow-lg">
-        {EDITABLE_SECTIONS.map((s) => (
-          <label
-            key={s}
-            className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-muted"
-          >
-            <input type="checkbox" checked={set.has(s)} disabled={disabled} onChange={() => toggle(s)} />
-            {SECTION_LABEL[s]}
-          </label>
-        ))}
-      </div>
-    </details>
-  );
-}

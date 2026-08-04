@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
-import { getActivePlan, getProfile } from '@/lib/plan';
+import { getActivePlan, getProfile, getMyPlanGrants } from '@/lib/plan';
 import { canEditPlanSection, type Bucket, type Program, type UserRole } from '@oceanpick/shared';
 import { ProgramsClient } from './programs-client';
 
@@ -17,16 +17,17 @@ export default async function ProgramsPage() {
   }
 
   const supabase = await createClient();
-  const [{ data: programs }, { data: buckets }, profile] = await Promise.all([
+  const [{ data: programs }, { data: buckets }, profile, grants] = await Promise.all([
     supabase.from('programs').select('*').eq('plan_id', plan.id).is('deleted_at', null).order('sort_order'),
     supabase.from('buckets').select('*').order('sort_order'),
     getProfile(),
+    getMyPlanGrants(plan.id),
   ]);
 
   const canEdit = canEditPlanSection(
     plan,
-    { id: profile?.id ?? '', role: (profile?.role ?? 'viewer') as UserRole, edit_sections: profile?.edit_sections },
-    'programs'
+    { role: (profile?.role ?? 'viewer') as UserRole },
+    grants.has('programs')
   );
 
   return (

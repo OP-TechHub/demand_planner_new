@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
-import { getActivePlan, getProfile } from '@/lib/plan';
+import { getActivePlan, getProfile, getMyPlanGrants } from '@/lib/plan';
 import { canEditPlanSection, type UserRole } from '@oceanpick/shared';
 import { InquiryClient, type InquiryProgram, type InquiryBucket } from './inquiry-client';
 
@@ -15,7 +15,7 @@ export default async function InquiryPage() {
   }
 
   const supabase = await createClient();
-  const [{ data: progData }, { data: bucketData }, profile] = await Promise.all([
+  const [{ data: progData }, { data: bucketData }, profile, grants] = await Promise.all([
     supabase
       .from('programs')
       .select('id, item_code, item_description, customer, status')
@@ -29,15 +29,16 @@ export default async function InquiryPage() {
       .eq('is_archived', false)
       .order('sort_order'),
     getProfile(),
+    getMyPlanGrants(plan.id),
   ]);
 
   const programs = (progData ?? []) as InquiryProgram[];
   const buckets = (bucketData ?? []) as InquiryBucket[];
 
-  // Saving writes a program and demand, so it needs edit access to both sections.
-  const who = { id: profile?.id ?? '', role: (profile?.role ?? 'viewer') as UserRole, edit_sections: profile?.edit_sections };
+  // Saving writes a program and demand, so it needs edit access to both tabs.
+  const who = { role: (profile?.role ?? 'viewer') as UserRole };
   const canSave =
-    canEditPlanSection(plan, who, 'programs') && canEditPlanSection(plan, who, 'demand_plan');
+    canEditPlanSection(plan, who, grants.has('programs')) && canEditPlanSection(plan, who, grants.has('demand_plan'));
 
   return (
     <InquiryClient

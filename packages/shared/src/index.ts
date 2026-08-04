@@ -142,7 +142,7 @@ export const can = {
   manageUsers: (r: UserRole) => r === 'admin',
   editBuckets: (r: UserRole) => r === 'admin',
   editMaster: (r: UserRole) => r === 'admin' || r === 'planner',
-  createScenario: (r: UserRole) => r !== 'viewer',
+  createScenario: (r: UserRole) => r === 'admin',
 } as const;
 
 /**
@@ -151,6 +151,14 @@ export const can = {
  */
 export const EDITABLE_SECTIONS = ['programs', 'demand_plan', 'harvest_plan', 'buckets'] as const;
 export type EditableSection = (typeof EDITABLE_SECTIONS)[number];
+
+/**
+ * The tabs whose edit access is granted PER PLAN (see plan_editor_grants).
+ * 'buckets' is excluded — buckets are org-wide (no plan_id), so their grant
+ * stays global via canEditSection / users.edit_sections.
+ */
+export const PLAN_EDITABLE_SECTIONS = ['programs', 'demand_plan', 'harvest_plan'] as const;
+export type PlanEditableSection = (typeof PLAN_EDITABLE_SECTIONS)[number];
 
 export const SECTION_LABEL: Record<EditableSection, string> = {
   programs: 'Programs',
@@ -170,22 +178,25 @@ export function canEditSection(
 }
 
 /**
- * Can this user edit a section OF THIS PLAN?
+ * Can this user edit a plan-scoped tab OF THIS PLAN?
  *
  * Mirrors the DB's can_write_section() exactly, so the UI never offers an edit
  * the database will reject:
- *   • a locked plan (read-only snapshot) is never editable
- *   • a scenario is editable only by its owner
- *   • the master honours role + section grants
+ *   • a locked plan is never editable (not even by an admin — unlock first)
+ *   • an admin edits any unlocked plan
+ *   • everyone else needs an explicit per-plan grant for that tab
+ *
+ * `hasGrant` is whether a plan_editor_grants row exists for (plan, user, tab);
+ * the caller loads it (e.g. via getMyPlanGrants).
  */
 export function canEditPlanSection(
-  plan: { type: PlanType; owner_user_id: string | null; is_locked: boolean },
-  user: { id: string; role: UserRole; edit_sections?: string[] | null },
-  section: EditableSection
+  plan: { is_locked: boolean },
+  user: { role: UserRole },
+  hasGrant: boolean
 ): boolean {
   if (plan.is_locked) return false;
-  if (plan.type === 'scenario') return plan.owner_user_id === user.id;
-  return canEditSection(user.role, user.edit_sections, section);
+  if (user.role === 'admin') return true;
+  return hasGrant;
 }
 
 /**

@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
-import { EDITABLE_SECTIONS, type UserRole } from '@oceanpick/shared';
+import { EDITABLE_SECTIONS, PLAN_EDITABLE_SECTIONS, type UserRole } from '@oceanpick/shared';
 
 export type AdminResult = { error: string | null };
 
@@ -134,5 +134,49 @@ export async function adminDeletePlan(planId: string): Promise<AdminResult> {
   await auditPlan(await createClient(), me, planId, 'delete', { deleted: true, name: plan.name, type: plan.type });
   revalidatePath('/admin/plans');
   revalidatePath('/scenarios');
+  return { error: null };
+}
+
+export type PlanGrant = { user_id: string; section: string };
+
+/** All per-plan edit grants for one plan (admin-only), for the access editor. */
+export async function getPlanGrants(planId: string): Promise<{ grants: PlanGrant[]; error: string | null }> {
+  const { supabase, error } = await requireAdmin();
+  if (error) return { grants: [], error };
+  const { data } = await supabase.from('plan_editor_grants').select('user_id, section').eq('plan_id', planId);
+  return { grants: (data ?? []) as PlanGrant[], error: null };
+}
+
+/**
+ * Set which input tabs a user may edit ON A PLAN. Admin-only. Replaces that
+ * user's grants for the plan with exactly `sections` (of the plan-scoped tabs).
+ * Uses the service role since RLS restricts grant writes to admins already, but
+ * this keeps it robust to the caller's own row visibility.
+ */
+export async function setPlanUserSections(planId: string, userId: string, sections: string[]): Promise<AdminResult> {
+  const { me, error } = await requireAdmin();
+  if (error || !me) return { error: error ?? 'Admins only.' };
+
+  const allowed = PLAN_EDITABLE_SECTIONS as readonly string[];
+  const valid = Array.from(new Set(sections.filter((s) => allowed.includes(s))));
+
+  const svc = createServiceClient();
+  const { data: plan } = await svc.from('plans').select('id, org_id, name').eq('id', planId).is('deleted_at', null).maybeSingle();
+  if (!plan || plan.org_id !== me.org_id) return { error: 'Plan not found.' };
+
+  // Replace the user's grants for this plan: clear then insert the chosen set.
+  const { error: de } = await svc.from('plan_editor_grants').delete().eq('plan_id', planId).eq('user_id', userId);
+  if (de) return { error: de.message };
+  if (valid.length) {
+    const rows = valid.map((section) => ({ plan_id: planId, user_id: userId, section, created_by: me.id }));
+    const { error: ie } = await svc.from('plan_editor_grants').insert(rows);
+    if (ie) return { error: ie.message };
+  }
+
+  await auditPlan(await createClient(), me, planId, 'update', { access: { user: userId, sections: valid.join(', ') || 'none' }, plan: plan.name });
+  revalidatePath('/admin/plans');
+  revalidatePath('/demand-plan');
+  revalidatePath('/harvest-plan');
+  revalidatePath('/programs');
   return { error: null };
 }
