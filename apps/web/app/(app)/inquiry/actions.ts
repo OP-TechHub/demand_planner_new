@@ -182,3 +182,87 @@ export async function getInquiryContext(
     otherActive,
   };
 }
+
+export type NewInquiryData =
+  | {
+      ok: true;
+      computed: boolean;
+      /** Spare whole-round per chosen bucket per month, keyed `${bucketId}:${month}`. */
+      unallocated: Record<string, number>;
+      otherActive: InquiryOtherProgram[];
+    }
+  | { ok: false; error: string };
+
+/**
+ * For a NEW-program inquiry, the caller defines the sourcing (which buckets, at
+ * what yields) and the customer. We supply the spare whole-round capacity of
+ * those buckets across the chosen months, plus the customer's existing active
+ * programs — the FP↔WR arithmetic is then the same client-side cascade.
+ */
+export async function getNewInquiryData(
+  planId: string,
+  bucketIds: string[],
+  monthIndices: number[],
+  customer: string
+): Promise<NewInquiryData> {
+  if (!planId) return { ok: false, error: 'Missing plan.' };
+  const buckets = [...new Set(bucketIds)].filter(Boolean);
+  const monthsSel = [...new Set(monthIndices)].filter((m) => Number.isInteger(m) && m >= 1).sort((a, b) => a - b);
+
+  const supabase = await createClient();
+
+  // Whether the plan has any computed results at all (drives the recalc notice).
+  const { data: anyResult } = await supabase.from('unallocated_wr').select('bucket_id').eq('plan_id', planId).limit(1);
+  const computed = (anyResult ?? []).length > 0;
+
+  const unallocated: Record<string, number> = {};
+  if (buckets.length && monthsSel.length) {
+    const { data: rows } = await supabase
+      .from('unallocated_wr')
+      .select('bucket_id, month_index, unallocated_wr')
+      .eq('plan_id', planId)
+      .in('bucket_id', buckets)
+      .in('month_index', monthsSel);
+    for (const u of (rows ?? []) as { bucket_id: string; month_index: number; unallocated_wr: number }[]) {
+      unallocated[`${u.bucket_id}:${u.month_index}`] = Number(u.unallocated_wr);
+    }
+  }
+
+  const otherActive: InquiryOtherProgram[] = [];
+  const customerName = customer.trim();
+  if (customerName && monthsSel.length) {
+    const { data: others } = await supabase
+      .from('programs')
+      .select('id, item_code, item_description, max_monthly_demand_fp')
+      .eq('plan_id', planId)
+      .eq('customer', customerName)
+      .eq('status', 'active')
+      .is('deleted_at', null)
+      .order('sort_order');
+    const otherRows = (others ?? []) as {
+      id: string; item_code: string; item_description: string; max_monthly_demand_fp: number;
+    }[];
+    const overridesByProg = new Map<string, Map<number, number>>();
+    if (otherRows.length) {
+      const { data: drows } = await supabase
+        .from('demand_plan')
+        .select('program_id, month_index, demand_fp')
+        .in('program_id', otherRows.map((o) => o.id))
+        .in('month_index', monthsSel);
+      for (const d of (drows ?? []) as { program_id: string; month_index: number; demand_fp: number }[]) {
+        const map = overridesByProg.get(d.program_id) ?? new Map<number, number>();
+        map.set(d.month_index, Number(d.demand_fp));
+        overridesByProg.set(d.program_id, map);
+      }
+    }
+    for (const o of otherRows) {
+      const ovr = overridesByProg.get(o.id);
+      const base = Number(o.max_monthly_demand_fp);
+      let total = 0;
+      for (const m of monthsSel) total += ovr?.get(m) ?? base;
+      otherActive.push({ item_code: o.item_code, item_description: o.item_description, demand_fp: total });
+    }
+  }
+
+  return { ok: true, computed, unallocated, otherActive };
+}
