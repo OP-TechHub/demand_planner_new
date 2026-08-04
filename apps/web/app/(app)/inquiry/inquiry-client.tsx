@@ -10,11 +10,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog } from '@/components/ui/dialog';
 import { toast } from '@/components/ui/toast';
-import { confirmDialog } from '@/components/ui/confirm';
 import {
   getInquiryContext,
   getNewInquiryData,
-  saveExistingInquiry,
+  saveInquiryToPipeline,
   saveNewInquiry,
   type InquiryContext,
   type InquiryPath,
@@ -159,42 +158,29 @@ function ExistingInquiry({
   const [saving, startSave] = useTransition();
   const [saveOpen, setSaveOpen] = useState(false);
   const [saveErr, setSaveErr] = useState<string | null>(null);
+  const [details, setDetails] = useState<{ suggestedItemCode: string; price: number } | null>(null);
 
-  const sourceIsPipeline = ctx?.program.status === 'pipeline';
   const filledMonths = ctx ? entriesFrom(ctx.months.map((m) => m.month_index), qtyByMonth).filter((e) => e.demand_fp > 0) : [];
 
-  // Already a pipeline program → just add the inquiry demand to it.
-  async function saveOntoPipeline() {
-    if (!ctx || filledMonths.length === 0) { toast.error('Enter a quantity first.'); return; }
-    const ok = await confirmDialog({
-      title: 'Add to pipeline demand?',
-      description: `Writes demand for ${filledMonths.length} month${filledMonths.length > 1 ? 's' : ''} onto ${ctx.program.item_code} (already pipeline).`,
-      confirmLabel: 'Save',
-    });
-    if (!ok) return;
+  // Add the additional volume to pipeline. The server accumulates onto the
+  // program's pipeline twin (creating it once); if it needs the item code +
+  // price for a first-time twin, it says so and we open the dialog.
+  function save() {
+    if (!ctx || filledMonths.length === 0) { toast.error('Enter an additional quantity first.'); return; }
     startSave(async () => {
-      const res = await saveExistingInquiry(planId, programId, filledMonths);
-      if (res.ok) { toast.success('Saved to pipeline.'); router.refresh(); }
-      else toast.error(res.error ?? 'Could not save.');
+      const res = await saveInquiryToPipeline(planId, programId, filledMonths);
+      if (res.ok) { toast.success('Added to pipeline.'); router.refresh(); return; }
+      if (res.needsDetails) { setDetails(res.needsDetails); setSaveErr(null); setSaveOpen(true); return; }
+      toast.error(res.error ?? 'Could not save.');
     });
   }
 
-  // Active/inactive program → keep it as-is; create a pipeline sibling for these months.
-  function saveAsSibling(itemCode: string, price: number) {
+  function saveWithDetails(itemCode: string, price: number) {
     if (!ctx) return;
     setSaveErr(null);
-    const paths = (ctx.months[0]?.paths ?? []).map((p) => ({ bucket_id: p.bucket_id, yield: p.yield }));
     startSave(async () => {
-      const res = await saveNewInquiry({
-        planId,
-        customer: ctx.program.customer,
-        itemCode,
-        itemDescription: ctx.program.item_description,
-        pricePerFp: price,
-        paths,
-        entries: filledMonths,
-      });
-      if (res.ok) { toast.success('Saved as a pipeline program.'); setSaveOpen(false); router.refresh(); }
+      const res = await saveInquiryToPipeline(planId, programId, filledMonths, { itemCode, price });
+      if (res.ok) { toast.success('Added to pipeline.'); setSaveOpen(false); router.refresh(); }
       else setSaveErr(res.error ?? 'Could not save.');
     });
   }
@@ -206,9 +192,9 @@ function ExistingInquiry({
       const res = await getInquiryContext(planId, id, monthList);
       if (!res.ok) { setError(res.error); setCtx(null); return; }
       setCtx(res);
-      const next: Record<number, string> = {};
-      for (const m of res.months) next[m.month_index] = String(Math.round(m.current_demand_fp));
-      setQtyByMonth(next);
+      // Additional-volume model: the quantity is the EXTRA on top of the plan,
+      // so start blank rather than prefilling the current demand.
+      setQtyByMonth({});
     });
   }
 
@@ -244,36 +230,33 @@ function ExistingInquiry({
             <div className="text-sm text-muted-foreground">
               {ctx.program.item_description} · {ctx.program.item_code} · ${ctx.program.price_per_fp.toLocaleString()}/kg FP · {ctx.program.status}
             </div>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Enter the <span className="font-medium text-foreground">additional</span> volume on top of the current plan (the “Planned” column is for reference). It’s checked against spare capacity; saving adds it as pipeline and leaves the active demand untouched.
+            </p>
           </div>
-          <AllocationTable months={ctx.months} qtyByMonth={qtyByMonth} setQtyByMonth={setQtyByMonth} planStartDate={planStartDate} />
+          <AllocationTable months={ctx.months} qtyByMonth={qtyByMonth} setQtyByMonth={setQtyByMonth} planStartDate={planStartDate} qtyLabel="Additional (kg FP)" />
           {canSave && (
             <div className="flex items-center justify-end gap-2">
-              <span className="text-xs text-muted-foreground">
-                {sourceIsPipeline
-                  ? 'Adds the demand above to this pipeline program.'
-                  : 'Keeps this program active and adds a pipeline program for these months.'}
-              </span>
-              <Button onClick={sourceIsPipeline ? saveOntoPipeline : () => { setSaveErr(null); setSaveOpen(true); }} disabled={saving}>
-                <Save className="h-4 w-4" /> {saving ? 'Saving…' : 'Save to pipeline'}
-              </Button>
+              <span className="text-xs text-muted-foreground">Adds this as pipeline volume on top of the plan.</span>
+              <Button onClick={save} disabled={saving}><Save className="h-4 w-4" /> {saving ? 'Saving…' : 'Add to pipeline'}</Button>
             </div>
           )}
           <OtherActivePanel customer={ctx.program.customer} otherActive={ctx.otherActive} />
         </>
       )}
 
-      {ctx && (
+      {ctx && details && (
         <PipelineSaveDialog
           open={saveOpen}
           onClose={() => setSaveOpen(false)}
           customer={ctx.program.customer}
           description={ctx.program.item_description}
           monthCount={filledMonths.length}
-          defaultItemCode={`${ctx.program.item_code}-P`}
-          defaultPrice={String(ctx.program.price_per_fp)}
+          defaultItemCode={details.suggestedItemCode}
+          defaultPrice={String(details.price)}
           submitting={saving}
           error={saveErr}
-          onSubmit={saveAsSibling}
+          onSubmit={saveWithDetails}
         />
       )}
 
@@ -606,11 +589,13 @@ function AllocationTable({
   qtyByMonth,
   setQtyByMonth,
   planStartDate,
+  qtyLabel = 'Inquiry (kg FP)',
 }: {
   months: InquiryMonth[];
   qtyByMonth: Record<number, string>;
   setQtyByMonth: Dispatch<SetStateAction<Record<number, string>>>;
   planStartDate: string;
+  qtyLabel?: string;
 }) {
   const [setAll, setSetAll] = useState('');
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -661,7 +646,7 @@ function AllocationTable({
             <tr>
               <th className="px-3 py-2 text-left font-medium">Month</th>
               <th className="px-3 py-2 text-right font-medium">Planned</th>
-              <th className="px-3 py-2 text-right font-medium">Inquiry (kg FP)</th>
+              <th className="px-3 py-2 text-right font-medium">{qtyLabel}</th>
               <th className="px-3 py-2 text-right font-medium">Max we can provide</th>
               <th className="px-3 py-2 text-left font-medium">Verdict</th>
             </tr>

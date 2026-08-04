@@ -289,41 +289,135 @@ function cleanEntries(entries: InquiryEntry[]): InquiryEntry[] {
   );
 }
 
-/**
- * Add inquiry demand to an EXISTING pipeline program (used only when the picked
- * program is already 'pipeline'). It writes the quantities as demand for the
- * chosen months and does NOT change status — so an active program is never
- * flipped wholesale to pipeline. For an active program, the inquiry becomes a
- * separate pipeline sibling instead (see saveNewInquiry). Because the engine
- * scopes pipeline demand per month, this correctly models a product that is
- * active in some months and only a pipeline inquiry in others.
- *
- * RLS enforces edit access; the write fails cleanly if the caller can't.
- */
-export async function saveExistingInquiry(
+export type SaveToPipelineResult = SaveResult & {
+  /** Present when a new pipeline twin must be created and needs item code + price. */
+  needsDetails?: { suggestedItemCode: string; price: number };
+};
+
+/** Add `entries` (additional volume) onto a program's existing demand for those months. */
+async function accumulateDemand(
+  supabase: Awaited<ReturnType<typeof createClient>>,
   planId: string,
   programId: string,
+  userId: string,
   entries: InquiryEntry[]
-): Promise<SaveResult> {
-  if (!planId || !programId) return { ok: false, error: 'Missing selection.' };
+): Promise<string | null> {
+  const months = entries.map((e) => e.month_index);
+  const { data: existing } = await supabase
+    .from('demand_plan')
+    .select('month_index, demand_fp')
+    .eq('program_id', programId)
+    .in('month_index', months);
+  const cur = new Map((existing ?? []).map((r: { month_index: number; demand_fp: number }) => [r.month_index, Number(r.demand_fp)]));
+  const rows = entries.map((e) => ({
+    plan_id: planId, program_id: programId, month_index: e.month_index,
+    demand_fp: (cur.get(e.month_index) ?? 0) + e.demand_fp,
+    created_by: userId, updated_by: userId,
+  }));
+  const { error } = await supabase.from('demand_plan').upsert(rows, { onConflict: 'program_id,month_index' });
+  return error ? error.message : null;
+}
+
+/**
+ * Save an existing-program inquiry as ADDITIONAL pipeline volume, never touching
+ * the program's active demand:
+ *  - Pipeline source → add the volume straight onto it.
+ *  - Active/inactive source → add onto its pipeline twin (item code `‹code›-P`).
+ *    If the twin doesn't exist yet, return `needsDetails` so the caller can
+ *    collect the item code + price, then call again with `create`.
+ * Repeat inquiries accumulate onto the same twin, so a second additional inquiry
+ * for the same program just adds to its pipeline line (no duplicate-code wall).
+ *
+ * RLS enforces edit access; writes fail cleanly if the caller can't.
+ */
+export async function saveInquiryToPipeline(
+  planId: string,
+  sourceProgramId: string,
+  entries: InquiryEntry[],
+  create?: { itemCode: string; price: number }
+): Promise<SaveToPipelineResult> {
+  if (!planId || !sourceProgramId) return { ok: false, error: 'Missing selection.' };
   const rows0 = cleanEntries(entries).filter((e) => e.demand_fp > 0);
-  if (rows0.length === 0) return { ok: false, error: 'Enter a quantity for at least one month.' };
+  if (rows0.length === 0) return { ok: false, error: 'Enter an additional quantity for at least one month.' };
 
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: 'Your session expired. Sign in again.' };
 
-  const rows = rows0.map((e) => ({
-    plan_id: planId, program_id: programId, month_index: e.month_index, demand_fp: e.demand_fp,
-    created_by: user.id, updated_by: user.id,
-  }));
-  const { error: de } = await supabase.from('demand_plan').upsert(rows, { onConflict: 'program_id,month_index' });
-  if (de) return { ok: false, error: permError(de.message) };
+  const { data: srcData } = await supabase
+    .from('programs')
+    .select(
+      'id, item_code, item_description, customer, status, price_per_fp, ' +
+        'primary_bucket_id, secondary_bucket_id, tertiary_bucket_id, primary_yield, secondary_yield, tertiary_yield'
+    )
+    .eq('id', sourceProgramId)
+    .is('deleted_at', null)
+    .maybeSingle();
+  if (!srcData) return { ok: false, error: 'Program not found.' };
+  const source = srcData as unknown as {
+    id: string; item_code: string; item_description: string; customer: string; status: string; price_per_fp: number;
+    primary_bucket_id: string; secondary_bucket_id: string | null; tertiary_bucket_id: string | null;
+    primary_yield: number; secondary_yield: number | null; tertiary_yield: number | null;
+  };
 
-  await logAudit(supabase, {
-    planId, entityType: 'demand_plan', entityId: programId, action: 'update',
-    changes: { saved_from: 'inquiry', months: rows.length },
-  });
+  // Pipeline source: add straight onto it.
+  if (source.status === 'pipeline') {
+    const err = await accumulateDemand(supabase, planId, source.id, user.id, rows0);
+    if (err) return { ok: false, error: permError(err) };
+    await logAudit(supabase, { planId, entityType: 'demand_plan', entityId: source.id, action: 'update', changes: { saved_from: 'inquiry', months: rows0.length, additional: true } });
+    revalidatePath('/demand-plan');
+    revalidatePath('/programs');
+    return { ok: true };
+  }
+
+  // Active/inactive source: find or create the pipeline twin.
+  const twinCode = (create?.itemCode ?? `${source.item_code}-P`).trim();
+  const { data: twin } = await supabase
+    .from('programs')
+    .select('id, status')
+    .eq('plan_id', planId)
+    .eq('item_code', twinCode)
+    .is('deleted_at', null)
+    .maybeSingle();
+
+  let targetId: string;
+  if (twin) {
+    if ((twin as { status: string }).status !== 'pipeline') {
+      return { ok: false, error: `Item code "${twinCode}" is already used by a non-pipeline program.` };
+    }
+    targetId = (twin as { id: string }).id;
+  } else {
+    if (!create) {
+      return { ok: false, needsDetails: { suggestedItemCode: twinCode, price: Number(source.price_per_fp) } };
+    }
+    if (!(create.price > 0)) return { ok: false, error: 'Price must be greater than 0.' };
+    const { data: last } = await supabase
+      .from('programs').select('sort_order').eq('plan_id', planId).order('sort_order', { ascending: false }).limit(1).maybeSingle();
+    const sortOrder = ((last?.sort_order as number | undefined) ?? 0) + 10;
+    const { data: createdTwin, error: ce } = await supabase
+      .from('programs')
+      .insert({
+        plan_id: planId, status: 'pipeline', item_code: twinCode, item_description: source.item_description, customer: source.customer,
+        max_monthly_demand_fp: 0,
+        primary_bucket_id: source.primary_bucket_id, primary_yield: source.primary_yield,
+        secondary_bucket_id: source.secondary_bucket_id, secondary_yield: source.secondary_yield,
+        tertiary_bucket_id: source.tertiary_bucket_id, tertiary_yield: source.tertiary_yield,
+        price_per_fp: create.price, sort_order: sortOrder, created_by: user.id, updated_by: user.id,
+      })
+      .select('id')
+      .maybeSingle();
+    if (ce) {
+      const dup = /duplicate|unique|item_code/i.test(ce.message);
+      return { ok: false, error: dup ? `Item code "${twinCode}" is already used in this plan.` : permError(ce.message) };
+    }
+    if (!createdTwin) return { ok: false, error: 'Could not create the pipeline program.' };
+    targetId = createdTwin.id;
+    await logAudit(supabase, { planId, entityType: 'programs', entityId: targetId, action: 'insert', changes: { item_code: twinCode, customer: source.customer, status: 'pipeline', saved_from: 'inquiry' } });
+  }
+
+  const err = await accumulateDemand(supabase, planId, targetId, user.id, rows0);
+  if (err) return { ok: false, error: permError(err) };
+  await logAudit(supabase, { planId, entityType: 'demand_plan', entityId: targetId, action: 'update', changes: { saved_from: 'inquiry', months: rows0.length, additional: true } });
 
   revalidatePath('/demand-plan');
   revalidatePath('/programs');
