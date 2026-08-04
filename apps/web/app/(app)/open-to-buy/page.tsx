@@ -18,11 +18,11 @@ export default async function OpenToBuyPage() {
     fetchAllByPlan(supabase, 'pipeline_wr', 'bucket_id, month_index, pipeline_wr', plan.id),
     // For the per-cell breakdown: which pipeline programs consumed each bucket-month.
     supabase.from('programs')
-      .select('id, item_code, item_description, primary_bucket_id, secondary_bucket_id, tertiary_bucket_id')
-      .eq('plan_id', plan.id).eq('status', 'pipeline').is('deleted_at', null),
+      .select('id, item_code, item_description, customer, primary_bucket_id, secondary_bucket_id, tertiary_bucket_id')
+      .eq('plan_id', plan.id).eq('status', 'pipeline').is('deleted_at', null).order('sort_order'),
     fetchAllByPlan(supabase, 'allocations', 'program_id, month_index, path, allocated_wr', plan.id),
     fetchAllByPlan(supabase, 'rolling_results',
-      'program_id, month_index, borrow_m1_prim_wr, borrow_m1_alt_wr, borrow_m1_tert_wr, borrow_m2_prim_wr, borrow_m2_alt_wr, borrow_m2_tert_wr', plan.id),
+      'program_id, month_index, demand_fp, rolling_fp, borrow_m1_prim_wr, borrow_m1_alt_wr, borrow_m1_tert_wr, borrow_m2_prim_wr, borrow_m2_alt_wr, borrow_m2_tert_wr', plan.id),
   ]);
 
   // Reconstruct pipeline_wr's per-program breakdown per (bucket, month), exactly as
@@ -82,6 +82,35 @@ export default async function OpenToBuyPage() {
   const allocatedRows = gridFor(pwByBM);
   const computed = uw.length > 0 || pw.length > 0;
 
+  // Inquiry fulfilment: each pipeline program's demand vs what the plan can fulfil,
+  // per month — coloured green (fulfilled) to red (short), proportionally.
+  const kg = (n: number) => `${Math.round(n).toLocaleString()} kg`;
+  const pipeRows = (pipePrograms ?? []) as { id: string; item_code: string; item_description: string; customer: string }[];
+  const demByPM = new Map<string, number>();
+  const fulByPM = new Map<string, number>();
+  for (const r of rr as Record<string, number | string>[]) {
+    if (!pipe.has(r.program_id as string)) continue;
+    demByPM.set(`${r.program_id}:${r.month_index}`, Number(r.demand_fp));
+    fulByPM.set(`${r.program_id}:${r.month_index}`, Number(r.rolling_fp));
+  }
+  const fulfilRows: GridRow[] = pipeRows.map((p) => ({
+    key: p.id, label: p.customer, sublabel: `${p.item_description} (${p.item_code})`,
+    values: months.map((m) => demByPM.get(`${p.id}:${m}`) ?? null),
+  }));
+  const fulfilBg = new Map<string, string>();
+  const fulfilTitle = new Map<string, string>();
+  for (const p of pipeRows) {
+    for (const m of months) {
+      const dem = demByPM.get(`${p.id}:${m}`) ?? 0;
+      if (dem <= 0) continue;
+      const ful = Math.min(fulByPM.get(`${p.id}:${m}`) ?? 0, dem);
+      const s = Math.round(Math.max(0, Math.min(1, ful / dem)) * 100);
+      fulfilBg.set(`${p.id}:${m}`, `linear-gradient(90deg, #bbf7d0 0 ${s}%, #fecaca ${s}% 100%)`);
+      fulfilTitle.set(`${p.id}:${m}`, `Fulfilled ${kg(ful)} of ${kg(dem)} (${s}%) — short ${kg(dem - ful)}`);
+    }
+  }
+  const anyFulfil = fulfilRows.some((r) => r.values.some((v) => (v ?? 0) > 0));
+
   return (
     <div className="space-y-8">
       <div>
@@ -113,6 +142,27 @@ export default async function OpenToBuyPage() {
             </div>
             <p className="text-xs text-muted-foreground">Whole-round (kg WR) consumed from each month&apos;s harvest by <b>pipeline / inquiry</b> programs (own-month + forward-borrowings sourcing here). Hover a value to see which inquiries make it up.</p>
             <OutputGrid planStartDate={plan.plan_start_date} horizon={plan.horizon_months} rows={allocatedRows} format="num0" firstColLabel="Bucket" cellTitle={allocatedTitles} />
+          </section>
+
+          {/* Inquiry fulfilment — which pipeline orders can be met */}
+          <section className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold">Inquiry fulfilment</h2>
+              {anyFulfil && <ExportCsvButton filename="inquiry-fulfilment.csv" rows={gridCsvRows('Program', plan.plan_start_date, plan.horizon_months, fulfilRows)} />}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Each pipeline order&apos;s demand (kg FP) per month, shaded by how much the plan can fulfil —
+              <span className="mx-1 rounded px-1" style={{ background: '#bbf7d0', color: '#1e293b' }}>fully</span>,
+              <span className="mx-1 rounded px-1" style={{ background: '#fecaca', color: '#1e293b' }}>short</span>,
+              or a green/red split for partial. Hover a value for the fulfilled vs short split.
+            </p>
+            {anyFulfil ? (
+              <OutputGrid planStartDate={plan.plan_start_date} horizon={plan.horizon_months} rows={fulfilRows} format="num0" firstColLabel="Program" cellTitle={fulfilTitle} cellBg={fulfilBg} />
+            ) : (
+              <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                No pipeline demand is being computed. Pipeline orders are fulfilled only when the plan&apos;s Scope is <b>Active + Pipeline</b> (Settings) — set that and Recalculate to see this.
+              </p>
+            )}
           </section>
         </>
       )}

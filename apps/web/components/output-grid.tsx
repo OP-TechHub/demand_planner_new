@@ -48,6 +48,7 @@ export function OutputGrid({
   hideTotals = false,
   firstColLabel = 'Program',
   cellTitle,
+  cellBg,
 }: {
   planStartDate: string;
   horizon: number;
@@ -60,6 +61,8 @@ export function OutputGrid({
   firstColLabel?: string;
   /** Optional per-cell hover text, keyed `${rowKey}:${month}` (e.g. an inquiry breakdown). */
   cellTitle?: Map<string, string>;
+  /** Optional per-cell CSS `background` (e.g. a fulfilment gradient), keyed `${rowKey}:${month}`. */
+  cellBg?: Map<string, string>;
 }) {
   const [fromMonth, setFromMonth] = useState(1);
   const [toMonth, setToMonth] = useState(horizon);
@@ -131,12 +134,15 @@ export function OutputGrid({
                   {r.sublabel && <span className="ml-1 text-muted-foreground">{r.sublabel}</span>}
                 </td>
                 {visibleMonths.map((mo) => {
-                  const tip = cellTitle?.get(`${r.key}:${mo}`);
+                  const key = `${r.key}:${mo}`;
+                  const tip = cellTitle?.get(key);
+                  const bg = cellBg?.get(key);
                   return (
                     <td
                       key={mo}
                       title={tip}
-                      className={cn('px-2 py-1.5 text-right tabular-nums', yearStart(mo) && 'border-l border-border/60', color?.(r.values[mo - 1] ?? null), tip && 'cursor-help underline decoration-dotted decoration-muted-foreground/40 underline-offset-2')}
+                      style={bg ? { background: bg, color: '#1e293b' } : undefined}
+                      className={cn('px-2 py-1.5 text-right tabular-nums', yearStart(mo) && 'border-l border-border/60', color?.(r.values[mo - 1] ?? null), tip && 'cursor-help', tip && !bg && 'underline decoration-dotted decoration-muted-foreground/40 underline-offset-2')}
                     >
                       {fmt(r.values[mo - 1] ?? null)}
                     </td>
