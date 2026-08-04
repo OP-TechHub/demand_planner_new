@@ -34,6 +34,7 @@ export function DemandClient({
   const [importing, setImporting] = useState(false);
   const [customer, setCustomer] = useState('all');
   const [search, setSearch] = useState('');
+  const [statusView, setStatusView] = useState<StatusView>('active');
   const [fromMonth, setFromMonth] = useState(1);
   const [toMonth, setToMonth] = useState(horizon);
 
@@ -68,20 +69,36 @@ export function DemandClient({
     [programs]
   );
 
+  // Row counts per status view, for the tab badges.
+  const counts = useMemo(
+    () => ({
+      active: programs.filter((p) => p.status === 'active').length,
+      pipeline: programs.filter((p) => p.status === 'pipeline').length,
+      all: programs.length,
+    }),
+    [programs]
+  );
+
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
     return programs.filter((p) => {
+      if (statusView !== 'all' && p.status !== statusView) return false;
       if (customer !== 'all' && p.customer !== customer) return false;
       if (q && !`${p.item_code} ${p.item_description} ${p.customer}`.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [programs, customer, search]);
+  }, [programs, statusView, customer, search]);
 
-  // TOTAL row: sum of effective demand across in-scope (non-inactive) visible programs.
+  // TOTAL row: sum of effective demand across in-scope (non-inactive) visible
+  // programs — so the 'All' view still excludes inactive from the total.
   const totals = useMemo(
     () => visibleMonths.map((mo) => visible.filter((p) => p.status !== 'inactive').reduce((s, p) => s + effective(p, mo), 0)),
     [visibleMonths, visible, overrides] // eslint-disable-line react-hooks/exhaustive-deps
   );
+  const totalLabel =
+    statusView === 'active' ? 'TOTAL (Active)'
+    : statusView === 'pipeline' ? 'TOTAL (Pipeline)'
+    : 'TOTAL (Active + Pipeline)';
 
   // Exports what's on screen — the month range still round-trips through import,
   // which maps columns by their month heading rather than by position.
@@ -105,6 +122,25 @@ export function DemandClient({
             <Button variant="outline" size="sm" onClick={() => setImporting(true)}><Upload />Import CSV</Button>
           )}
         </div>
+      </div>
+
+      <div className="flex w-max items-center gap-0.5 rounded-lg border border-border bg-muted/30 p-0.5 text-sm">
+        {STATUS_TABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => setStatusView(t.key)}
+            className={cn(
+              'rounded-md px-3 py-1 font-medium transition-colors',
+              statusView === t.key ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+            )}
+          >
+            {t.label}
+            <span className={cn('ml-1.5 text-xs', statusView === t.key ? 'text-muted-foreground' : 'opacity-70')}>
+              {counts[t.key]}
+            </span>
+          </button>
+        ))}
       </div>
 
       <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -179,12 +215,20 @@ export function DemandClient({
               {visible.map((p) => (
                 <tr
                   key={p.id}
-                  className={cn('border-t hover:bg-muted/30', canEdit && 'cursor-pointer')}
+                  className={cn('border-t hover:bg-muted/30', canEdit && 'cursor-pointer', p.status === 'inactive' && 'opacity-60')}
                   onClick={canEdit ? () => setEditing(p) : undefined}
                 >
                   <td className={cn(stickyCol, 'min-w-[16rem] max-w-[16rem] truncate border-r bg-card px-3 py-1.5')} title={`${p.customer} — ${p.item_description}`}>
                     <span className="font-medium">{p.customer}</span>{' '}
                     <span className="text-muted-foreground">{p.item_description}</span>
+                    {statusView === 'all' && p.status !== 'active' && (
+                      <span className={cn(
+                        'ml-1.5 rounded px-1 py-0.5 text-[10px] font-medium uppercase tracking-wide',
+                        p.status === 'pipeline' ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'
+                      )}>
+                        {p.status}
+                      </span>
+                    )}
                   </td>
                   {visibleMonths.map((mo) => {
                     const isOverride = overrides.has(`${p.id}:${mo}`);
@@ -201,7 +245,7 @@ export function DemandClient({
                 </tr>
               ))}
               <tr className="border-t-2 bg-muted/40 font-semibold">
-                <td className={cn(stickyCol, 'bg-muted/40 px-3 py-1.5')}>TOTAL (Active + Pipeline)</td>
+                <td className={cn(stickyCol, 'bg-muted/40 px-3 py-1.5')}>{totalLabel}</td>
                 {totals.map((t, i) => (
                   <td key={visibleMonths[i]} className={cn('px-2 py-1.5 text-right tabular-nums', yearStart(visibleMonths[i]) && 'border-l border-border/60')}>{t.toLocaleString()}</td>
                 ))}
@@ -246,3 +290,10 @@ export function DemandClient({
 }
 
 const filterCls = 'rounded-md border px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-primary';
+
+type StatusView = 'active' | 'pipeline' | 'all';
+const STATUS_TABS: { key: StatusView; label: string }[] = [
+  { key: 'active', label: 'Active' },
+  { key: 'pipeline', label: 'Pipeline' },
+  { key: 'all', label: 'All programs' },
+];
