@@ -57,7 +57,7 @@ export function PromoteDialog({
       const target = makeActive
         ? ({ kind: 'make_active' } as const)
         : ({ kind: 'move', activeProgramId: choice.slice('active:'.length) } as const);
-      const res = await promoteInquiry(pipelineProgramId, makeActive ? [] : [...picked], target);
+      const res = await promoteInquiry(pipelineProgramId, [...picked], target);
       if (res.ok) { toast.success('Promoted to active.'); onDone(); }
       else setErr(res.error ?? 'Could not promote.');
     });
@@ -87,16 +87,12 @@ export function PromoteDialog({
           </div>
 
           {/* Months */}
-          {makeActive ? (
-            <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
-              This flips the whole program to active — every month it holds becomes active demand.
-            </p>
-          ) : ctx.months.length === 0 ? (
+          {ctx.months.length === 0 ? (
             <p className="text-sm text-muted-foreground">This program has no pipeline demand to promote.</p>
           ) : (
             <div className="text-sm">
               <div className="mb-1 flex items-center justify-between">
-                <span className="font-medium">Months to promote</span>
+                <span className="font-medium">Months to activate</span>
                 <div className="flex gap-2 text-xs">
                   <button type="button" onClick={() => setPicked(new Set(ctx.months.map((m) => m.month_index)))} className="text-primary hover:underline">All</button>
                   <button type="button" onClick={() => setPicked(new Set())} className="text-primary hover:underline">None</button>
@@ -113,13 +109,18 @@ export function PromoteDialog({
                   </label>
                 ))}
               </div>
+              {makeActive && picked.size > 0 && picked.size < ctx.months.length && (
+                <p className="mt-1.5 text-xs text-muted-foreground">
+                  The {picked.size} selected month{picked.size === 1 ? '' : 's'} become active on this program; the other {ctx.months.length - picked.size} stay pipeline on a new twin.
+                </p>
+              )}
             </div>
           )}
 
           {err && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{err}</p>}
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={onClose}>Cancel</Button>
-            <Button onClick={submit} disabled={saving || (!makeActive && picked.size === 0)}>
+            <Button onClick={submit} disabled={saving || (ctx.months.length > 0 && picked.size === 0)}>
               {saving ? 'Promoting…' : 'Promote'}
             </Button>
           </div>

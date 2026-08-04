@@ -109,9 +109,66 @@ export async function promoteInquiry(
   const { svc, rls, userId } = access;
 
   if (target.kind === 'make_active') {
-    const { error } = await svc.from('programs').update({ status: 'active', updated_by: userId }).eq('id', pipelineProgramId);
-    if (error) return { ok: false, error: error.message };
-    await logAudit(rls, { planId: prog0.plan_id, entityType: 'programs', entityId: pipelineProgramId, action: 'update', changes: { status: { old: 'pipeline', new: 'active' }, promoted: true } });
+    // Which of the program's demand-months to activate. Empty selection = all.
+    const { data: allDem } = await svc.from('demand_plan').select('month_index, demand_fp').eq('program_id', pipelineProgramId);
+    const demByM = new Map<number, number>(
+      (allDem ?? [])
+        .map((d: { month_index: number; demand_fp: number }): [number, number] => [d.month_index, Number(d.demand_fp)])
+        .filter(([, v]) => v > 0)
+    );
+    const allMonths = [...demByM.keys()];
+    const sel = [...new Set(monthIndices)].filter((m) => demByM.has(m));
+    const selected = sel.length ? sel : allMonths;
+    const rest = allMonths.filter((m) => !selected.includes(m));
+
+    // All months selected (or none carry demand) → just flip the program.
+    if (rest.length === 0) {
+      const { error } = await svc.from('programs').update({ status: 'active', updated_by: userId }).eq('id', pipelineProgramId);
+      if (error) return { ok: false, error: error.message };
+      await logAudit(rls, { planId: prog0.plan_id, entityType: 'programs', entityId: pipelineProgramId, action: 'update', changes: { status: { old: 'pipeline', new: 'active' }, promoted: true } });
+      revalidatePath('/demand-plan'); revalidatePath('/inquiries'); revalidatePath('/programs'); revalidatePath('/open-to-buy');
+      return { ok: true };
+    }
+
+    // Partial: keep the selected months on this program (now active) and move the
+    // rest into a new pipeline twin.
+    const { data: p } = await svc
+      .from('programs')
+      .select('item_description, customer, primary_bucket_id, primary_yield, secondary_bucket_id, secondary_yield, tertiary_bucket_id, tertiary_yield, price_per_fp, barra_cost_wr, packing_cost_fp, processing_cost_fp, storage_cost_fp, freight_cost_fp, other_costs_fp')
+      .eq('id', pipelineProgramId).maybeSingle();
+    if (!p) return { ok: false, error: 'Program not found.' };
+
+    const base = prog0.item_code.replace(/-P\d*$/i, '');
+    let twinCode = `${base}-P`;
+    for (let i = 1; i <= 50; i++) {
+      const code = i === 1 ? `${base}-P` : `${base}-P${i}`;
+      const { data: taken } = await svc.from('programs').select('id').eq('plan_id', prog0.plan_id).eq('item_code', code).is('deleted_at', null).maybeSingle();
+      if (!taken) { twinCode = code; break; }
+    }
+    const { data: lastP } = await svc.from('programs').select('sort_order').eq('plan_id', prog0.plan_id).order('sort_order', { ascending: false }).limit(1).maybeSingle();
+    const sortOrder = ((lastP?.sort_order as number | undefined) ?? 0) + 10;
+
+    const { data: twin, error: ce } = await svc.from('programs').insert({
+      plan_id: prog0.plan_id, status: 'pipeline', item_code: twinCode, item_description: p.item_description, customer: p.customer,
+      max_monthly_demand_fp: 0,
+      primary_bucket_id: p.primary_bucket_id, primary_yield: p.primary_yield,
+      secondary_bucket_id: p.secondary_bucket_id, secondary_yield: p.secondary_yield,
+      tertiary_bucket_id: p.tertiary_bucket_id, tertiary_yield: p.tertiary_yield,
+      price_per_fp: p.price_per_fp, barra_cost_wr: p.barra_cost_wr, packing_cost_fp: p.packing_cost_fp,
+      processing_cost_fp: p.processing_cost_fp, storage_cost_fp: p.storage_cost_fp, freight_cost_fp: p.freight_cost_fp, other_costs_fp: p.other_costs_fp,
+      sort_order: sortOrder, created_by: userId, updated_by: userId,
+    }).select('id').maybeSingle();
+    if (ce || !twin) return { ok: false, error: ce?.message ?? 'Could not create the pipeline twin.' };
+
+    const twinRows = rest.map((m) => ({ plan_id: prog0.plan_id, program_id: twin.id, month_index: m, demand_fp: demByM.get(m)!, created_by: userId, updated_by: userId }));
+    const { error: ie } = await svc.from('demand_plan').insert(twinRows);
+    if (ie) return { ok: false, error: ie.message };
+    const { error: de } = await svc.from('demand_plan').delete().eq('program_id', pipelineProgramId).in('month_index', rest);
+    if (de) return { ok: false, error: de.message };
+    const { error: ue } = await svc.from('programs').update({ status: 'active', updated_by: userId }).eq('id', pipelineProgramId);
+    if (ue) return { ok: false, error: ue.message };
+
+    await logAudit(rls, { planId: prog0.plan_id, entityType: 'programs', entityId: pipelineProgramId, action: 'update', changes: { status: { old: 'pipeline', new: 'active' }, promoted_months: selected.length, pipeline_twin: twinCode } });
     revalidatePath('/demand-plan'); revalidatePath('/inquiries'); revalidatePath('/programs'); revalidatePath('/open-to-buy');
     return { ok: true };
   }
