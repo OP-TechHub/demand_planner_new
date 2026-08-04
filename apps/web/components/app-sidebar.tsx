@@ -51,6 +51,7 @@ const SECTIONS: Section[] = [
       { label: '60-Month Summary', href: '/sixty-month', icon: CalendarDays },
       { label: 'Revenue & Cost', href: '/revenue-cost', icon: DollarSign },
       { label: 'Fulfilment Optimizer', href: '/optimizer', icon: SlidersHorizontal },
+      { label: 'Inquiries', href: '/inquiries', icon: ClipboardCheck },
     ],
   },
   {

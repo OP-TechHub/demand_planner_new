@@ -304,7 +304,7 @@ export type SaveToPipelineResult = SaveResult & {
  * service role (RLS on those tables checks their own sections, not inquiry).
  */
 async function assertInquiryAccess(planId: string): Promise<
-  | { ok: true; rls: Awaited<ReturnType<typeof createClient>>; svc: ReturnType<typeof createServiceClient>; userId: string }
+  | { ok: true; rls: Awaited<ReturnType<typeof createClient>>; svc: ReturnType<typeof createServiceClient>; userId: string; orgId: string }
   | { ok: false; error: string }
 > {
   const rls = await createClient();
@@ -326,7 +326,29 @@ async function assertInquiryAccess(planId: string): Promise<
     allowed = !!g;
   }
   if (!allowed) return { ok: false, error: 'You don’t have inquiry access to this plan.' };
-  return { ok: true, rls, svc, userId: user.id };
+  return { ok: true, rls, svc, userId: user.id, orgId: me.org_id as string };
+}
+
+/** Record a saved inquiry in the browsable register (best-effort — never blocks the save). */
+async function recordInquiry(
+  svc: ReturnType<typeof createServiceClient>,
+  row: {
+    orgId: string; planId: string; userId: string; kind: 'existing' | 'new';
+    customer: string; itemCode: string; itemDescription: string;
+    targetProgramId: string; entries: InquiryEntry[];
+  }
+): Promise<void> {
+  try {
+    await svc.from('inquiries').insert({
+      org_id: row.orgId, plan_id: row.planId, created_by: row.userId, kind: row.kind,
+      customer: row.customer, item_code: row.itemCode, item_description: row.itemDescription,
+      target_program_id: row.targetProgramId,
+      months: row.entries.length,
+      total_fp: row.entries.reduce((s, e) => s + e.demand_fp, 0),
+    });
+  } catch {
+    // the register is a convenience log; a failure here must not fail the save
+  }
 }
 
 /** Add `entries` (additional volume) onto a program's existing demand for those months. */
@@ -377,7 +399,7 @@ export async function saveInquiryToPipeline(
 
   const access = await assertInquiryAccess(planId);
   if (!access.ok) return { ok: false, error: access.error };
-  const { rls, svc: supabase, userId } = access;
+  const { rls, svc: supabase, userId, orgId } = access;
 
   const { data: srcData } = await supabase
     .from('programs')
@@ -400,6 +422,7 @@ export async function saveInquiryToPipeline(
     const err = await accumulateDemand(supabase, planId, source.id, userId, rows0);
     if (err) return { ok: false, error: permError(err) };
     await logAudit(rls, { planId, entityType: 'demand_plan', entityId: source.id, action: 'update', changes: { saved_from: 'inquiry', months: rows0.length, additional: true } });
+    await recordInquiry(supabase, { orgId, planId, userId, kind: 'existing', customer: source.customer, itemCode: source.item_code, itemDescription: source.item_description, targetProgramId: source.id, entries: rows0 });
     revalidatePath('/demand-plan');
     revalidatePath('/programs');
     return { ok: true };
@@ -453,6 +476,7 @@ export async function saveInquiryToPipeline(
   const err = await accumulateDemand(supabase, planId, targetId, userId, rows0);
   if (err) return { ok: false, error: permError(err) };
   await logAudit(rls, { planId, entityType: 'demand_plan', entityId: targetId, action: 'update', changes: { saved_from: 'inquiry', months: rows0.length, additional: true } });
+  await recordInquiry(supabase, { orgId, planId, userId, kind: 'existing', customer: source.customer, itemCode: twinCode, itemDescription: source.item_description, targetProgramId: targetId, entries: rows0 });
 
   revalidatePath('/demand-plan');
   revalidatePath('/programs');
@@ -491,7 +515,7 @@ export async function saveNewInquiry(input: SaveNewInquiryInput): Promise<SaveRe
 
   const access = await assertInquiryAccess(input.planId);
   if (!access.ok) return { ok: false, error: access.error };
-  const { rls, svc: supabase, userId } = access;
+  const { rls, svc: supabase, userId, orgId } = access;
 
   const { data: last } = await supabase
     .from('programs')
@@ -542,6 +566,7 @@ export async function saveNewInquiry(input: SaveNewInquiryInput): Promise<SaveRe
     planId: input.planId, entityType: 'programs', entityId: created.id, action: 'insert',
     changes: { item_code: itemCode, customer, status: 'pipeline', saved_from: 'inquiry' },
   });
+  await recordInquiry(supabase, { orgId, planId: input.planId, userId, kind: 'new', customer, itemCode, itemDescription: itemDescription || itemCode, targetProgramId: created.id, entries: rows0 });
 
   revalidatePath('/demand-plan');
   revalidatePath('/programs');
