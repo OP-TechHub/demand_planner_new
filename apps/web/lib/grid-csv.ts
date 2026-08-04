@@ -5,6 +5,7 @@ export interface GridRow {
   label: string;
   sublabel?: string;
   values: (number | null)[]; // length === horizon
+  group?: string; // optional grouping (e.g. program status) for client-side filtering
 }
 
 /**
