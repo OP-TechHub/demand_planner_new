@@ -231,10 +231,10 @@ export function DemandClient({
                   <td
                     className={cn(
                       custCol,
-                      'truncate border-r bg-card px-3 py-1.5 font-medium',
-                      statusView === 'all' && cn('border-l-4', STATUS_ACCENT[p.status])
+                      'truncate border-l-4 border-r bg-card px-3 py-1.5 font-medium',
+                      STATUS_ACCENT[p.status]
                     )}
-                    title={p.customer}
+                    title={`${p.customer} · ${p.status}`}
                   >
                     {p.customer}
                   </td>
