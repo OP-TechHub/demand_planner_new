@@ -284,6 +284,73 @@ export async function getNewInquiryData(
 export type SaveResult = { ok: boolean; error?: string };
 export type InquiryEntry = { month_index: number; demand_fp: number };
 
+/**
+ * A pipeline program drawing from one of the inquiry's buckets — a candidate to
+ * trim to free capacity. `demand` is the current effective demand per month.
+ */
+export type PipelineCandidate = {
+  id: string;
+  item_code: string;
+  item_description: string;
+  customer: string;
+  primary_bucket_id: string;
+  bucket_name: string;
+  primary_yield: number;
+  demand: Record<number, number>;
+};
+
+/**
+ * Pipeline programs whose PRIMARY bucket is one the inquiry needs, over the
+ * given months — the "make room" candidates. Restricted to the primary bucket
+ * so the freed-WR estimate (trim ÷ primary_yield) is clean; the recompute gives
+ * the exact figure.
+ */
+export async function getPipelineCandidates(
+  planId: string,
+  bucketIds: string[],
+  monthIndices: number[]
+): Promise<PipelineCandidate[]> {
+  const buckets = [...new Set(bucketIds)].filter(Boolean);
+  const months = [...new Set(monthIndices)].filter((m) => Number.isInteger(m) && m >= 1);
+  if (!planId || buckets.length === 0 || months.length === 0) return [];
+
+  const supabase = await createClient();
+  const { data: progs } = await supabase
+    .from('programs')
+    .select('id, item_code, item_description, customer, primary_bucket_id, primary_yield, max_monthly_demand_fp')
+    .eq('plan_id', planId)
+    .eq('status', 'pipeline')
+    .in('primary_bucket_id', buckets)
+    .is('deleted_at', null)
+    .order('sort_order');
+  const rows = (progs ?? []) as {
+    id: string; item_code: string; item_description: string; customer: string;
+    primary_bucket_id: string; primary_yield: number; max_monthly_demand_fp: number;
+  }[];
+  if (rows.length === 0) return [];
+
+  const [{ data: bucketRows }, { data: dem }] = await Promise.all([
+    supabase.from('buckets').select('id, name').in('id', buckets),
+    supabase.from('demand_plan').select('program_id, month_index, demand_fp').in('program_id', rows.map((r) => r.id)).in('month_index', months),
+  ]);
+  const nameById = new Map((bucketRows ?? []).map((b: { id: string; name: string }) => [b.id, b.name]));
+  const ovr = new Map<string, number>();
+  for (const d of (dem ?? []) as { program_id: string; month_index: number; demand_fp: number }[]) {
+    ovr.set(`${d.program_id}:${d.month_index}`, Number(d.demand_fp));
+  }
+
+  return rows.map((r) => {
+    const baseline = Number(r.max_monthly_demand_fp);
+    const demand: Record<number, number> = {};
+    for (const m of months) demand[m] = ovr.get(`${r.id}:${m}`) ?? baseline;
+    return {
+      id: r.id, item_code: r.item_code, item_description: r.item_description, customer: r.customer,
+      primary_bucket_id: r.primary_bucket_id, bucket_name: nameById.get(r.primary_bucket_id) ?? 'Bucket',
+      primary_yield: Number(r.primary_yield), demand,
+    };
+  });
+}
+
 function cleanEntries(entries: InquiryEntry[]): InquiryEntry[] {
   return entries.filter(
     (e) => Number.isInteger(e.month_index) && e.month_index >= 1 && e.month_index <= 120 && Number.isFinite(e.demand_fp) && e.demand_fp >= 0
@@ -351,6 +418,29 @@ async function recordInquiry(
   }
 }
 
+/** A pipeline program's reduced demand for some months, to free capacity. */
+export type PipelineTrim = { programId: string; entries: InquiryEntry[] };
+
+/** Apply pipeline trims: SET each program's demand for the given months to the reduced value. */
+async function applyTrims(
+  svc: ReturnType<typeof createServiceClient>,
+  planId: string,
+  userId: string,
+  trims: PipelineTrim[] | undefined
+): Promise<string | null> {
+  if (!trims?.length) return null;
+  const rows: Record<string, unknown>[] = [];
+  for (const t of trims) {
+    if (!t.programId) continue;
+    for (const e of cleanEntries(t.entries)) {
+      rows.push({ plan_id: planId, program_id: t.programId, month_index: e.month_index, demand_fp: e.demand_fp, created_by: userId, updated_by: userId });
+    }
+  }
+  if (rows.length === 0) return null;
+  const { error } = await svc.from('demand_plan').upsert(rows, { onConflict: 'program_id,month_index' });
+  return error ? error.message : null;
+}
+
 /** Add `entries` (additional volume) onto a program's existing demand for those months. */
 async function accumulateDemand(
   supabase: any, // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -391,7 +481,8 @@ export async function saveInquiryToPipeline(
   planId: string,
   sourceProgramId: string,
   entries: InquiryEntry[],
-  create?: { itemCode: string; price: number }
+  create?: { itemCode: string; price: number },
+  trims?: PipelineTrim[]
 ): Promise<SaveToPipelineResult> {
   if (!planId || !sourceProgramId) return { ok: false, error: 'Missing selection.' };
   const rows0 = cleanEntries(entries).filter((e) => e.demand_fp > 0);
@@ -421,7 +512,9 @@ export async function saveInquiryToPipeline(
   if (source.status === 'pipeline') {
     const err = await accumulateDemand(supabase, planId, source.id, userId, rows0);
     if (err) return { ok: false, error: permError(err) };
-    await logAudit(rls, { planId, entityType: 'demand_plan', entityId: source.id, action: 'update', changes: { saved_from: 'inquiry', months: rows0.length, additional: true } });
+    const te = await applyTrims(supabase, planId, userId, trims);
+    if (te) return { ok: false, error: permError(te) };
+    await logAudit(rls, { planId, entityType: 'demand_plan', entityId: source.id, action: 'update', changes: { saved_from: 'inquiry', months: rows0.length, additional: true, trimmed: trims?.length ?? 0 } });
     await recordInquiry(supabase, { orgId, planId, userId, kind: 'existing', customer: source.customer, itemCode: source.item_code, itemDescription: source.item_description, targetProgramId: source.id, entries: rows0 });
     revalidatePath('/demand-plan');
     revalidatePath('/programs');
@@ -475,7 +568,9 @@ export async function saveInquiryToPipeline(
 
   const err = await accumulateDemand(supabase, planId, targetId, userId, rows0);
   if (err) return { ok: false, error: permError(err) };
-  await logAudit(rls, { planId, entityType: 'demand_plan', entityId: targetId, action: 'update', changes: { saved_from: 'inquiry', months: rows0.length, additional: true } });
+  const te = await applyTrims(supabase, planId, userId, trims);
+  if (te) return { ok: false, error: permError(te) };
+  await logAudit(rls, { planId, entityType: 'demand_plan', entityId: targetId, action: 'update', changes: { saved_from: 'inquiry', months: rows0.length, additional: true, trimmed: trims?.length ?? 0 } });
   await recordInquiry(supabase, { orgId, planId, userId, kind: 'existing', customer: source.customer, itemCode: twinCode, itemDescription: source.item_description, targetProgramId: targetId, entries: rows0 });
 
   revalidatePath('/demand-plan');
@@ -491,6 +586,7 @@ export type SaveNewInquiryInput = {
   pricePerFp: number;
   paths: { bucket_id: string; yield: number }[];
   entries: InquiryEntry[];
+  trims?: PipelineTrim[];
 };
 
 /**
@@ -562,9 +658,12 @@ export async function saveNewInquiry(input: SaveNewInquiryInput): Promise<SaveRe
   const { error: de } = await supabase.from('demand_plan').upsert(drows, { onConflict: 'program_id,month_index' });
   if (de) return { ok: false, error: permError(de.message) };
 
+  const te = await applyTrims(supabase, input.planId, userId, input.trims);
+  if (te) return { ok: false, error: permError(te) };
+
   await logAudit(rls, {
     planId: input.planId, entityType: 'programs', entityId: created.id, action: 'insert',
-    changes: { item_code: itemCode, customer, status: 'pipeline', saved_from: 'inquiry' },
+    changes: { item_code: itemCode, customer, status: 'pipeline', saved_from: 'inquiry', trimmed: input.trims?.length ?? 0 },
   });
   await recordInquiry(supabase, { orgId, planId: input.planId, userId, kind: 'new', customer, itemCode, itemDescription: itemDescription || itemCode, targetProgramId: created.id, entries: rows0 });
 

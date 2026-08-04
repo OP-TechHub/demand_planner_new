@@ -13,6 +13,7 @@ import { toast } from '@/components/ui/toast';
 import {
   getInquiryContext,
   getNewInquiryData,
+  getPipelineCandidates,
   saveInquiryToPipeline,
   saveNewInquiry,
   type InquiryContext,
@@ -20,6 +21,8 @@ import {
   type InquiryMonth,
   type InquiryOtherProgram,
   type InquiryEntry,
+  type PipelineCandidate,
+  type PipelineTrim,
 } from './actions';
 
 export type InquiryProgram = {
@@ -67,6 +70,28 @@ function cascade(qtyFp: number, paths: InquiryPath[]) {
   const maxFp = Math.max(0, qtyFp) - residualFp;
   return { rows, maxFp, shortfallFp: Math.max(0, residualFp), canFulfil: residualFp <= EPS };
 }
+
+/** Add freed WR (from pipeline trims) back into each bucket's spare, per month. */
+function augmentMonths(months: InquiryMonth[], freed: Map<string, number>): InquiryMonth[] {
+  if (freed.size === 0) return months;
+  return months.map((m) => ({
+    ...m,
+    paths: m.paths.map((p) => ({ ...p, unallocated_wr: p.unallocated_wr + (freed.get(`${p.bucket_id}:${m.month_index}`) ?? 0) })),
+  }));
+}
+
+/** Which months fall short at the given availability, for a set of quantities. */
+function shortMonthsOf(months: InquiryMonth[], qtyByMonth: Record<number, string>): number[] {
+  const out: number[] = [];
+  for (const m of months) {
+    const q = Number(qtyByMonth[m.month_index]);
+    if (Number.isFinite(q) && q > 0 && cascade(q, m.paths).shortfallFp > EPS) out.push(m.month_index);
+  }
+  return out;
+}
+
+const bucketsOf = (months: InquiryMonth[]): string[] =>
+  months.length ? [...new Set(months[0].paths.map((p) => p.bucket_id))] : [];
 
 // ---------------------------------------------------------------------------
 // Top-level: existing vs new
@@ -159,8 +184,15 @@ function ExistingInquiry({
   const [saveOpen, setSaveOpen] = useState(false);
   const [saveErr, setSaveErr] = useState<string | null>(null);
   const [details, setDetails] = useState<{ suggestedItemCode: string; price: number } | null>(null);
+  const [freed, setFreed] = useState<Map<string, number>>(new Map());
+  const [trims, setTrims] = useState<PipelineTrim[]>([]);
 
   const filledMonths = ctx ? entriesFrom(ctx.months.map((m) => m.month_index), qtyByMonth).filter((e) => e.demand_fp > 0) : [];
+  // Availability after any pipeline trims fed back in, plus which months still
+  // (originally) fall short — the trigger for the make-room panel.
+  const effectiveMonths = useMemo(() => (ctx ? augmentMonths(ctx.months, freed) : []), [ctx, freed]);
+  const shortMonths = useMemo(() => (ctx ? shortMonthsOf(ctx.months, qtyByMonth) : []), [ctx, qtyByMonth]);
+  const inquiryBuckets = useMemo(() => (ctx ? bucketsOf(ctx.months) : []), [ctx]);
 
   // Add the additional volume to pipeline. The server accumulates onto the
   // program's pipeline twin (creating it once); if it needs the item code +
@@ -168,7 +200,7 @@ function ExistingInquiry({
   function save() {
     if (!ctx || filledMonths.length === 0) { toast.error('Enter an additional quantity first.'); return; }
     startSave(async () => {
-      const res = await saveInquiryToPipeline(planId, programId, filledMonths);
+      const res = await saveInquiryToPipeline(planId, programId, filledMonths, undefined, trims);
       if (res.ok) { toast.success('Added to pipeline.'); router.refresh(); return; }
       if (res.needsDetails) { setDetails(res.needsDetails); setSaveErr(null); setSaveOpen(true); return; }
       toast.error(res.error ?? 'Could not save.');
@@ -179,7 +211,7 @@ function ExistingInquiry({
     if (!ctx) return;
     setSaveErr(null);
     startSave(async () => {
-      const res = await saveInquiryToPipeline(planId, programId, filledMonths, { itemCode, price });
+      const res = await saveInquiryToPipeline(planId, programId, filledMonths, { itemCode, price }, trims);
       if (res.ok) { toast.success('Added to pipeline.'); setSaveOpen(false); router.refresh(); }
       else setSaveErr(res.error ?? 'Could not save.');
     });
@@ -234,7 +266,10 @@ function ExistingInquiry({
               Enter the <span className="font-medium text-foreground">additional</span> volume on top of the current plan (the “Planned” column is for reference). It’s checked against spare capacity; saving adds it as pipeline and leaves the active demand untouched.
             </p>
           </div>
-          <AllocationTable months={ctx.months} qtyByMonth={qtyByMonth} setQtyByMonth={setQtyByMonth} planStartDate={planStartDate} qtyLabel="Additional (kg FP)" />
+          <AllocationTable months={effectiveMonths} qtyByMonth={qtyByMonth} setQtyByMonth={setQtyByMonth} planStartDate={planStartDate} qtyLabel="Additional (kg FP)" />
+          {shortMonths.length > 0 && (
+            <MakeRoom planId={planId} bucketIds={inquiryBuckets} months={shortMonths} planStartDate={planStartDate} onChange={(f, t) => { setFreed(f); setTrims(t); }} />
+          )}
           {canSave && (
             <div className="flex items-center justify-end gap-2">
               <span className="text-xs text-muted-foreground">Adds this as pipeline volume on top of the plan.</span>
@@ -301,6 +336,8 @@ function NewInquiry({
   const [saveOpen, setSaveOpen] = useState(false);
   const [saveErr, setSaveErr] = useState<string | null>(null);
   const [saving, startSave] = useTransition();
+  const [freed, setFreed] = useState<Map<string, number>>(new Map());
+  const [trims, setTrims] = useState<PipelineTrim[]>([]);
 
   const bucketName = useMemo(() => new Map(buckets.map((b) => [b.id, b.name])), [buckets]);
 
@@ -363,6 +400,9 @@ function NewInquiry({
     () => entriesFrom(selectedMonths, qtyByMonth).filter((e) => e.demand_fp > 0),
     [selectedMonths, qtyByMonth]
   );
+  const effectiveMonths = useMemo(() => augmentMonths(months, freed), [months, freed]);
+  const shortMonths = useMemo(() => shortMonthsOf(months, qtyByMonth), [months, qtyByMonth]);
+  const inquiryBuckets = useMemo(() => bucketsOf(months), [months]);
 
   function doSave(itemCode: string, price: number) {
     setSaveErr(null);
@@ -375,6 +415,7 @@ function NewInquiry({
         pricePerFp: price,
         paths: validPaths.map((p) => ({ bucket_id: p.bucketId, yield: p.yield })),
         entries: filledMonths,
+        trims,
       });
       if (res.ok) { toast.success('Saved to pipeline.'); setSaveOpen(false); router.refresh(); }
       else setSaveErr(res.error ?? 'Could not save.');
@@ -454,7 +495,10 @@ function NewInquiry({
 
       {ready && computed && (
         <>
-          <AllocationTable months={months} qtyByMonth={qtyByMonth} setQtyByMonth={setQtyByMonth} planStartDate={planStartDate} />
+          <AllocationTable months={effectiveMonths} qtyByMonth={qtyByMonth} setQtyByMonth={setQtyByMonth} planStartDate={planStartDate} />
+          {shortMonths.length > 0 && (
+            <MakeRoom planId={planId} bucketIds={inquiryBuckets} months={shortMonths} planStartDate={planStartDate} onChange={(f, t) => { setFreed(f); setTrims(t); }} />
+          )}
           {canSave && (
             <div className="flex items-center justify-end gap-2">
               <span className="text-xs text-muted-foreground">Saving creates a pipeline program with this demand.</span>
@@ -730,6 +774,111 @@ function AllocationTable({
         Each month is checked against its own spare whole-round capacity (capacity already committed to the plan is excluded). Click a month to see the per-bucket breakdown.
       </p>
     </>
+  );
+}
+
+/**
+ * "Free up capacity" — lists pipeline programs on the inquiry's buckets and lets
+ * the user reduce their demand for the short months. Emits the freed WR (per
+ * bucket × month) to feed the inquiry's availability, and the trims to save.
+ */
+function MakeRoom({
+  planId,
+  bucketIds,
+  months,
+  planStartDate,
+  onChange,
+}: {
+  planId: string;
+  bucketIds: string[];
+  months: number[];
+  planStartDate: string;
+  onChange: (freed: Map<string, number>, trims: PipelineTrim[]) => void;
+}) {
+  const [cands, setCands] = useState<PipelineCandidate[] | null>(null);
+  const [newDemand, setNewDemand] = useState<Record<string, Record<number, string>>>({});
+  const key = `${bucketIds.join(',')}|${months.join(',')}`;
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+
+  useEffect(() => {
+    let cancelled = false;
+    getPipelineCandidates(planId, bucketIds, months).then((cs) => {
+      if (cancelled) return;
+      setCands(cs);
+      const nd: Record<string, Record<number, string>> = {};
+      for (const c of cs) { nd[c.id] = {}; for (const m of months) nd[c.id][m] = String(Math.round(c.demand[m] ?? 0)); }
+      setNewDemand(nd);
+    });
+    return () => { cancelled = true; };
+  }, [planId, key]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!cands) return;
+    const freed = new Map<string, number>();
+    const trims: PipelineTrim[] = [];
+    for (const c of cands) {
+      const entries: InquiryEntry[] = [];
+      for (const m of months) {
+        const orig = c.demand[m] ?? 0;
+        const nv = Number(newDemand[c.id]?.[m]);
+        const val = Number.isFinite(nv) && nv >= 0 ? nv : orig;
+        if (val < orig && c.primary_yield > 0) {
+          const fk = `${c.primary_bucket_id}:${m}`;
+          freed.set(fk, (freed.get(fk) ?? 0) + (orig - val) / c.primary_yield);
+        }
+        if (val !== orig) entries.push({ month_index: m, demand_fp: val });
+      }
+      if (entries.length) trims.push({ programId: c.id, entries });
+    }
+    onChangeRef.current(freed, trims);
+  }, [cands, newDemand, months]);
+
+  return (
+    <div className="space-y-2 rounded-lg border border-warning/30 bg-warning/5 p-4">
+      <div className="text-sm font-semibold text-warning">Free up capacity from pipeline</div>
+      <p className="text-xs text-muted-foreground">
+        Reduce speculative <b>pipeline</b> demand on the same buckets to make room — freed capacity feeds the inquiry above (estimate: trim ÷ yield). Committed active demand is never shown. A Recalculate confirms the exact figure.
+      </p>
+      {cands === null ? (
+        <p className="text-sm text-muted-foreground">Loading pipeline on these buckets…</p>
+      ) : cands.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No pipeline demand on these buckets to trim.</p>
+      ) : (
+        <div className="overflow-x-auto rounded-md border border-border/60 bg-card">
+          <table className="w-full text-xs">
+            <thead className="bg-muted/50 text-muted-foreground">
+              <tr>
+                <th className="px-2 py-1.5 text-left font-medium">Pipeline program</th>
+                <th className="px-2 py-1.5 text-left font-medium">Frees</th>
+                {months.map((m) => <th key={m} className="px-2 py-1.5 text-right font-medium">{monthLabel(planStartDate, m)}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {cands.map((c) => (
+                <tr key={c.id} className="border-t">
+                  <td className="px-2 py-1.5"><span className="text-muted-foreground">{c.item_code}</span> {c.item_description}</td>
+                  <td className="px-2 py-1.5 text-muted-foreground">{c.bucket_name}</td>
+                  {months.map((m) => (
+                    <td key={m} className="px-2 py-1 text-right">
+                      <input
+                        type="number"
+                        min={0}
+                        max={Math.round(c.demand[m] ?? 0)}
+                        value={newDemand[c.id]?.[m] ?? ''}
+                        onChange={(e) => setNewDemand((prev) => ({ ...prev, [c.id]: { ...prev[c.id], [m]: e.target.value } }))}
+                        title={`Currently ${Math.round(c.demand[m] ?? 0).toLocaleString()} kg`}
+                        className="w-20 rounded-md border px-1.5 py-0.5 text-right tabular-nums outline-none focus:ring-2 focus:ring-primary"
+                      />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }
 
