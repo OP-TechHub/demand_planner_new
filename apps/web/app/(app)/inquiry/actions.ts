@@ -11,9 +11,17 @@ export type InquiryPath = {
   unallocated_wr: number;
 };
 
+/** The program's picture for one month in the inquiry range. */
+export type InquiryMonth = {
+  month_index: number;
+  current_demand_fp: number;
+  paths: InquiryPath[];
+};
+
 export type InquiryOtherProgram = {
   item_code: string;
   item_description: string;
+  /** Total demand across the inquiry range. */
   demand_fp: number;
 };
 
@@ -29,26 +37,28 @@ export type InquiryContext =
         customer: string;
         price_per_fp: number;
         status: string;
-        current_demand_fp: number;
       };
-      paths: InquiryPath[];
+      months: InquiryMonth[];
       otherActive: InquiryOtherProgram[];
     }
   | { ok: false; error: string };
 
 /**
- * Gather everything the inquiry screen needs for one (program, month): the
- * program's sourcing paths with the spare whole-round (unallocated_wr) in each
- * bucket that month, the currently-planned demand (so the user can override
- * it), and the customer's other active programs. The FP↔WR arithmetic is done
- * client-side from these numbers so it updates live as the quantity changes.
+ * Gather everything the inquiry screen needs for one program across a month
+ * range: per month, the program's sourcing paths with each bucket's spare
+ * whole-round (unallocated_wr) and the currently-planned demand (so each month
+ * can be overridden). Months are independent — each draws from its own month's
+ * spare capacity — so the client cascades each one on its own.
  */
 export async function getInquiryContext(
   planId: string,
   programId: string,
-  monthIndex: number
+  fromMonth: number,
+  toMonth: number
 ): Promise<InquiryContext> {
-  if (!planId || !programId || !monthIndex) return { ok: false, error: 'Missing selection.' };
+  if (!planId || !programId) return { ok: false, error: 'Missing selection.' };
+  const from = Math.max(1, Math.min(fromMonth, toMonth));
+  const to = Math.max(from, Math.max(fromMonth, toMonth));
 
   const supabase = await createClient();
   const { data: progData } = await supabase
@@ -69,15 +79,7 @@ export async function getInquiryContext(
     primary_bucket_id: string; secondary_bucket_id: string | null; tertiary_bucket_id: string | null;
     primary_yield: number; secondary_yield: number | null; tertiary_yield: number | null;
   };
-
-  // Currently-planned demand this month: the override if set, else the baseline.
-  const { data: dcell } = await supabase
-    .from('demand_plan')
-    .select('demand_fp')
-    .eq('program_id', programId)
-    .eq('month_index', monthIndex)
-    .maybeSingle();
-  const currentDemand = Number(dcell?.demand_fp ?? prog.max_monthly_demand_fp);
+  const baseline = Number(prog.max_monthly_demand_fp);
 
   const rawPaths = [
     { path: 'primary' as const, bucket_id: prog.primary_bucket_id, yield: Number(prog.primary_yield) },
@@ -91,30 +93,50 @@ export async function getInquiryContext(
 
   const bucketIds = [...new Set(rawPaths.map((p) => p.bucket_id))];
 
-  const [{ data: buckets }, { data: unalloc }, { data: anyResult }] = await Promise.all([
+  const [{ data: buckets }, { data: unalloc }, { data: anyResult }, { data: ownDemand }] = await Promise.all([
     supabase.from('buckets').select('id, name').in('id', bucketIds),
     supabase
       .from('unallocated_wr')
-      .select('bucket_id, unallocated_wr')
+      .select('bucket_id, month_index, unallocated_wr')
       .eq('plan_id', planId)
-      .eq('month_index', monthIndex)
-      .in('bucket_id', bucketIds),
+      .in('bucket_id', bucketIds)
+      .gte('month_index', from)
+      .lte('month_index', to),
     supabase.from('unallocated_wr').select('bucket_id').eq('plan_id', planId).limit(1),
+    supabase
+      .from('demand_plan')
+      .select('month_index, demand_fp')
+      .eq('program_id', programId)
+      .gte('month_index', from)
+      .lte('month_index', to),
   ]);
 
   const nameById = new Map((buckets ?? []).map((b: { id: string; name: string }) => [b.id, b.name]));
-  const unallocById = new Map(
-    (unalloc ?? []).map((u: { bucket_id: string; unallocated_wr: number }) => [u.bucket_id, Number(u.unallocated_wr)])
+  const unallocByKey = new Map(
+    (unalloc ?? []).map((u: { bucket_id: string; month_index: number; unallocated_wr: number }) => [
+      `${u.bucket_id}:${u.month_index}`,
+      Number(u.unallocated_wr),
+    ])
+  );
+  const demandByMonth = new Map(
+    (ownDemand ?? []).map((d: { month_index: number; demand_fp: number }) => [d.month_index, Number(d.demand_fp)])
   );
   const computed = (anyResult ?? []).length > 0;
 
-  const paths: InquiryPath[] = rawPaths.map((p) => ({
-    ...p,
-    bucket_name: nameById.get(p.bucket_id) ?? 'Unknown bucket',
-    unallocated_wr: unallocById.get(p.bucket_id) ?? 0,
-  }));
+  const months: InquiryMonth[] = [];
+  for (let m = from; m <= to; m++) {
+    months.push({
+      month_index: m,
+      current_demand_fp: demandByMonth.get(m) ?? baseline,
+      paths: rawPaths.map((p) => ({
+        ...p,
+        bucket_name: nameById.get(p.bucket_id) ?? 'Unknown bucket',
+        unallocated_wr: unallocByKey.get(`${p.bucket_id}:${m}`) ?? 0,
+      })),
+    });
+  }
 
-  // Other active programs for the same customer, with their demand this month.
+  // Other active programs for the same customer, with total demand across the range.
   const { data: others } = await supabase
     .from('programs')
     .select('id, item_code, item_description, max_monthly_demand_fp')
@@ -127,22 +149,27 @@ export async function getInquiryContext(
   const otherRows = (others ?? []) as {
     id: string; item_code: string; item_description: string; max_monthly_demand_fp: number;
   }[];
-  const demByProg = new Map<string, number>();
+  const overridesByProg = new Map<string, Map<number, number>>();
   if (otherRows.length) {
     const { data: drows } = await supabase
       .from('demand_plan')
-      .select('program_id, demand_fp')
-      .eq('month_index', monthIndex)
-      .in('program_id', otherRows.map((o) => o.id));
-    for (const d of (drows ?? []) as { program_id: string; demand_fp: number }[]) {
-      demByProg.set(d.program_id, Number(d.demand_fp));
+      .select('program_id, month_index, demand_fp')
+      .in('program_id', otherRows.map((o) => o.id))
+      .gte('month_index', from)
+      .lte('month_index', to);
+    for (const d of (drows ?? []) as { program_id: string; month_index: number; demand_fp: number }[]) {
+      const map = overridesByProg.get(d.program_id) ?? new Map<number, number>();
+      map.set(d.month_index, Number(d.demand_fp));
+      overridesByProg.set(d.program_id, map);
     }
   }
-  const otherActive: InquiryOtherProgram[] = otherRows.map((o) => ({
-    item_code: o.item_code,
-    item_description: o.item_description,
-    demand_fp: demByProg.get(o.id) ?? Number(o.max_monthly_demand_fp),
-  }));
+  const otherActive: InquiryOtherProgram[] = otherRows.map((o) => {
+    const ovr = overridesByProg.get(o.id);
+    const base = Number(o.max_monthly_demand_fp);
+    let total = 0;
+    for (let m = from; m <= to; m++) total += ovr?.get(m) ?? base;
+    return { item_code: o.item_code, item_description: o.item_description, demand_fp: total };
+  });
 
   return {
     ok: true,
@@ -154,9 +181,8 @@ export async function getInquiryContext(
       customer: prog.customer,
       price_per_fp: Number(prog.price_per_fp),
       status: prog.status,
-      current_demand_fp: currentDemand,
     },
-    paths,
+    months,
     otherActive,
   };
 }

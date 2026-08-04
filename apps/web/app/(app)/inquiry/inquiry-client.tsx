@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from 'react';
 import Link from 'next/link';
-import { ClipboardCheck, CheckCircle2, AlertTriangle, Info } from 'lucide-react';
+import { ClipboardCheck, CheckCircle2, AlertTriangle, Info, ChevronRight } from 'lucide-react';
 import { monthLabel } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 import { getInquiryContext, type InquiryContext, type InquiryPath } from './actions';
@@ -18,8 +18,6 @@ export type InquiryProgram = {
 type Loaded = Extract<InquiryContext, { ok: true }>;
 
 const EPS = 1e-6;
-
-/** kg with thousands separators, no decimals for readability. */
 const kg = (n: number) => `${Math.round(n).toLocaleString()} kg`;
 
 /**
@@ -35,12 +33,11 @@ function cascade(qtyFp: number, paths: InquiryPath[]) {
   let residualFp = Math.max(0, qtyFp);
   const rows = paths.map((p) => {
     const availWr = remaining.get(p.bucket_id) ?? 0;
-    const neededWr = residualFp / p.yield;
-    const useWr = Math.min(neededWr, availWr);
+    const useWr = Math.min(residualFp / p.yield, availWr);
     const gotFp = useWr * p.yield;
     remaining.set(p.bucket_id, availWr - useWr);
     residualFp -= gotFp;
-    return { path: p, availWr, useWr, gotFp };
+    return { path: p, useWr, gotFp };
   });
 
   const maxFp = Math.max(0, qtyFp) - residualFp;
@@ -60,45 +57,81 @@ export function InquiryClient({
 }) {
   const [mode, setMode] = useState<'existing' | 'new'>('existing');
   const [programId, setProgramId] = useState('');
-  const [monthIndex, setMonthIndex] = useState(1);
-  const [qty, setQty] = useState('');
+  const [fromMonth, setFromMonth] = useState(1);
+  const [toMonth, setToMonth] = useState(1);
+  // Per-month inquiry quantity (string for a friendly input), keyed by month_index.
+  const [qtyByMonth, setQtyByMonth] = useState<Record<number, string>>({});
+  const [setAll, setSetAll] = useState('');
+  const [expanded, setExpanded] = useState<number | null>(null);
   const [ctx, setCtx] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
   const months = useMemo(() => Array.from({ length: horizon }, (_, i) => i + 1), [horizon]);
 
-  // Load context whenever both a program and month are chosen. Resets the qty
-  // to the currently-planned demand so the user "overrides" from that baseline.
-  function load(nextProgram: string, nextMonth: number) {
-    if (!nextProgram || !nextMonth) { setCtx(null); return; }
+  function load(nextProgram: string, from: number, to: number) {
+    if (!nextProgram) { setCtx(null); return; }
     setError(null);
     start(async () => {
-      const res = await getInquiryContext(planId, nextProgram, nextMonth);
+      const res = await getInquiryContext(planId, nextProgram, from, to);
       if (!res.ok) { setError(res.error); setCtx(null); return; }
       setCtx(res);
-      setQty(String(Math.round(res.program.current_demand_fp)));
+      // Prefill each month's quantity with its currently-planned demand (override baseline).
+      const next: Record<number, string> = {};
+      for (const m of res.months) next[m.month_index] = String(Math.round(m.current_demand_fp));
+      setQtyByMonth(next);
+      setExpanded(null);
     });
   }
 
-  const onProgram = (id: string) => { setProgramId(id); load(id, monthIndex); };
-  const onMonth = (m: number) => { setMonthIndex(m); load(programId, m); };
+  const onProgram = (id: string) => { setProgramId(id); load(id, fromMonth, toMonth); };
+  const onFrom = (v: number) => {
+    const to = v > toMonth ? v : toMonth;
+    setFromMonth(v); setToMonth(to); load(programId, v, to);
+  };
+  const onTo = (v: number) => {
+    const from = v < fromMonth ? v : fromMonth;
+    setToMonth(v); setFromMonth(from); load(programId, from, v);
+  };
 
-  const qtyNum = Number(qty);
-  const result = ctx && ctx.computed && Number.isFinite(qtyNum) && qtyNum > 0 ? cascade(qtyNum, ctx.paths) : null;
+  const applySetAll = () => {
+    if (!ctx) return;
+    const v = String(Math.max(0, Math.round(Number(setAll) || 0)));
+    const next: Record<number, string> = {};
+    for (const m of ctx.months) next[m.month_index] = v;
+    setQtyByMonth(next);
+  };
+
+  // Per-month cascade result, plus range totals.
+  const perMonth = useMemo(() => {
+    if (!ctx || !ctx.computed) return null;
+    return ctx.months.map((m) => {
+      const qtyNum = Number(qtyByMonth[m.month_index]);
+      const qty = Number.isFinite(qtyNum) && qtyNum > 0 ? qtyNum : 0;
+      return { month: m, qty, ...cascade(qty, m.paths) };
+    });
+  }, [ctx, qtyByMonth]);
+
+  const totals = useMemo(() => {
+    if (!perMonth) return null;
+    const inquired = perMonth.reduce((s, r) => s + r.qty, 0);
+    const providable = perMonth.reduce((s, r) => s + r.maxFp, 0);
+    const covered = perMonth.filter((r) => r.qty > 0 && r.canFulfil).length;
+    const withQty = perMonth.filter((r) => r.qty > 0).length;
+    return { inquired, providable, shortfall: inquired - providable, covered, withQty };
+  }, [perMonth]);
 
   return (
-    <div className="mx-auto max-w-3xl space-y-5">
+    <div className="mx-auto max-w-4xl space-y-5">
       <div>
         <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
           <ClipboardCheck className="h-6 w-6 text-primary" /> New Inquiry
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Check a customer request against spare whole-round capacity, without changing the plan.
+          Check a customer request across one or more months against spare whole-round capacity, without changing the plan.
         </p>
       </div>
 
-      {/* Existing vs new */}
       <div className="flex w-max items-center gap-0.5 rounded-lg border border-border bg-muted/30 p-0.5 text-sm">
         {(['existing', 'new'] as const).map((m) => (
           <button
@@ -121,9 +154,9 @@ export function InquiryClient({
         </div>
       ) : (
         <div className="space-y-5">
-          {/* Selection */}
+          {/* Selection: program + month range */}
           <div className="grid gap-3 rounded-lg border bg-card p-4 sm:grid-cols-2">
-            <label className="text-sm">
+            <label className="text-sm sm:col-span-2">
               <span className="mb-1 block font-medium">Program</span>
               <select value={programId} onChange={(e) => onProgram(e.target.value)} className={selectCls}>
                 <option value="">Select a program…</option>
@@ -135,11 +168,15 @@ export function InquiryClient({
               </select>
             </label>
             <label className="text-sm">
-              <span className="mb-1 block font-medium">Inquiry month</span>
-              <select value={monthIndex} onChange={(e) => onMonth(Number(e.target.value))} className={selectCls}>
-                {months.map((m) => (
-                  <option key={m} value={m}>{monthLabel(planStartDate, m)}</option>
-                ))}
+              <span className="mb-1 block font-medium">From month</span>
+              <select value={fromMonth} onChange={(e) => onFrom(Number(e.target.value))} className={selectCls}>
+                {months.map((m) => <option key={m} value={m}>{monthLabel(planStartDate, m)}</option>)}
+              </select>
+            </label>
+            <label className="text-sm">
+              <span className="mb-1 block font-medium">To month</span>
+              <select value={toMonth} onChange={(e) => onTo(Number(e.target.value))} className={selectCls}>
+                {months.map((m) => <option key={m} value={m}>{monthLabel(planStartDate, m)}</option>)}
               </select>
             </label>
           </div>
@@ -160,99 +197,134 @@ export function InquiryClient({
             </div>
           )}
 
-          {ctx && ctx.computed && (
+          {ctx && ctx.computed && perMonth && totals && (
             <>
-              {/* Program summary + override qty */}
-              <div className="rounded-lg border bg-card p-4">
-                <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <div>
-                    <div className="text-sm font-semibold">{ctx.program.customer}</div>
-                    <div className="text-sm text-muted-foreground">
-                      {ctx.program.item_description} · {ctx.program.item_code}
-                    </div>
-                  </div>
-                  <div className="text-right text-xs text-muted-foreground">
-                    ${ctx.program.price_per_fp.toLocaleString()} / kg FP · {ctx.program.status}
+              {/* Program summary + set-all helper */}
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card p-4">
+                <div>
+                  <div className="text-sm font-semibold">{ctx.program.customer}</div>
+                  <div className="text-sm text-muted-foreground">
+                    {ctx.program.item_description} · {ctx.program.item_code} · ${ctx.program.price_per_fp.toLocaleString()}/kg FP
                   </div>
                 </div>
-
-                <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-md bg-muted/40 px-3 py-2 text-sm">
-                    <div className="text-xs text-muted-foreground">Currently planned ({monthLabel(planStartDate, monthIndex)})</div>
-                    <div className="font-semibold tabular-nums">{kg(ctx.program.current_demand_fp)}</div>
-                  </div>
-                  <label className="text-sm">
-                    <span className="mb-1 block font-medium">Inquiry quantity (kg FP) — override</span>
+                <div className="flex items-end gap-2 text-sm">
+                  <label>
+                    <span className="mb-1 block text-xs text-muted-foreground">Set every month to (kg FP)</span>
                     <input
                       type="number"
                       min={0}
-                      value={qty}
-                      onChange={(e) => setQty(e.target.value)}
-                      className={cn(selectCls, 'tabular-nums')}
+                      value={setAll}
+                      onChange={(e) => setSetAll(e.target.value)}
+                      placeholder="e.g. 5000"
+                      className={cn(selectCls, 'w-32 tabular-nums')}
                     />
                   </label>
+                  <button type="button" onClick={applySetAll} className="rounded-md border px-3 py-1.5 text-sm font-medium hover:bg-muted">
+                    Apply
+                  </button>
                 </div>
               </div>
 
-              {/* Verdict */}
-              {result && (
-                <div
-                  className={cn(
-                    'rounded-lg border p-4',
-                    result.canFulfil ? 'border-success/30 bg-success/10' : 'border-destructive/30 bg-destructive/10'
-                  )}
-                >
-                  <div className="flex items-center gap-2">
-                    {result.canFulfil ? (
-                      <CheckCircle2 className="h-5 w-5 text-success" />
-                    ) : (
-                      <AlertTriangle className="h-5 w-5 text-destructive" />
-                    )}
-                    <div className={cn('font-semibold', result.canFulfil ? 'text-success' : 'text-destructive')}>
-                      {result.canFulfil
-                        ? `Can fulfil ${kg(qtyNum)} in ${monthLabel(planStartDate, monthIndex)}.`
-                        : `Can't fulfil ${kg(qtyNum)} — short by ${kg(result.shortfallFp)}.`}
-                    </div>
-                  </div>
-                  {!result.canFulfil && (
-                    <p className="mt-1 text-sm text-destructive">
-                      Maximum we can provide: <span className="font-semibold">{kg(result.maxFp)}</span>.
-                    </p>
-                  )}
+              {/* Range summary */}
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <Stat label="Total inquired" value={kg(totals.inquired)} />
+                <Stat label="We can provide" value={kg(totals.providable)} tone={totals.shortfall > EPS ? 'warn' : 'good'} />
+                <Stat label="Shortfall" value={kg(Math.max(0, totals.shortfall))} tone={totals.shortfall > EPS ? 'bad' : 'good'} />
+                <Stat label="Months fully covered" value={`${totals.covered} / ${totals.withQty}`} />
+              </div>
 
-                  {/* Per-bucket breakdown */}
-                  <div className="mt-3 overflow-x-auto rounded-md border border-border/60 bg-card">
-                    <table className="w-full text-xs">
-                      <thead className="bg-muted/50 text-muted-foreground">
-                        <tr>
-                          <th className="px-3 py-1.5 text-left font-medium">Path</th>
-                          <th className="px-3 py-1.5 text-left font-medium">Bucket</th>
-                          <th className="px-3 py-1.5 text-right font-medium">Yield</th>
-                          <th className="px-3 py-1.5 text-right font-medium">Spare WR</th>
-                          <th className="px-3 py-1.5 text-right font-medium">FP from here</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {result.rows.map((r) => (
-                          <tr key={r.path.path} className="border-t">
-                            <td className="px-3 py-1.5 capitalize">{r.path.path}</td>
-                            <td className="px-3 py-1.5">{r.path.bucket_name}</td>
-                            <td className="px-3 py-1.5 text-right tabular-nums">{(r.path.yield * 100).toFixed(1)}%</td>
-                            <td className="px-3 py-1.5 text-right tabular-nums text-muted-foreground">{kg(r.path.unallocated_wr)}</td>
-                            <td className="px-3 py-1.5 text-right font-medium tabular-nums">{kg(r.gotFp)}</td>
+              {/* Per-month allocation table */}
+              <div className="overflow-x-auto rounded-lg border">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/50 text-muted-foreground">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-medium">Month</th>
+                      <th className="px-3 py-2 text-right font-medium">Planned</th>
+                      <th className="px-3 py-2 text-right font-medium">Inquiry (kg FP)</th>
+                      <th className="px-3 py-2 text-right font-medium">Max we can provide</th>
+                      <th className="px-3 py-2 text-left font-medium">Verdict</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {perMonth.map((r) => {
+                      const open = expanded === r.month.month_index;
+                      const has = r.qty > EPS;
+                      return (
+                        <FragmentRow key={r.month.month_index}>
+                          <tr
+                            className={cn('border-t', has && 'cursor-pointer hover:bg-muted/30')}
+                            onClick={has ? () => setExpanded(open ? null : r.month.month_index) : undefined}
+                          >
+                            <td className="px-3 py-2">
+                              <span className="inline-flex items-center gap-1">
+                                {has && <ChevronRight className={cn('h-3.5 w-3.5 text-muted-foreground transition-transform', open && 'rotate-90')} />}
+                                {monthLabel(planStartDate, r.month.month_index)}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{kg(r.month.current_demand_fp)}</td>
+                            <td className="px-3 py-1.5 text-right" onClick={(e) => e.stopPropagation()}>
+                              <input
+                                type="number"
+                                min={0}
+                                value={qtyByMonth[r.month.month_index] ?? ''}
+                                onChange={(e) => setQtyByMonth((prev) => ({ ...prev, [r.month.month_index]: e.target.value }))}
+                                className="w-28 rounded-md border px-2 py-1 text-right text-sm tabular-nums outline-none focus:ring-2 focus:ring-primary"
+                              />
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums font-medium">{has ? kg(r.maxFp) : '—'}</td>
+                            <td className="px-3 py-2">
+                              {!has ? (
+                                <span className="text-muted-foreground">—</span>
+                              ) : r.canFulfil ? (
+                                <span className="inline-flex items-center gap-1 text-success"><CheckCircle2 className="h-4 w-4" /> Can fulfil</span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 text-destructive"><AlertTriangle className="h-4 w-4" /> Short by {kg(r.shortfallFp)}</span>
+                              )}
+                            </td>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <p className="mt-2 flex items-center gap-1 text-[11px] text-muted-foreground">
-                    <Info className="h-3 w-3" />
-                    Checked against spare whole-round capacity for {monthLabel(planStartDate, monthIndex)} only — capacity already committed to the plan is excluded.
-                  </p>
-                </div>
-              )}
+                          {open && (
+                            <tr className="border-t bg-muted/20">
+                              <td colSpan={5} className="px-3 py-2">
+                                <div className="overflow-x-auto rounded-md border border-border/60 bg-card">
+                                  <table className="w-full text-xs">
+                                    <thead className="bg-muted/50 text-muted-foreground">
+                                      <tr>
+                                        <th className="px-3 py-1.5 text-left font-medium">Path</th>
+                                        <th className="px-3 py-1.5 text-left font-medium">Bucket</th>
+                                        <th className="px-3 py-1.5 text-right font-medium">Yield</th>
+                                        <th className="px-3 py-1.5 text-right font-medium">Spare WR</th>
+                                        <th className="px-3 py-1.5 text-right font-medium">FP from here</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {r.rows.map((br) => (
+                                        <tr key={br.path.path} className="border-t">
+                                          <td className="px-3 py-1.5 capitalize">{br.path.path}</td>
+                                          <td className="px-3 py-1.5">{br.path.bucket_name}</td>
+                                          <td className="px-3 py-1.5 text-right tabular-nums">{(br.path.yield * 100).toFixed(1)}%</td>
+                                          <td className="px-3 py-1.5 text-right tabular-nums text-muted-foreground">{kg(br.path.unallocated_wr)}</td>
+                                          <td className="px-3 py-1.5 text-right font-medium tabular-nums">{kg(br.gotFp)}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </FragmentRow>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
 
-              {/* Other active programs for the customer */}
+              <p className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                <Info className="h-3 w-3" />
+                Each month is checked against its own spare whole-round capacity (capacity already committed to the plan is excluded). Click a month to see the per-bucket breakdown.
+              </p>
+
+              {/* Other active programs */}
               <div className="rounded-lg border bg-card p-4">
                 <div className="text-sm font-semibold">Other active programs for {ctx.program.customer}</div>
                 {ctx.otherActive.length === 0 ? (
@@ -261,12 +333,8 @@ export function InquiryClient({
                   <ul className="mt-2 divide-y text-sm">
                     {ctx.otherActive.map((o) => (
                       <li key={o.item_code} className="flex items-center justify-between py-1.5">
-                        <span>
-                          <span className="text-muted-foreground">{o.item_code}</span> {o.item_description}
-                        </span>
-                        <span className="tabular-nums text-muted-foreground">
-                          {kg(o.demand_fp)} · {monthLabel(planStartDate, monthIndex)}
-                        </span>
+                        <span><span className="text-muted-foreground">{o.item_code}</span> {o.item_description}</span>
+                        <span className="tabular-nums text-muted-foreground">{kg(o.demand_fp)} over range</span>
                       </li>
                     ))}
                   </ul>
@@ -277,7 +345,7 @@ export function InquiryClient({
 
           {!ctx && !pending && !error && (
             <p className="text-sm text-muted-foreground">
-              Pick a program and a month to check what we can supply.{' '}
+              Pick a program and a month range to check what we can supply.{' '}
               <Link href="/programs" className="text-primary hover:underline">Manage programs</Link>.
             </p>
           )}
@@ -285,6 +353,23 @@ export function InquiryClient({
       )}
     </div>
   );
+}
+
+function Stat({ label, value, tone }: { label: string; value: string; tone?: 'good' | 'warn' | 'bad' }) {
+  return (
+    <div className="rounded-lg border bg-card px-3 py-2">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className={cn('text-lg font-semibold tabular-nums',
+        tone === 'bad' && 'text-destructive', tone === 'warn' && 'text-warning', tone === 'good' && 'text-success')}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+/** Groups a month row with its optional detail row without an extra DOM node. */
+function FragmentRow({ children }: { children: React.ReactNode }) {
+  return <>{children}</>;
 }
 
 const selectCls = 'w-full rounded-md border px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-primary';
