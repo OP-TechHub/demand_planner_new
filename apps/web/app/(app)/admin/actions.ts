@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { EDITABLE_SECTIONS, type UserRole } from '@oceanpick/shared';
 
 export type AdminResult = { error: string | null };
@@ -75,5 +76,63 @@ export async function setUserActive(userId: string, isActive: boolean): Promise<
   if (e) return { error: e.message };
   if (me && before && before.is_active !== isActive) await writeAudit(supabase, me, userId, { is_active: { old: before.is_active, new: isActive } });
   revalidatePath('/admin/users');
+  return { error: null };
+}
+
+/** Audit a plan-level admin action (entity_type 'plans'). */
+async function auditPlan(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  me: { id: string; org_id: string },
+  planId: string,
+  action: 'update' | 'delete',
+  changes: Record<string, unknown>
+) {
+  await supabase.from('audit_log').insert({
+    org_id: me.org_id, plan_id: planId, user_id: me.id,
+    entity_type: 'plans', entity_id: planId, action, changes,
+  });
+}
+
+/**
+ * Lock or unlock a plan. Admin-only. A locked plan is read-only everywhere
+ * (can_write_section / can_write_plan both require `not is_locked`). Works on
+ * any plan including the master. Uses the service role because RLS only lets a
+ * scenario's owner update it — an admin must be able to lock anyone's plan.
+ */
+export async function setPlanLocked(planId: string, locked: boolean): Promise<AdminResult> {
+  const { me, error } = await requireAdmin();
+  if (error || !me) return { error: error ?? 'Admins only.' };
+
+  const svc = createServiceClient();
+  const { data: plan } = await svc.from('plans').select('id, org_id, is_locked, name').eq('id', planId).is('deleted_at', null).maybeSingle();
+  if (!plan || plan.org_id !== me.org_id) return { error: 'Plan not found.' };
+  if (plan.is_locked === locked) { revalidatePath('/admin/plans'); return { error: null }; }
+
+  const { error: e } = await svc.from('plans').update({ is_locked: locked, updated_by: me.id }).eq('id', planId);
+  if (e) return { error: e.message };
+  await auditPlan(await createClient(), me, planId, 'update', { is_locked: { old: plan.is_locked, new: locked }, name: plan.name });
+  revalidatePath('/admin/plans');
+  revalidatePath('/settings');
+  return { error: null };
+}
+
+/**
+ * Soft-delete a plan (scenario or snapshot). Admin-only. The master plan is
+ * never deletable — it's the backbone. Recoverable in the DB (deleted_at set).
+ */
+export async function adminDeletePlan(planId: string): Promise<AdminResult> {
+  const { me, error } = await requireAdmin();
+  if (error || !me) return { error: error ?? 'Admins only.' };
+
+  const svc = createServiceClient();
+  const { data: plan } = await svc.from('plans').select('id, org_id, type, name').eq('id', planId).is('deleted_at', null).maybeSingle();
+  if (!plan || plan.org_id !== me.org_id) return { error: 'Plan not found.' };
+  if (plan.type === 'master') return { error: 'The master plan can’t be deleted.' };
+
+  const { error: e } = await svc.from('plans').update({ deleted_at: new Date().toISOString(), updated_by: me.id }).eq('id', planId);
+  if (e) return { error: e.message };
+  await auditPlan(await createClient(), me, planId, 'delete', { deleted: true, name: plan.name, type: plan.type });
+  revalidatePath('/admin/plans');
+  revalidatePath('/scenarios');
   return { error: null };
 }

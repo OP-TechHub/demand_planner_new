@@ -61,6 +61,7 @@ const SECTIONS: Section[] = [
     title: 'Admin',
     adminOnly: true,
     items: [
+      { label: 'Plans', href: '/admin/plans', icon: GitFork },
       { label: 'Users', href: '/admin/users', icon: Users },
       { label: 'Audit log', href: '/admin/audit', icon: ScrollText },
     ],
