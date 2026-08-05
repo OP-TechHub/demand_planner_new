@@ -160,6 +160,110 @@ export function InquiryClient({
 
 type Loaded = Extract<InquiryContext, { ok: true }>;
 
+/** Full label for a program option. */
+function programLabel(p: InquiryProgram): string {
+  return `${p.customer} — ${p.item_description} (${p.item_code})${p.status !== 'active' ? ` · ${p.status}` : ''}`;
+}
+
+/**
+ * Searchable program picker: a text box that filters the program list by
+ * customer, product, or item code, with a dropdown of matches. Keyboard-friendly
+ * (↑/↓/Enter/Esc) and closes on outside click.
+ */
+function ProgramCombobox({
+  programs,
+  value,
+  onChange,
+}: {
+  programs: InquiryProgram[];
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [active, setActive] = useState(0);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  const selected = programs.find((p) => p.id === value) ?? null;
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return programs;
+    return programs.filter(
+      (p) =>
+        p.customer.toLowerCase().includes(q) ||
+        p.item_description.toLowerCase().includes(q) ||
+        p.item_code.toLowerCase().includes(q)
+    );
+  }, [programs, query]);
+
+  // Close on click outside.
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  // Keep the highlighted row in view while arrowing.
+  useEffect(() => {
+    if (open) (listRef.current?.children[active] as HTMLElement | undefined)?.scrollIntoView({ block: 'nearest' });
+  }, [active, open]);
+
+  const openList = () => { setQuery(''); setActive(0); setOpen(true); };
+  const choose = (p: InquiryProgram) => { onChange(p.id); setQuery(''); setOpen(false); };
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <input
+        type="text"
+        role="combobox"
+        aria-expanded={open}
+        className={selectCls}
+        placeholder="Search customer, product, or code…"
+        value={open ? query : selected ? programLabel(selected) : ''}
+        onFocus={openList}
+        onChange={(e) => { setQuery(e.target.value); setActive(0); setOpen(true); }}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowDown') { e.preventDefault(); if (!open) openList(); else setActive((a) => Math.min(a + 1, filtered.length - 1)); }
+          else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((a) => Math.max(a - 1, 0)); }
+          else if (e.key === 'Enter') { e.preventDefault(); const p = filtered[active]; if (p) choose(p); }
+          else if (e.key === 'Escape') { setOpen(false); }
+        }}
+      />
+      {open && (
+        <div ref={listRef} className="absolute z-20 mt-1 max-h-64 w-full overflow-y-auto rounded-md border bg-card shadow-lg">
+          {filtered.length === 0 ? (
+            <div className="px-3 py-2 text-sm text-muted-foreground">No matching programs.</div>
+          ) : (
+            filtered.map((p, i) => (
+              <button
+                type="button"
+                key={p.id}
+                onMouseEnter={() => setActive(i)}
+                onClick={() => choose(p)}
+                className={cn(
+                  'flex w-full flex-col items-start gap-0.5 px-3 py-1.5 text-left',
+                  i === active ? 'bg-primary/10' : 'hover:bg-muted',
+                  p.id === value && 'font-medium'
+                )}
+              >
+                <span className="text-sm">{p.customer}</span>
+                <span className="text-xs text-muted-foreground">
+                  {p.item_description} · {p.item_code}{p.status !== 'active' ? ` · ${p.status}` : ''}
+                </span>
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ExistingInquiry({
   planId,
   planStartDate,
@@ -236,17 +340,10 @@ function ExistingInquiry({
   return (
     <div className="space-y-5">
       <div className="space-y-3 rounded-lg border bg-card p-4">
-        <label className="block text-sm">
+        <div className="block text-sm">
           <span className="mb-1 block font-medium">Program</span>
-          <select value={programId} onChange={(e) => onProgram(e.target.value)} className={selectCls}>
-            <option value="">Select a program…</option>
-            {programs.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.customer} — {p.item_description} ({p.item_code}){p.status !== 'active' ? ` · ${p.status}` : ''}
-              </option>
-            ))}
-          </select>
-        </label>
+          <ProgramCombobox programs={programs} value={programId} onChange={onProgram} />
+        </div>
         <MonthSelector months={horizon} planStartDate={planStartDate} onChange={onMonths} />
       </div>
 
