@@ -40,6 +40,13 @@ export async function undoAuditEntry(id: string): Promise<{ error: string | null
     return { error: e instanceof Error ? e.message : 'Undo failed.' };
   }
 
+  // If this change was an inquiry save, drop its Inquiries-register row too —
+  // it never really happened. Best-effort; the register is a convenience log.
+  const inquiryId = (entry.changes as any)?.inquiry_id;
+  if (inquiryId) {
+    try { await svc.from('inquiries').delete().eq('id', inquiryId); } catch { /* ignore */ }
+  }
+
   // Mark the original entry reverted (so it can't be undone twice) and record the
   // undo itself in the log for transparency.
   await svc.from('audit_log').update({ reverted_at: new Date().toISOString(), reverted_by: user.id }).eq('id', id);

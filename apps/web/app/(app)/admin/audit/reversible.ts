@@ -45,11 +45,11 @@ export function reversibility(entry: AuditEntryLike, nowMs: number): Reversibili
   }
 
   if (entry.entity_type === 'programs') {
-    // Multi-step flows (promotion) leave more than a field flip — don't touch them.
-    if (c.promoted || c.promoted_months != null || c.saved_from) return { ok: false, reason: 'Part of a promotion/inquiry — undo manually' };
+    // Promotions are a multi-step flow — don't touch them here.
+    if (c.promoted || c.promoted_months != null) return { ok: false, reason: 'Part of a promotion — undo manually' };
     if (entry.action === 'insert') {
       if (c.imported_new != null || c.imported_updated != null) return { ok: false, reason: 'Bulk import — can’t undo' };
-      return { ok: true }; // undo = archive the created program
+      return { ok: true }; // undo = archive the created program (incl. an inquiry's new pipeline program)
     }
     if (entry.action === 'delete') return c.archived ? { ok: true } : { ok: false, reason: 'Can’t undo' };
     if (entry.action === 'update') {
