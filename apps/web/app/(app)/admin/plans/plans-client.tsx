@@ -3,7 +3,7 @@
 import { useEffect, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Lock, LockOpen, Trash2, Users, KeyRound, Plus } from 'lucide-react';
+import { Lock, LockOpen, Trash2, Users, KeyRound, Plus, Radio } from 'lucide-react';
 import { monthLabel, PLAN_EDITABLE_SECTIONS, SECTION_LABEL } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -11,7 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Dialog } from '@/components/ui/dialog';
 import { toast } from '@/components/ui/toast';
 import { confirmDialog } from '@/components/ui/confirm';
-import { setPlanLocked, adminDeletePlan, getPlanGrants, setPlanUserSections } from '../actions';
+import { setPlanLocked, adminDeletePlan, getPlanGrants, setPlanUserSections, setLivePlan } from '../actions';
 import { createScenario } from '../../plan-actions';
 
 export type AdminPlan = {
@@ -20,6 +20,7 @@ export type AdminPlan = {
   type: string;
   is_locked: boolean;
   is_sandbox: boolean;
+  is_live: boolean;
   owner: string;
   plan_start_date: string;
   horizon_months: number;
@@ -69,6 +70,20 @@ export function PlansAdminClient({ plans, users }: { plans: AdminPlan[]; users: 
       const res = await setPlanLocked(p.id, !p.is_locked);
       if (res.error) toast.error(res.error);
       else { toast.success(p.is_locked ? 'Plan unlocked.' : 'Plan locked.'); router.refresh(); }
+    });
+  }
+
+  async function makeLive(p: AdminPlan) {
+    const ok = await confirmDialog({
+      title: `Make “${p.name}” the live plan?`,
+      description: 'This becomes the default working plan the Dashboard, API, and new scenarios point at. The current live plan stops being the default (edits stay). Only one plan is live at a time.',
+      confirmLabel: 'Make live',
+    });
+    if (!ok) return;
+    start(async () => {
+      const res = await setLivePlan(p.id);
+      if (res.error) toast.error(res.error);
+      else { toast.success(`“${p.name}” is now the live plan.`); router.refresh(); }
     });
   }
 
@@ -130,18 +145,30 @@ export function PlansAdminClient({ plans, users }: { plans: AdminPlan[]; users: 
                   {monthLabel(p.plan_start_date, 1)} – {monthLabel(p.plan_start_date, p.horizon_months)}
                 </td>
                 <td className="px-3 py-2">
-                  {p.is_locked ? (
-                    <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium bg-warning/10 text-warning">
-                      <Lock className="h-3 w-3" /> Locked
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium bg-success/10 text-success">
-                      <LockOpen className="h-3 w-3" /> Editable
-                    </span>
-                  )}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {p.is_live && (
+                      <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium bg-primary/10 text-primary">
+                        <Radio className="h-3 w-3" /> Live
+                      </span>
+                    )}
+                    {p.is_locked ? (
+                      <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium bg-warning/10 text-warning">
+                        <Lock className="h-3 w-3" /> Locked
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium bg-success/10 text-success">
+                        <LockOpen className="h-3 w-3" /> Editable
+                      </span>
+                    )}
+                  </div>
                 </td>
                 <td className="px-3 py-2">
                   <div className="flex items-center justify-end gap-2">
+                    {!p.is_sandbox && !p.is_live && !p.is_locked && (
+                      <Button variant="outline" size="sm" disabled={pending} onClick={() => makeLive(p)} title="Make this the default working plan">
+                        <Radio className="h-3.5 w-3.5" /> Set live
+                      </Button>
+                    )}
                     {!p.is_sandbox && (
                       <Button variant="outline" size="sm" onClick={() => setAccessPlan(p)}>
                         <KeyRound className="h-3.5 w-3.5" /> Access

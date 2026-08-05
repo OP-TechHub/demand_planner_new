@@ -19,7 +19,7 @@ export default async function AdminPlansPage() {
   const [{ data: plans }, { data: users }] = await Promise.all([
     supabase
       .from('plans')
-      .select('id, name, type, is_locked, is_sandbox, owner_user_id, plan_start_date, horizon_months, forked_at, created_at')
+      .select('id, name, type, is_locked, is_sandbox, is_live, owner_user_id, plan_start_date, horizon_months, forked_at, created_at')
       .is('deleted_at', null)
       .order('type', { ascending: true })
       .order('created_at', { ascending: true }),
@@ -38,6 +38,7 @@ export default async function AdminPlansPage() {
     type: p.type,
     is_locked: p.is_locked,
     is_sandbox: p.is_sandbox,
+    is_live: p.is_live,
     owner: p.owner_user_id ? (nameById.get(p.owner_user_id) ?? '—') : '—',
     plan_start_date: p.plan_start_date,
     horizon_months: p.horizon_months,

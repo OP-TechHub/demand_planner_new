@@ -62,13 +62,17 @@ export async function createScenario(
   const { data: master } = await supabase.from('plans').select('*').eq('type', 'master').is('deleted_at', null).maybeSingle();
   if (!master) return { error: 'No master plan to fork.' };
 
-  // The plan we copy settings + data from. Defaults to the master; RLS makes
-  // sure the caller may actually read the chosen source.
+  // The plan we copy settings + data from. Defaults to the org's live plan (the
+  // working state) — falling back to the master; an explicit sourcePlanId wins.
+  // RLS makes sure the caller may actually read the chosen source.
   let source = master;
   if (opts?.sourcePlanId && opts.sourcePlanId !== master.id) {
     const { data: chosen } = await supabase.from('plans').select('*').eq('id', opts.sourcePlanId).is('deleted_at', null).maybeSingle();
     if (!chosen) return { error: 'Source plan not found or not accessible.' };
     source = chosen;
+  } else if (!opts?.sourcePlanId) {
+    const { data: live } = await supabase.from('plans').select('*').eq('is_live', true).is('deleted_at', null).maybeSingle();
+    if (live) source = live;
   }
 
   const { data: scenario, error: se } = await supabase.from('plans').insert({
