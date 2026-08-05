@@ -25,12 +25,13 @@ export function MonthlyLineChart({
    * so this chart can be rendered from a Server Component — functions can't cross
    * the server→client boundary. 'kg' appends the unit in tooltips; 'count' doesn't.
    */
-  format?: 'kg' | 'count';
+  format?: 'kg' | 'count' | 'usd';
 }) {
   // Defined here (client side), never passed in as props.
+  const unit = format === 'usd' ? '$' : '';
   const formatY = (v: number) =>
-    v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 1e3 ? (v / 1e3).toFixed(0) + 'k' : String(Math.round(v));
-  const formatValue = (v: number) => Math.round(v).toLocaleString() + (format === 'kg' ? ' kg' : '');
+    unit + (v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 1e3 ? (v / 1e3).toFixed(0) + 'k' : String(Math.round(v)));
+  const formatValue = (v: number) => unit + Math.round(v).toLocaleString() + (format === 'kg' ? ' kg' : '');
 
   return (
     <ResponsiveContainer width="100%" height={height}>

@@ -47,7 +47,7 @@ export type ScenarioResult = { error: string | null; scenarioId?: string };
 export async function createScenario(
   name: string,
   description: string,
-  opts?: { official?: boolean; sourcePlanId?: string }
+  opts?: { official?: boolean; sourcePlanId?: string; planStartDate?: string; horizonMonths?: number }
 ): Promise<ScenarioResult> {
   const official = opts?.official ?? false;
   const supabase = await createClient();
@@ -62,19 +62,36 @@ export async function createScenario(
   const { data: master } = await supabase.from('plans').select('*').eq('type', 'master').is('deleted_at', null).maybeSingle();
   if (!master) return { error: 'No master plan to fork.' };
 
-  // The plan we copy settings + data from. Defaults to the master; RLS makes
-  // sure the caller may actually read the chosen source.
+  // The plan we copy settings + data from. Defaults to the org's live plan (the
+  // working state) — falling back to the master; an explicit sourcePlanId wins.
+  // RLS makes sure the caller may actually read the chosen source.
   let source = master;
   if (opts?.sourcePlanId && opts.sourcePlanId !== master.id) {
     const { data: chosen } = await supabase.from('plans').select('*').eq('id', opts.sourcePlanId).is('deleted_at', null).maybeSingle();
     if (!chosen) return { error: 'Source plan not found or not accessible.' };
     source = chosen;
+  } else if (!opts?.sourcePlanId) {
+    const { data: live } = await supabase.from('plans').select('*').eq('is_live', true).is('deleted_at', null).maybeSingle();
+    if (live) source = live;
+  }
+
+  // Window: default to the source plan's, or use an explicit start/length if the
+  // caller supplied one (the New official plan dialog). Cloned month data is kept
+  // by month_index (M1…), so a shorter horizon simply drops the tail months.
+  let startDate = source.plan_start_date as string;
+  let horizon = source.horizon_months as number;
+  if (opts?.planStartDate || opts?.horizonMonths != null) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(opts?.planStartDate ?? '')) return { error: 'Pick a start month.' };
+    const h = Math.trunc(opts?.horizonMonths ?? 0);
+    if (!Number.isFinite(h) || h < 1 || h > 60) return { error: 'Plan length must be between 1 and 60 months. Check the end month.' };
+    startDate = opts.planStartDate as string;
+    horizon = h;
   }
 
   const { data: scenario, error: se } = await supabase.from('plans').insert({
     org_id: master.org_id, type: 'scenario', parent_plan_id: master.id,
     name: name.trim(), description: (description ?? '').trim(), owner_user_id: user.id, is_locked: false, is_sandbox: !official,
-    plan_start_date: source.plan_start_date, horizon_months: source.horizon_months,
+    plan_start_date: startDate, horizon_months: horizon,
     settings_margin_metric: source.settings_margin_metric, settings_allocation_mode: source.settings_allocation_mode,
     settings_scope: source.settings_scope, settings_lookback_months: source.settings_lookback_months,
     forked_at: new Date().toISOString(), created_by: user.id, updated_by: user.id,
@@ -106,9 +123,10 @@ export async function createScenario(
   const newIdByCode = new Map((newProgs ?? []).map((p: any) => [p.item_code, p.id]));
   const codeByOldId = new Map((srcProgs ?? []).map((p: any) => [p.id, p.item_code]));
 
-  // Clone demand overrides (remap program_id).
+  // Clone demand overrides (remap program_id), dropping any months past the horizon.
   const demand = await fetchAllByPlan(supabase, 'demand_plan', 'program_id, month_index, demand_fp', source.id);
   const demandRows = demand
+    .filter((d: any) => d.month_index <= horizon)
     .map((d: any) => ({ plan_id: sid, program_id: newIdByCode.get(codeByOldId.get(d.program_id)), month_index: d.month_index, demand_fp: d.demand_fp, created_by: user.id, updated_by: user.id }))
     .filter((d) => d.program_id);
   for (let i = 0; i < demandRows.length; i += 800) {
@@ -116,9 +134,11 @@ export async function createScenario(
     if (error) return fail(`cloning demand: ${error.message}`);
   }
 
-  // Clone harvest (buckets are org-scoped — same bucket_id).
+  // Clone harvest (buckets are org-scoped — same bucket_id), dropping months past the horizon.
   const harvest = await fetchAllByPlan(supabase, 'harvest_plan', 'bucket_id, month_index, capacity_kg_wr', source.id);
-  const harvestRows = harvest.map((h: any) => ({ plan_id: sid, bucket_id: h.bucket_id, month_index: h.month_index, capacity_kg_wr: h.capacity_kg_wr, created_by: user.id, updated_by: user.id }));
+  const harvestRows = harvest
+    .filter((h: any) => h.month_index <= horizon)
+    .map((h: any) => ({ plan_id: sid, bucket_id: h.bucket_id, month_index: h.month_index, capacity_kg_wr: h.capacity_kg_wr, created_by: user.id, updated_by: user.id }));
   for (let i = 0; i < harvestRows.length; i += 800) {
     const { error } = await supabase.from('harvest_plan').insert(harvestRows.slice(i, i + 800));
     if (error) return fail(`cloning harvest: ${error.message}`);

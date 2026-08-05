@@ -17,6 +17,7 @@ import {
   DollarSign,
   SlidersHorizontal,
   GitFork,
+  GitCompare,
   Users,
   ScrollText,
   type LucideIcon,
@@ -54,7 +55,10 @@ const SECTIONS: Section[] = [
   },
   {
     title: 'Scenarios',
-    items: [{ label: 'My scenarios', href: '/scenarios', icon: GitFork }],
+    items: [
+      { label: 'My scenarios', href: '/scenarios', icon: GitFork },
+      { label: 'Compare plans', href: '/diff', icon: GitCompare },
+    ],
   },
   {
     title: 'Admin',
@@ -85,7 +89,7 @@ export function AppSidebar({ role }: { role: UserRole }) {
         </span>
       </Link>
 
-      <div className="flex-1 overflow-y-auto px-3 py-4">
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4">
         {SECTIONS.filter((s) => !s.adminOnly || role === 'admin').map((section) => (
           <div key={section.title} className="mb-5">
             <div className="px-2 pb-2 text-[10px] font-semibold uppercase tracking-[0.09em] text-muted-foreground/60">

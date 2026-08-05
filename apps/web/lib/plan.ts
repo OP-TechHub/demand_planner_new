@@ -88,8 +88,21 @@ export const getActivePlan = cache(async (): Promise<Plan | null> => {
     const { data } = await supabase.from('plans').select('*').eq('id', selected).is('deleted_at', null).maybeSingle();
     if (data) return data as Plan; // RLS guarantees the caller may read it
   }
-  const { data } = await supabase.from('plans').select('*').eq('type', 'master').is('deleted_at', null).maybeSingle();
-  return (data as Plan) ?? null;
+  return getDefaultPlan();
+});
+
+/**
+ * The org's default working plan: the one flagged `is_live`, falling back to the
+ * master. This is what the app centres on when no specific plan is selected —
+ * the Dashboard, the API's default, and getActivePlan's fallback all use it, so
+ * an admin can point everything at a "Live plan" while the master stays frozen.
+ */
+export const getDefaultPlan = cache(async (): Promise<Plan | null> => {
+  const supabase = await createClient();
+  const { data: live } = await supabase.from('plans').select('*').eq('is_live', true).is('deleted_at', null).maybeSingle();
+  if (live) return live as Plan;
+  const { data: master } = await supabase.from('plans').select('*').eq('type', 'master').is('deleted_at', null).maybeSingle();
+  return (master as Plan) ?? null;
 });
 
 /** The org master plus the caller's own scenarios, for the plan selector. */

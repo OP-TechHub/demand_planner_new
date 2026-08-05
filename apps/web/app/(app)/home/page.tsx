@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { monthLabel } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 import { fetchAllByPlan } from '@/lib/fetch-all';
+import { getActivePlan } from '@/lib/plan';
 import { Card } from '@/components/ui/card';
 import { RecalculateButton } from '../recalculate-button';
 import { StalePlanNotice } from '../stale-banner';
@@ -11,7 +12,8 @@ import { DashboardOverview, type MonthPoint } from './dashboard-overview';
 export default async function HomePage() {
   const supabase = await createClient();
 
-  const { data: plan } = await supabase.from('plans').select('*').eq('type', 'master').maybeSingle();
+  // The plan selected in the top bar, defaulting to the org's live plan.
+  const plan = await getActivePlan();
   const [{ count: bucketCount }, { count: userCount }, { data: summary }] = await Promise.all([
     supabase.from('buckets').select('*', { count: 'exact', head: true }),
     supabase.from('users').select('*', { count: 'exact', head: true }),
@@ -24,6 +26,7 @@ export default async function HomePage() {
 
   // One rolling_results pass feeds the overview (per month) and the alerts (per program).
   let monthly: MonthPoint[] = [];
+  let topShortfall: { customer: string; shortfall: number }[] = [];
   const alerts: { level: 'warn' | 'info'; text: string }[] = [];
   let recent: { who: string; text: string; when: string }[] = [];
 
@@ -33,29 +36,50 @@ export default async function HomePage() {
     else if (Date.now() - new Date(plan.last_computed_at).getTime() > 24 * 3600 * 1000)
       alerts.push({ level: 'warn', text: 'Computed results are over 24 hours old — Recalculate to refresh.' });
 
+    // Program status + customer, for the active/pipeline split and the
+    // shortfall-by-customer chart.
+    const { data: progs } = await supabase
+      .from('programs').select('id, status, customer, primary_yield, max_monthly_demand_fp')
+      .eq('plan_id', plan.id).is('deleted_at', null);
+    const progList = (progs ?? []) as { id: string; status: string; customer: string; primary_yield: number; max_monthly_demand_fp: number }[];
+    const statusById = new Map(progList.map((p) => [p.id, p.status]));
+    const customerById = new Map(progList.map((p) => [p.id, p.customer]));
+
     if (summary) {
       const rr = await fetchAllByPlan(supabase, 'rolling_results', 'program_id, month_index, demand_fp, rolling_fp, revenue, cost', plan.id);
       const dem = new Array<number>(months).fill(0), ful = new Array<number>(months).fill(0);
       const rev = new Array<number>(months).fill(0), cst = new Array<number>(months).fill(0);
+      const actDem = new Array<number>(months).fill(0), pipeDem = new Array<number>(months).fill(0);
       const pd = new Map<string, number>(), pf = new Map<string, number>();
+      const shortByCust = new Map<string, number>();
       for (const r of rr) {
         const i = r.month_index - 1;
-        if (i >= 0 && i < months) { dem[i] += r.demand_fp; ful[i] += r.rolling_fp; rev[i] += r.revenue; cst[i] += r.cost; }
+        if (i >= 0 && i < months) {
+          dem[i] += r.demand_fp; ful[i] += r.rolling_fp; rev[i] += r.revenue; cst[i] += r.cost;
+          const st = statusById.get(r.program_id);
+          if (st === 'active') actDem[i] += r.demand_fp;
+          else if (st === 'pipeline') pipeDem[i] += r.demand_fp;
+        }
         pd.set(r.program_id, (pd.get(r.program_id) ?? 0) + r.demand_fp);
         pf.set(r.program_id, (pf.get(r.program_id) ?? 0) + r.rolling_fp);
+        const short = Math.max(0, r.demand_fp - r.rolling_fp);
+        if (short > 0) {
+          const cust = customerById.get(r.program_id) ?? '—';
+          shortByCust.set(cust, (shortByCust.get(cust) ?? 0) + short);
+        }
       }
-      monthly = dem.map((d, i) => ({ demand: d, fulfilled: ful[i] ?? 0, revenue: rev[i] ?? 0, cost: cst[i] ?? 0 }));
+      monthly = dem.map((d, i) => ({ demand: d, fulfilled: ful[i] ?? 0, revenue: rev[i] ?? 0, cost: cst[i] ?? 0, activeDemand: actDem[i] ?? 0, pipelineDemand: pipeDem[i] ?? 0 }));
+      topShortfall = [...shortByCust.entries()].map(([customer, shortfall]) => ({ customer, shortfall })).sort((a, b) => b.shortfall - a.shortfall).slice(0, 8);
       let under = 0;
       for (const [pid, d] of pd) if (d > 0 && (pf.get(pid) ?? 0) / d < 0.5) under++;
       if (under) alerts.push({ level: 'warn', text: `${under} program${under > 1 ? 's' : ''} under 50% fulfilled over 60 months.` });
     }
 
-    const [{ data: progs }, { data: bks }, harv] = await Promise.all([
-      supabase.from('programs').select('id, primary_yield, max_monthly_demand_fp').eq('plan_id', plan.id).is('deleted_at', null),
+    const [{ data: bks }, harv] = await Promise.all([
       supabase.from('buckets').select('id, name').eq('is_archived', false),
       fetchAllByPlan(supabase, 'harvest_plan', 'bucket_id, capacity_kg_wr', plan.id),
     ]);
-    const noYield = (progs ?? []).filter((p) => (p.max_monthly_demand_fp ?? 0) > 0 && (!p.primary_yield || p.primary_yield <= 0)).length;
+    const noYield = progList.filter((p) => (p.max_monthly_demand_fp ?? 0) > 0 && (!p.primary_yield || p.primary_yield <= 0)).length;
     if (noYield) alerts.push({ level: 'warn', text: `${noYield} program${noYield > 1 ? 's have' : ' has'} demand but no primary yield.` });
     const cap = new Map<string, number>();
     for (const h of harv) cap.set(h.bucket_id, (cap.get(h.bucket_id) ?? 0) + h.capacity_kg_wr);
@@ -78,7 +102,9 @@ export default async function HomePage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            {lastComputed ? `Last computed ${lastComputed}.` : 'Plan has not been computed yet.'}
+            {plan && <span className="font-medium text-foreground">{plan.name}</span>}
+            {plan ? ' · ' : ''}
+            {lastComputed ? `last computed ${lastComputed}.` : 'not computed yet.'}
           </p>
         </div>
         {plan && <RecalculateButton planId={plan.id} />}
@@ -87,7 +113,7 @@ export default async function HomePage() {
       {plan && <StalePlanNotice planId={plan.id} lastComputedAt={plan.last_computed_at} />}
 
       {summary && plan ? (
-        <DashboardOverview monthly={monthly} planStartDate={plan.plan_start_date} horizon={plan.horizon_months} />
+        <DashboardOverview monthly={monthly} topShortfall={topShortfall} planStartDate={plan.plan_start_date} horizon={plan.horizon_months} />
       ) : (
         <Card className="border-dashed bg-muted/30 p-6 text-sm text-muted-foreground">
           No computed results yet. Add programs, demand, and harvest capacity, then{' '}
@@ -134,7 +160,7 @@ export default async function HomePage() {
       )}
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <MiniStat label="Master plan" value={plan ? plan.name : 'Not seeded'} />
+        <MiniStat label={plan?.is_live ? 'Live plan' : 'Plan'} value={plan ? plan.name : 'Not seeded'} />
         <MiniStat label="Size buckets" value={String(bucketCount ?? 0)} />
         <MiniStat label="Team members" value={String(userCount ?? 0)} />
       </div>

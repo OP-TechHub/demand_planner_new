@@ -23,14 +23,18 @@ export async function loadOrgPlan(
   orgId: string,
   planId?: string | null
 ): Promise<ApiPlan | null> {
-  let q = svc
-    .from('plans')
-    .select('id, name, type, plan_start_date, horizon_months, is_locked')
-    .eq('org_id', orgId)
-    .is('deleted_at', null);
-  q = planId ? q.eq('id', planId) : q.eq('type', 'master');
-  const { data } = await q.maybeSingle();
-  return (data as ApiPlan) ?? null;
+  const cols = 'id, name, type, plan_start_date, horizon_months, is_locked';
+  const base = () => svc.from('plans').select(cols).eq('org_id', orgId).is('deleted_at', null);
+
+  if (planId) {
+    const { data } = await base().eq('id', planId).maybeSingle();
+    return (data as ApiPlan) ?? null;
+  }
+  // Default to the org's live plan, falling back to the master.
+  const { data: live } = await base().eq('is_live', true).maybeSingle();
+  if (live) return live as ApiPlan;
+  const { data: master } = await base().eq('type', 'master').maybeSingle();
+  return (master as ApiPlan) ?? null;
 }
 
 /** The plan-context block echoed in every response's `meta`. */

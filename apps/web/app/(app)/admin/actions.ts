@@ -137,6 +137,31 @@ export async function adminDeletePlan(planId: string): Promise<AdminResult> {
   return { error: null };
 }
 
+/**
+ * Make a plan the org's LIVE plan — the default working plan the Dashboard, API,
+ * and plan resolution point at. Exactly one per org, so this clears the flag on
+ * the others first. Admin-only. A locked plan can't be live (it's read-only).
+ */
+export async function setLivePlan(planId: string): Promise<AdminResult> {
+  const { me, error } = await requireAdmin();
+  if (error || !me) return { error: error ?? 'Admins only.' };
+
+  const svc = createServiceClient();
+  const { data: plan } = await svc.from('plans').select('id, org_id, is_locked, name').eq('id', planId).is('deleted_at', null).maybeSingle();
+  if (!plan || plan.org_id !== me.org_id) return { error: 'Plan not found.' };
+  if (plan.is_locked) return { error: 'Unlock the plan before making it the live plan — the live plan must be editable.' };
+
+  const { error: clearErr } = await svc.from('plans').update({ is_live: false }).eq('org_id', me.org_id).eq('is_live', true);
+  if (clearErr) return { error: clearErr.message };
+  const { error: setErr } = await svc.from('plans').update({ is_live: true, updated_by: me.id }).eq('id', planId);
+  if (setErr) return { error: setErr.message };
+
+  await auditPlan(await createClient(), me, planId, 'update', { is_live: { old: false, new: true }, name: plan.name });
+  revalidatePath('/admin/plans');
+  revalidatePath('/home');
+  return { error: null };
+}
+
 export type PlanGrant = { user_id: string; section: string };
 
 /** All per-plan edit grants for one plan (admin-only), for the access editor. */

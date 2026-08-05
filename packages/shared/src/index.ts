@@ -59,6 +59,8 @@ export interface Plan {
   is_locked: boolean;
   /** true = a user's private sandbox; false = master or an official plan. */
   is_sandbox: boolean;
+  /** true = the org's default working ("live") plan. At most one per org. */
+  is_live: boolean;
   plan_start_date: string;
   horizon_months: number;
   settings_margin_metric: MarginMetric;

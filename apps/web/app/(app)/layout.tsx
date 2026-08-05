@@ -73,10 +73,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       : undefined;
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex h-screen overflow-hidden">
       <AppSidebar role={profile.role as UserRole} />
-      <div className="flex min-h-screen flex-1 flex-col">
-        <header className="sticky top-0 z-20 flex h-14 items-center justify-between border-b border-border bg-card/70 px-6 backdrop-blur-md">
+      <div className="flex h-screen min-w-0 flex-1 flex-col">
+        <header className="z-20 flex h-14 shrink-0 items-center justify-between border-b border-border bg-card/70 px-6 backdrop-blur-md">
           <div className="flex items-center gap-2.5">
             <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/70">Plan</span>
             {activePlan && <PlanSelector plans={plans} activeId={activePlan.id} />}
@@ -103,14 +103,16 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           </div>
         </header>
         {activePlan?.type === 'scenario' && master && (
-          <ScenarioBanner
-            name={activePlan.name}
-            masterId={master.id}
-            access={scenarioAccess}
-            ownerName={scenarioOwner}
-          />
+          <div className="shrink-0">
+            <ScenarioBanner
+              name={activePlan.name}
+              masterId={master.id}
+              access={scenarioAccess}
+              ownerName={scenarioOwner}
+            />
+          </div>
         )}
-        <main className="flex-1 p-6">{children}</main>
+        <main className="min-h-0 flex-1 overflow-y-auto p-6">{children}</main>
       </div>
       <Toaster />
       <ConfirmHost />
