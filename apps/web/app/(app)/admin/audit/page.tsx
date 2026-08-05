@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { AuditTable, type AuditRow } from './audit-table';
+import { reversibility, UNDO_WINDOW_DAYS } from './reversible';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -13,6 +14,7 @@ const SECTION: Record<string, string> = {
 };
 
 function actionVerb(action: string, changes: any): string {
+  if (changes?.undo_of) return 'Reverted';
   if (action === 'insert') return 'Created';
   if (action === 'delete') return changes?.archived ? 'Archived' : 'Deleted';
   return 'Updated';
@@ -54,6 +56,7 @@ function prettyVal(v: unknown): string {
 /** Turn a heterogeneous change payload into a human-readable "old → new" summary. */
 function describeChanges(changes: any): string {
   const c = changes ?? {};
+  if (c.undo_of) return 'Reverted an earlier change';
   const parts: string[] = [];
 
   // Field-level old → new pairs (roles, status, program fields).
@@ -120,8 +123,10 @@ export default async function AuditPage() {
     }
   };
 
+  const now = Date.now();
   const rows: AuditRow[] = (entries ?? []).map((e: any) => {
     const plan = e.plan_id ? planById.get(e.plan_id) : null;
+    const rev = reversibility(e, now);
     return {
       id: e.id,
       whoId: e.user_id ?? '',
@@ -136,6 +141,9 @@ export default async function AuditPage() {
       rel: relativeTime(e.at),
       abs: new Date(e.at).toLocaleString(),
       dateStr: new Date(e.at).toLocaleDateString(),
+      canUndo: rev.ok,
+      undoReason: rev.ok ? null : rev.reason ?? null,
+      undone: e.reverted_at ? { by: userById.get(e.reverted_by) ?? 'an admin', at: new Date(e.reverted_at).toLocaleString() } : null,
     };
   });
 
@@ -144,7 +152,8 @@ export default async function AuditPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Audit Log</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Append-only record of every change — who did it, in which section, and when. Latest {rows.length}.
+          Record of every change — who did it, in which section, and when. Latest {rows.length}.
+          Admins can <b className="text-foreground">undo</b> eligible edits for {UNDO_WINDOW_DAYS} days; after that they’re permanent.
         </p>
       </div>
 

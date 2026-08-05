@@ -1,9 +1,15 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
+import { Undo2 } from 'lucide-react';
 import { Select } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { toast } from '@/components/ui/toast';
+import { confirmDialog } from '@/components/ui/confirm';
 import { ExportCsvButton } from '@/components/export-csv-button';
+import { undoAuditEntry } from './undo-actions';
 
 export interface AuditRow {
   id: string;
@@ -19,6 +25,9 @@ export interface AuditRow {
   rel: string;
   abs: string;
   dateStr: string;
+  canUndo: boolean;
+  undoReason: string | null;
+  undone: { by: string; at: string } | null;
 }
 
 const TONE: Record<AuditRow['actionKey'], string> = {
@@ -30,6 +39,45 @@ const TONE: Record<AuditRow['actionKey'], string> = {
 function initials(name: string) {
   const p = name.trim().split(/\s+/);
   return ((p[0]?.[0] ?? '') + (p[1]?.[0] ?? '')).toUpperCase() || name.slice(0, 2).toUpperCase();
+}
+
+function UndoCell({ row }: { row: AuditRow }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+
+  if (row.undone) {
+    return (
+      <span
+        className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground"
+        title={`Undone by ${row.undone.by} on ${row.undone.at}`}
+      >
+        <Undo2 className="h-3 w-3" /> Undone
+      </span>
+    );
+  }
+  if (!row.canUndo) {
+    return <span className="text-xs text-muted-foreground/60" title={row.undoReason ?? undefined}>—</span>;
+  }
+
+  async function onUndo() {
+    const ok = await confirmDialog({
+      title: 'Undo this change?',
+      description: `This reverts ${row.section} (${row.entity}) to its previous values${row.scenario ? ` in “${row.scenario}”` : ''}. Recalculate the plan afterwards to refresh the outputs.`,
+      confirmLabel: 'Undo change',
+    });
+    if (!ok) return;
+    start(async () => {
+      const res = await undoAuditEntry(row.id);
+      if (res.error) toast.error(res.error);
+      else { toast.success('Change undone. Recalculate the plan to refresh outputs.'); router.refresh(); }
+    });
+  }
+
+  return (
+    <Button variant="outline" size="sm" disabled={pending} onClick={onUndo}>
+      <Undo2 className="h-3.5 w-3.5" /> {pending ? 'Undoing…' : 'Undo'}
+    </Button>
+  );
 }
 
 export function AuditTable({ rows }: { rows: AuditRow[] }) {
@@ -85,13 +133,14 @@ export function AuditTable({ rows }: { rows: AuditRow[] }) {
         </div>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full min-w-[42rem] text-sm">
+          <table className="w-full min-w-[48rem] text-sm">
             <thead className="border-b border-border bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
               <tr>
                 <th className="px-4 py-2.5 font-medium">Who</th>
                 <th className="px-4 py-2.5 font-medium">Section</th>
                 <th className="px-4 py-2.5 font-medium">What changed</th>
                 <th className="px-4 py-2.5 text-right font-medium">When</th>
+                <th className="px-4 py-2.5 text-right font-medium">Undo</th>
               </tr>
             </thead>
             <tbody>
@@ -121,6 +170,9 @@ export function AuditTable({ rows }: { rows: AuditRow[] }) {
                   <td className="whitespace-nowrap px-4 py-3 text-right text-muted-foreground">
                     <div title={r.abs}>{r.rel}</div>
                     <div className="text-xs text-muted-foreground/70">{r.dateStr}</div>
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3 text-right">
+                    <UndoCell row={r} />
                   </td>
                 </tr>
               ))}
