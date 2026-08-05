@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { getActivePlan, getProfile } from '@/lib/plan';
 import { canEditSection, type Bucket, type Program, type HarvestCell, type UserRole } from '@oceanpick/shared';
+import { fetchAllByPlan } from '@/lib/fetch-all';
 import { BucketsClient, type BucketRow } from './buckets-client';
 
 export default async function BucketsPage() {
@@ -17,10 +18,11 @@ export default async function BucketsPage() {
   }
 
   const supabase = await createClient();
-  const [{ data: buckets }, { data: programs }, { data: harvest }, profile] = await Promise.all([
+  const [{ data: buckets }, { data: programs }, harvest, profile] = await Promise.all([
     supabase.from('buckets').select('*').order('sort_order'),
     supabase.from('programs').select('primary_bucket_id, secondary_bucket_id, tertiary_bucket_id').eq('plan_id', plan.id).is('deleted_at', null),
-    supabase.from('harvest_plan').select('bucket_id, capacity_kg_wr').eq('plan_id', plan.id),
+    // harvest_plan can exceed the 1000-row cap (buckets × 60), so page it.
+    fetchAllByPlan(supabase, 'harvest_plan', 'bucket_id, capacity_kg_wr', plan.id),
     getProfile(),
   ]);
 

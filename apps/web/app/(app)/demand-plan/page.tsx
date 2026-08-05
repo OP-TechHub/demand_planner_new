@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
-import { getActivePlan, getProfile } from '@/lib/plan';
+import { getActivePlan, getProfile, getMyPlanGrants } from '@/lib/plan';
 import { canEditPlanSection, type DemandCell, type Program, type UserRole } from '@oceanpick/shared';
+import { fetchAllByPlan } from '@/lib/fetch-all';
 import { DemandClient } from './demand-client';
 
 export default async function DemandPlanPage() {
@@ -17,16 +18,22 @@ export default async function DemandPlanPage() {
   }
 
   const supabase = await createClient();
-  const [{ data: programs }, { data: rows }, profile] = await Promise.all([
+  // demand_plan can exceed PostgREST's 1000-row cap (programs × 60), so page
+  // through it — otherwise recently-added rows silently render as baseline.
+  const [{ data: programs }, rows, profile, grants, fulfil] = await Promise.all([
     supabase.from('programs').select('*').eq('plan_id', plan.id).is('deleted_at', null).order('sort_order'),
-    supabase.from('demand_plan').select('*').eq('plan_id', plan.id),
+    fetchAllByPlan(supabase, 'demand_plan', '*', plan.id),
     getProfile(),
+    getMyPlanGrants(plan.id),
+    // Last recompute's per-program-month demand vs fulfilled, for the cell colouring.
+    fetchAllByPlan(supabase, 'rolling_results', 'program_id, month_index, demand_fp, rolling_fp', plan.id),
   ]);
+  const fulfilment = fulfil.map((r) => ({ program_id: r.program_id as string, month_index: r.month_index as number, demand_fp: Number(r.demand_fp), rolling_fp: Number(r.rolling_fp) }));
 
   const canEdit = canEditPlanSection(
     plan,
-    { id: profile?.id ?? '', role: (profile?.role ?? 'viewer') as UserRole, edit_sections: profile?.edit_sections },
-    'demand_plan'
+    { id: profile?.id ?? '', role: (profile?.role ?? 'viewer') as UserRole },
+    grants.has('demand_plan')
   );
 
   return (
@@ -35,7 +42,8 @@ export default async function DemandPlanPage() {
       planStartDate={plan.plan_start_date}
       horizon={plan.horizon_months}
       programs={(programs ?? []) as Program[]}
-      demandRows={(rows ?? []) as DemandCell[]}
+      demandRows={rows as DemandCell[]}
+      fulfilment={fulfilment}
       canEdit={canEdit}
     />
   );

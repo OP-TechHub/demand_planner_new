@@ -1,5 +1,10 @@
 import type { Metadata } from 'next';
+import { Inter } from 'next/font/google';
 import './globals.css';
+
+// Inter — the UI typeface. Exposed as --font-sans, which Tailwind's font-sans
+// resolves to (see tailwind.config.ts).
+const inter = Inter({ subsets: ['latin'], display: 'swap', variable: '--font-sans' });
 
 export const metadata: Metadata = {
   title: 'Oceanpick Demand Planner',
@@ -15,7 +20,7 @@ const themeInit = `(function(){try{var t=localStorage.getItem('op-theme');if(t==
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" className={inter.variable} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeInit }} />
       </head>

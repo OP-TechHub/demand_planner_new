@@ -5,6 +5,7 @@ import { monthLabel, type DemandCell, type Program } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 import { MonthlyLineChart } from '@/components/charts/monthly-line-chart';
 import { toast } from '@/components/ui/toast';
+import { PromoteDialog } from '../promote-dialog';
 import { saveDemandOverrides } from './actions';
 
 type Overrides = Record<number, string>; // month -> override string ('' = none)
@@ -38,6 +39,7 @@ export function DemandEditor({
   const [overrides, setOverrides] = useState<Overrides>(original);
   const [error, setError] = useState<string | null>(null);
   const [pattern, setPattern] = useState(false);
+  const [promote, setPromote] = useState(false);
   const [isPending, startTransition] = useTransition();
 
   const setMonth = (mo: number, val: string) =>
@@ -149,11 +151,20 @@ export function DemandEditor({
 
         {error && <p role="alert" className="mx-5 mb-2 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
 
-        <div className="flex justify-end gap-2 border-t px-5 py-3">
-          <button onClick={onClose} className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted">Cancel</button>
-          <button onClick={onSave} disabled={isPending} className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-50">
-            {isPending ? 'Saving…' : 'Save'}
-          </button>
+        <div className="flex items-center justify-between gap-2 border-t px-5 py-3">
+          <div>
+            {program.status === 'pipeline' && (
+              <button onClick={() => setPromote(true)} className="rounded-md border border-success/40 px-3 py-1.5 text-sm font-medium text-success hover:bg-success/10">
+                Promote to active…
+              </button>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted">Cancel</button>
+            <button onClick={onSave} disabled={isPending} className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-50">
+              {isPending ? 'Saving…' : 'Save'}
+            </button>
+          </div>
         </div>
 
         {pattern && (
@@ -165,6 +176,15 @@ export function DemandEditor({
           />
         )}
       </div>
+
+      {promote && (
+        <PromoteDialog
+          pipelineProgramId={program.id}
+          planStartDate={planStartDate}
+          onClose={() => setPromote(false)}
+          onDone={() => { setPromote(false); onSaved(); }}
+        />
+      )}
     </div>
   );
 }

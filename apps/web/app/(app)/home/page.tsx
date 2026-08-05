@@ -1,19 +1,12 @@
-import { Package, Target, DollarSign, TrendingUp, AlertTriangle, Activity, CalendarRange, type LucideIcon } from 'lucide-react';
+import { AlertTriangle, Activity, CalendarRange } from 'lucide-react';
 import { createClient } from '@/lib/supabase/server';
 import { monthLabel } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 import { fetchAllByPlan } from '@/lib/fetch-all';
-import { MonthlyLineChart } from '@/components/charts/monthly-line-chart';
 import { Card } from '@/components/ui/card';
 import { RecalculateButton } from '../recalculate-button';
 import { StalePlanNotice } from '../stale-banner';
-
-function kg(n: number) {
-  return n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(0) + 'k' : String(Math.round(n));
-}
-function usd(n: number) {
-  return n >= 1e6 ? '$' + (n / 1e6).toFixed(1) + 'M' : '$' + Math.round(n).toLocaleString();
-}
+import { DashboardOverview, type MonthPoint } from './dashboard-overview';
 
 export default async function HomePage() {
   const supabase = await createClient();
@@ -27,11 +20,10 @@ export default async function HomePage() {
       : Promise.resolve({ data: null }),
   ]);
 
-  const fulfilled = summary && summary.demand_fp > 0 ? summary.allocated_fp / summary.demand_fp : 0;
   const lastComputed = plan?.last_computed_at ? new Date(plan.last_computed_at).toLocaleString() : null;
 
-  // One rolling_results pass feeds both the chart (monthly) and the alerts (per-program).
-  let chartData: { label: string; demand: number; fulfilled: number }[] = [];
+  // One rolling_results pass feeds the overview (per month) and the alerts (per program).
+  let monthly: MonthPoint[] = [];
   const alerts: { level: 'warn' | 'info'; text: string }[] = [];
   let recent: { who: string; text: string; when: string }[] = [];
 
@@ -42,16 +34,17 @@ export default async function HomePage() {
       alerts.push({ level: 'warn', text: 'Computed results are over 24 hours old — Recalculate to refresh.' });
 
     if (summary) {
-      const rr = await fetchAllByPlan(supabase, 'rolling_results', 'program_id, month_index, demand_fp, rolling_fp', plan.id);
+      const rr = await fetchAllByPlan(supabase, 'rolling_results', 'program_id, month_index, demand_fp, rolling_fp, revenue, cost', plan.id);
       const dem = new Array<number>(months).fill(0), ful = new Array<number>(months).fill(0);
+      const rev = new Array<number>(months).fill(0), cst = new Array<number>(months).fill(0);
       const pd = new Map<string, number>(), pf = new Map<string, number>();
       for (const r of rr) {
         const i = r.month_index - 1;
-        if (i >= 0 && i < months) { dem[i] += r.demand_fp; ful[i] += r.rolling_fp; }
+        if (i >= 0 && i < months) { dem[i] += r.demand_fp; ful[i] += r.rolling_fp; rev[i] += r.revenue; cst[i] += r.cost; }
         pd.set(r.program_id, (pd.get(r.program_id) ?? 0) + r.demand_fp);
         pf.set(r.program_id, (pf.get(r.program_id) ?? 0) + r.rolling_fp);
       }
-      chartData = dem.map((d, i) => ({ label: monthLabel(plan.plan_start_date, i + 1), demand: d, fulfilled: ful[i] ?? 0 }));
+      monthly = dem.map((d, i) => ({ demand: d, fulfilled: ful[i] ?? 0, revenue: rev[i] ?? 0, cost: cst[i] ?? 0 }));
       let under = 0;
       for (const [pid, d] of pd) if (d > 0 && (pf.get(pid) ?? 0) / d < 0.5) under++;
       if (under) alerts.push({ level: 'warn', text: `${under} program${under > 1 ? 's' : ''} under 50% fulfilled over 60 months.` });
@@ -93,31 +86,12 @@ export default async function HomePage() {
 
       {plan && <StalePlanNotice planId={plan.id} lastComputedAt={plan.last_computed_at} />}
 
-      {summary ? (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Stat icon={Package} tone="primary" label="Total Demand" value={`${kg(summary.demand_fp)} kg`} sub="60 months, FP" />
-          <Stat icon={Target} tone="accent" label="Fulfilled" value={`${(fulfilled * 100).toFixed(0)}%`} sub={`${kg(summary.allocated_fp)} kg FP`} />
-          <Stat icon={DollarSign} tone="success" label="Revenue" value={usd(summary.revenue)} sub="allocated" />
-          <Stat icon={TrendingUp} tone="primary" label="Margin" value={usd(summary.margin)} sub={`GP ${(summary.gp_pct * 100).toFixed(1)}%`} />
-        </div>
+      {summary && plan ? (
+        <DashboardOverview monthly={monthly} planStartDate={plan.plan_start_date} horizon={plan.horizon_months} />
       ) : (
         <Card className="border-dashed bg-muted/30 p-6 text-sm text-muted-foreground">
           No computed results yet. Add programs, demand, and harvest capacity, then{' '}
           <b className="text-foreground">Recalculate</b> to see fulfilment, revenue, and margin.
-        </Card>
-      )}
-
-      {chartData.length > 0 && (
-        <Card className="p-5">
-          <h2 className="mb-3 text-sm font-semibold">Monthly demand vs. fulfilled (kg FP)</h2>
-          <MonthlyLineChart
-            data={chartData}
-            series={[
-              { key: 'demand', name: 'Demand', color: '#2a78d6', dashed: true },
-              { key: 'fulfilled', name: 'Fulfilled', color: '#eb6834' },
-            ]}
-            format="kg"
-          />
         </Card>
       )}
 
@@ -185,38 +159,6 @@ export default async function HomePage() {
         </Card>
       )}
     </div>
-  );
-}
-
-function Stat({
-  icon: Icon,
-  tone,
-  label,
-  value,
-  sub,
-}: {
-  icon: LucideIcon;
-  tone: 'primary' | 'accent' | 'success';
-  label: string;
-  value: string;
-  sub?: string;
-}) {
-  const tones = {
-    primary: 'bg-primary/10 text-primary',
-    accent: 'bg-accent/10 text-accent',
-    success: 'bg-success/12 text-success',
-  };
-  return (
-    <Card className="p-5">
-      <div className="flex items-center justify-between">
-        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</div>
-        <span className={cn('flex h-8 w-8 items-center justify-center rounded-md', tones[tone])}>
-          <Icon className="h-4 w-4" />
-        </span>
-      </div>
-      <div className="mt-2 text-2xl font-semibold tracking-tight">{value}</div>
-      {sub && <div className="mt-0.5 text-xs text-muted-foreground">{sub}</div>}
-    </Card>
   );
 }
 

@@ -41,6 +41,24 @@ export const getProfile = cache(async () => {
 });
 
 /**
+ * The current user's per-plan edit grants for one plan: the set of input tabs
+ * (programs / demand_plan / harvest_plan) they may edit on it. Admins aren't
+ * special here — canEditPlanSection short-circuits them — so this only reflects
+ * granted rows. Request-cached: the page and any child can share one query.
+ */
+export const getMyPlanGrants = cache(async (planId: string): Promise<Set<string>> => {
+  const user = await getCurrentUser();
+  if (!user || !planId) return new Set();
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from('plan_editor_grants')
+    .select('section')
+    .eq('plan_id', planId)
+    .eq('user_id', user.id);
+  return new Set((data ?? []).map((r: { section: string }) => r.section));
+});
+
+/**
  * Display name for another user in the org — for attributing a scenario to its
  * owner. Falls back to the email, then to null if the row is unreadable.
  */

@@ -8,11 +8,11 @@ import {
   Waves,
   Boxes,
   Settings,
+  ClipboardCheck,
   LayoutDashboard,
   CalendarRange,
   Target,
   PackageX,
-  Workflow,
   CalendarDays,
   DollarSign,
   SlidersHorizontal,
@@ -32,6 +32,7 @@ const SECTIONS: Section[] = [
     title: 'Inputs',
     items: [
       { label: 'Programs', href: '/programs', icon: Package },
+      { label: 'New Inquiry', href: '/inquiry', icon: ClipboardCheck },
       { label: 'Demand Plan', href: '/demand-plan', icon: LineChart },
       { label: 'Harvest Plan', href: '/harvest-plan', icon: Waves },
       { label: 'Buckets', href: '/buckets', icon: Boxes },
@@ -44,11 +45,11 @@ const SECTIONS: Section[] = [
       { label: 'Dashboard', href: '/home', icon: LayoutDashboard },
       { label: 'Annual Summary', href: '/annual-summary', icon: CalendarRange },
       { label: 'Program Fulfilment', href: '/fulfilment', icon: Target },
-      { label: 'Unallocated WR', href: '/unallocated', icon: PackageX },
-      { label: 'Pipeline WR', href: '/pipeline', icon: Workflow },
+      { label: 'Open to buy', href: '/open-to-buy', icon: PackageX },
       { label: '60-Month Summary', href: '/sixty-month', icon: CalendarDays },
       { label: 'Revenue & Cost', href: '/revenue-cost', icon: DollarSign },
       { label: 'Fulfilment Optimizer', href: '/optimizer', icon: SlidersHorizontal },
+      { label: 'Inquiries', href: '/inquiries', icon: ClipboardCheck },
     ],
   },
   {
@@ -59,6 +60,7 @@ const SECTIONS: Section[] = [
     title: 'Admin',
     adminOnly: true,
     items: [
+      { label: 'Plans', href: '/admin/plans', icon: GitFork },
       { label: 'Users', href: '/admin/users', icon: Users },
       { label: 'Audit log', href: '/admin/audit', icon: ScrollText },
     ],
@@ -74,11 +76,11 @@ export function AppSidebar({ role }: { role: UserRole }) {
         href="/home"
         className="flex h-14 shrink-0 items-center gap-2.5 border-b border-border px-4"
       >
-        <span className="flex h-8 w-8 items-center justify-center rounded-md bg-primary text-primary-foreground shadow-sm">
+        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-accent text-primary-foreground shadow-sm ring-1 ring-inset ring-white/10">
           <Waves className="h-5 w-5" strokeWidth={2.25} />
         </span>
         <span className="leading-tight">
-          <span className="block text-sm font-semibold tracking-tight">Oceanpick</span>
+          <span className="block text-[13px] font-semibold tracking-tight">Oceanpick</span>
           <span className="block text-[11px] text-muted-foreground">Demand Planner</span>
         </span>
       </Link>
@@ -86,7 +88,7 @@ export function AppSidebar({ role }: { role: UserRole }) {
       <div className="flex-1 overflow-y-auto px-3 py-4">
         {SECTIONS.filter((s) => !s.adminOnly || role === 'admin').map((section) => (
           <div key={section.title} className="mb-5">
-            <div className="px-2 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+            <div className="px-2 pb-2 text-[10px] font-semibold uppercase tracking-[0.09em] text-muted-foreground/60">
               {section.title}
             </div>
             <ul className="space-y-0.5">
@@ -97,13 +99,15 @@ export function AppSidebar({ role }: { role: UserRole }) {
                   <li key={item.href}>
                     <Link
                       href={item.href}
+                      aria-current={active ? 'page' : undefined}
                       className={cn(
-                        'group flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-colors',
+                        'group relative flex items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] transition-colors',
                         active
                           ? 'bg-primary/10 font-medium text-primary'
-                          : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                          : 'text-muted-foreground hover:bg-muted/70 hover:text-foreground'
                       )}
                     >
+                      {active && <span className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-primary" />}
                       <Icon
                         className={cn(
                           'h-4 w-4 shrink-0 transition-colors',
