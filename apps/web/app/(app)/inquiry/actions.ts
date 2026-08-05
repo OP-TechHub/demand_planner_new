@@ -404,17 +404,19 @@ async function recordInquiry(
     customer: string; itemCode: string; itemDescription: string;
     targetProgramId: string; entries: InquiryEntry[];
   }
-): Promise<void> {
+): Promise<string | null> {
   try {
-    await svc.from('inquiries').insert({
+    const { data } = await svc.from('inquiries').insert({
       org_id: row.orgId, plan_id: row.planId, created_by: row.userId, kind: row.kind,
       customer: row.customer, item_code: row.itemCode, item_description: row.itemDescription,
       target_program_id: row.targetProgramId,
       months: row.entries.length,
       total_fp: row.entries.reduce((s, e) => s + e.demand_fp, 0),
-    });
+    }).select('id').maybeSingle();
+    return (data?.id as string | undefined) ?? null;
   } catch {
     // the register is a convenience log; a failure here must not fail the save
+    return null;
   }
 }
 
@@ -481,14 +483,18 @@ async function logTrims(
   }
 }
 
-/** Add `entries` (additional volume) onto a program's existing demand for those months. */
+/**
+ * Add `entries` (additional volume) onto a program's existing demand for those
+ * months. Returns an error string (or null) plus the before→after per month, so
+ * an inquiry add can be recorded as a reversible demand edit.
+ */
 async function accumulateDemand(
   supabase: any, // eslint-disable-line @typescript-eslint/no-explicit-any
   planId: string,
   programId: string,
   userId: string,
   entries: InquiryEntry[]
-): Promise<string | null> {
+): Promise<{ error: string | null; edits: { m: number; old: number; new: number }[] }> {
   const months = entries.map((e) => e.month_index);
   const { data: existing } = await supabase
     .from('demand_plan')
@@ -496,13 +502,15 @@ async function accumulateDemand(
     .eq('program_id', programId)
     .in('month_index', months);
   const cur = new Map<number, number>((existing ?? []).map((r: { month_index: number; demand_fp: number }) => [r.month_index, Number(r.demand_fp)]));
-  const rows = entries.map((e) => ({
-    plan_id: planId, program_id: programId, month_index: e.month_index,
-    demand_fp: (cur.get(e.month_index) ?? 0) + e.demand_fp,
-    created_by: userId, updated_by: userId,
-  }));
+  const edits: { m: number; old: number; new: number }[] = [];
+  const rows = entries.map((e) => {
+    const old = cur.get(e.month_index) ?? 0;
+    const next = old + e.demand_fp;
+    if (next !== old) edits.push({ m: e.month_index, old, new: next });
+    return { plan_id: planId, program_id: programId, month_index: e.month_index, demand_fp: next, created_by: userId, updated_by: userId };
+  });
   const { error } = await supabase.from('demand_plan').upsert(rows, { onConflict: 'program_id,month_index' });
-  return error ? error.message : null;
+  return { error: error ? error.message : null, edits: error ? [] : edits };
 }
 
 /**
@@ -550,13 +558,13 @@ export async function saveInquiryToPipeline(
 
   // Pipeline source: add straight onto it.
   if (source.status === 'pipeline') {
-    const err = await accumulateDemand(supabase, planId, source.id, userId, rows0);
-    if (err) return { ok: false, error: permError(err) };
+    const acc = await accumulateDemand(supabase, planId, source.id, userId, rows0);
+    if (acc.error) return { ok: false, error: permError(acc.error) };
     const te = await applyTrims(supabase, planId, userId, trims);
     if (te.error) return { ok: false, error: permError(te.error) };
-    await logAudit(rls, { planId, entityType: 'demand_plan', entityId: source.id, action: 'update', changes: { saved_from: 'inquiry', months: rows0.length, additional: true, trimmed: te.detail.length } });
+    const inquiryId = await recordInquiry(supabase, { orgId, planId, userId, kind: 'existing', customer: source.customer, itemCode: source.item_code, itemDescription: source.item_description, targetProgramId: source.id, entries: rows0 });
+    await logAudit(rls, { planId, entityType: 'demand_plan', entityId: source.id, action: 'update', changes: { saved_from: 'inquiry', additional: true, months: rows0.length, trimmed: te.detail.length, edits: acc.edits, set: acc.edits.length, more: 0, inquiry_add: true, inquiry_id: inquiryId } });
     await logTrims(rls, planId, te.detail);
-    await recordInquiry(supabase, { orgId, planId, userId, kind: 'existing', customer: source.customer, itemCode: source.item_code, itemDescription: source.item_description, targetProgramId: source.id, entries: rows0 });
     revalidatePath('/demand-plan');
     revalidatePath('/programs');
     return { ok: true };
@@ -573,6 +581,7 @@ export async function saveInquiryToPipeline(
     .maybeSingle();
 
   let targetId: string;
+  let createdNew = false;
   if (twin) {
     if ((twin as { status: string }).status !== 'pipeline') {
       return { ok: false, error: `Item code "${twinCode}" is already used by a non-pipeline program.` };
@@ -604,16 +613,22 @@ export async function saveInquiryToPipeline(
     }
     if (!createdTwin) return { ok: false, error: 'Could not create the pipeline program.' };
     targetId = createdTwin.id;
-    await logAudit(rls, { planId, entityType: 'programs', entityId: targetId, action: 'insert', changes: { item_code: twinCode, customer: source.customer, status: 'pipeline', saved_from: 'inquiry' } });
+    createdNew = true;
   }
 
-  const err = await accumulateDemand(supabase, planId, targetId, userId, rows0);
-  if (err) return { ok: false, error: permError(err) };
+  const acc = await accumulateDemand(supabase, planId, targetId, userId, rows0);
+  if (acc.error) return { ok: false, error: permError(acc.error) };
   const te = await applyTrims(supabase, planId, userId, trims);
   if (te.error) return { ok: false, error: permError(te.error) };
-  await logAudit(rls, { planId, entityType: 'demand_plan', entityId: targetId, action: 'update', changes: { saved_from: 'inquiry', months: rows0.length, additional: true, trimmed: te.detail.length } });
+  const inquiryId = await recordInquiry(supabase, { orgId, planId, userId, kind: 'existing', customer: source.customer, itemCode: twinCode, itemDescription: source.item_description, targetProgramId: targetId, entries: rows0 });
+  if (createdNew) {
+    // Undo of a brand-new twin = archive it (its demand goes with it). One entry.
+    await logAudit(rls, { planId, entityType: 'programs', entityId: targetId, action: 'insert', changes: { item_code: twinCode, customer: source.customer, status: 'pipeline', saved_from: 'inquiry', inquiry_id: inquiryId } });
+  } else {
+    // Undo of extra volume on an existing twin = subtract what was added.
+    await logAudit(rls, { planId, entityType: 'demand_plan', entityId: targetId, action: 'update', changes: { saved_from: 'inquiry', additional: true, months: rows0.length, trimmed: te.detail.length, edits: acc.edits, set: acc.edits.length, more: 0, inquiry_add: true, inquiry_id: inquiryId } });
+  }
   await logTrims(rls, planId, te.detail);
-  await recordInquiry(supabase, { orgId, planId, userId, kind: 'existing', customer: source.customer, itemCode: twinCode, itemDescription: source.item_description, targetProgramId: targetId, entries: rows0 });
 
   revalidatePath('/demand-plan');
   revalidatePath('/programs');
@@ -703,12 +718,12 @@ export async function saveNewInquiry(input: SaveNewInquiryInput): Promise<SaveRe
   const te = await applyTrims(supabase, input.planId, userId, input.trims);
   if (te.error) return { ok: false, error: permError(te.error) };
 
+  const inquiryId = await recordInquiry(supabase, { orgId, planId: input.planId, userId, kind: 'new', customer, itemCode, itemDescription: itemDescription || itemCode, targetProgramId: created.id, entries: rows0 });
   await logAudit(rls, {
     planId: input.planId, entityType: 'programs', entityId: created.id, action: 'insert',
-    changes: { item_code: itemCode, customer, status: 'pipeline', saved_from: 'inquiry', trimmed: te.detail.length },
+    changes: { item_code: itemCode, customer, status: 'pipeline', saved_from: 'inquiry', trimmed: te.detail.length, inquiry_id: inquiryId },
   });
   await logTrims(rls, input.planId, te.detail);
-  await recordInquiry(supabase, { orgId, planId: input.planId, userId, kind: 'new', customer, itemCode, itemDescription: itemDescription || itemCode, targetProgramId: created.id, entries: rows0 });
 
   revalidatePath('/demand-plan');
   revalidatePath('/programs');
