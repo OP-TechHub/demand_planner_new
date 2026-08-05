@@ -2,13 +2,19 @@
 
 import { useMemo, useState } from 'react';
 import { Package, Target, DollarSign, TrendingUp, type LucideIcon } from 'lucide-react';
+import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, LabelList, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { monthLabel } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 import { Card } from '@/components/ui/card';
 import { MonthlyLineChart } from '@/components/charts/monthly-line-chart';
 
 /** One month of already-aggregated dashboard figures (across all programs). */
-export type MonthPoint = { demand: number; fulfilled: number; revenue: number; cost: number };
+export type MonthPoint = { demand: number; fulfilled: number; revenue: number; cost: number; activeDemand: number; pipelineDemand: number };
+export type ShortfallRow = { customer: string; shortfall: number };
+
+// Status colours (reserved): active = green, pipeline = amber.
+const C_ACTIVE = '#16a34a';
+const C_PIPELINE = '#d97706';
 
 function kg(n: number) {
   return n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(0) + 'k' : String(Math.round(n));
@@ -24,10 +30,12 @@ function usd(n: number) {
  */
 export function DashboardOverview({
   monthly,
+  topShortfall,
   planStartDate,
   horizon,
 }: {
   monthly: MonthPoint[];
+  topShortfall: ShortfallRow[];
   planStartDate: string;
   horizon: number;
 }) {
@@ -52,6 +60,21 @@ export function DashboardOverview({
     () => slice.map((m, i) => ({ label: monthLabel(planStartDate, from + i), demand: m.demand, fulfilled: m.fulfilled })),
     [slice, planStartDate, from]
   );
+  // Revenue vs. margin over the same range ($ axis).
+  const finChart = useMemo(
+    () => slice.map((m, i) => ({ label: monthLabel(planStartDate, from + i), revenue: m.revenue, margin: m.revenue - m.cost })),
+    [slice, planStartDate, from]
+  );
+  // Active vs. pipeline demand over the range, for the pie.
+  const split = useMemo(() => {
+    const active = slice.reduce((s, m) => s + m.activeDemand, 0);
+    const pipeline = slice.reduce((s, m) => s + m.pipelineDemand, 0);
+    return { active, pipeline, total: active + pipeline };
+  }, [slice]);
+  const pieData = [
+    { name: 'Active', value: split.active, color: C_ACTIVE },
+    { name: 'Pipeline', value: split.pipeline, color: C_PIPELINE },
+  ];
   const rangeText = `${monthLabel(planStartDate, from)} – ${monthLabel(planStartDate, to)}`;
 
   return (
@@ -94,6 +117,85 @@ export function DashboardOverview({
             ]}
             format="kg"
           />
+        </Card>
+      )}
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        {finChart.length > 0 && (
+          <Card className="p-5">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold">Revenue &amp; margin ($)</h2>
+              <span className="text-xs text-muted-foreground">{rangeText}</span>
+            </div>
+            <MonthlyLineChart
+              data={finChart}
+              series={[
+                { key: 'revenue', name: 'Revenue', color: '#2a78d6' },
+                { key: 'margin', name: 'Margin', color: '#eb6834' },
+              ]}
+              format="usd"
+            />
+          </Card>
+        )}
+
+        <Card className="p-5">
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold">Active vs. pipeline demand</h2>
+            <span className="text-xs text-muted-foreground">kg FP</span>
+          </div>
+          {split.total > 0 ? (
+            <ResponsiveContainer width="100%" height={260}>
+              <PieChart>
+                <Pie
+                  data={pieData}
+                  dataKey="value"
+                  nameKey="name"
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={58}
+                  outerRadius={92}
+                  paddingAngle={2}
+                  stroke="#ffffff"
+                  strokeWidth={2}
+                  isAnimationActive={false}
+                  label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                  labelLine={false}
+                >
+                  {pieData.map((d) => <Cell key={d.name} fill={d.color} />)}
+                </Pie>
+                <Tooltip
+                  formatter={(v: number, n) => [`${Math.round(v).toLocaleString()} kg`, n as string]}
+                  contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }}
+                />
+                <Legend wrapperStyle={{ fontSize: 12 }} />
+              </PieChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="flex h-[260px] items-center justify-center text-sm text-muted-foreground">No demand in this range.</div>
+          )}
+        </Card>
+      </div>
+
+      {topShortfall.length > 0 && (
+        <Card className="p-5">
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold">Top customers by shortfall</h2>
+            <span className="text-xs text-muted-foreground">unfulfilled kg FP · {horizon} months</span>
+          </div>
+          <ResponsiveContainer width="100%" height={Math.max(180, topShortfall.length * 34)}>
+            <BarChart data={topShortfall} layout="vertical" margin={{ top: 4, right: 56, bottom: 4, left: 8 }}>
+              <XAxis type="number" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} tickFormatter={(v) => kg(Number(v))} />
+              <YAxis type="category" dataKey="customer" width={120} tick={{ fontSize: 11, fill: '#334155' }} tickLine={false} axisLine={false} />
+              <Tooltip
+                cursor={{ fill: '#94a3b8', fillOpacity: 0.1 }}
+                formatter={(v: number) => [`${Math.round(v).toLocaleString()} kg`, 'Shortfall']}
+                contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }}
+              />
+              <Bar dataKey="shortfall" fill="#dc2626" radius={[0, 4, 4, 0]} barSize={18} isAnimationActive={false}>
+                <LabelList dataKey="shortfall" position="right" formatter={(v: number) => kg(Number(v))} style={{ fontSize: 10, fill: '#64748b' }} />
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
         </Card>
       )}
     </>
