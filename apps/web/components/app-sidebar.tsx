@@ -17,6 +17,7 @@ import {
   DollarSign,
   SlidersHorizontal,
   GitFork,
+  GitCompare,
   Users,
   ScrollText,
   type LucideIcon,
@@ -54,7 +55,10 @@ const SECTIONS: Section[] = [
   },
   {
     title: 'Scenarios',
-    items: [{ label: 'My scenarios', href: '/scenarios', icon: GitFork }],
+    items: [
+      { label: 'My scenarios', href: '/scenarios', icon: GitFork },
+      { label: 'Compare plans', href: '/diff', icon: GitCompare },
+    ],
   },
   {
     title: 'Admin',

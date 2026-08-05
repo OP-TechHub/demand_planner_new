@@ -1,28 +1,46 @@
 import { createClient } from '@/lib/supabase/server';
 import { getActivePlan, getSelectablePlans } from '@/lib/plan';
 import { computeDiff, type FieldDiff, type CellDiff } from '@/lib/diff';
-import { monthLabel } from '@oceanpick/shared';
+import { monthLabel, type Plan } from '@oceanpick/shared';
+import { ComparePicker, type PickPlan } from './compare-picker';
 
-export default async function DiffPage() {
-  const active = await getActivePlan();
-  if (!active) return <h1 className="text-2xl font-semibold">Compare to master</h1>;
-  if (active.type !== 'scenario') {
+/** Short kind label for a plan, for the picker. */
+function kindOf(p: Plan): string {
+  if (p.type === 'master') return 'Master';
+  if (p.is_live) return 'Live';
+  if (p.is_sandbox) return 'Sandbox';
+  return 'Official';
+}
+
+export default async function DiffPage({ searchParams }: { searchParams: Promise<{ a?: string; b?: string }> }) {
+  const sp = await searchParams;
+  const [plans, active] = await Promise.all([getSelectablePlans(), getActivePlan()]);
+
+  if (plans.length < 2) {
     return (
       <div className="mx-auto max-w-3xl space-y-4">
-        <h1 className="text-2xl font-semibold tracking-tight">Compare to master</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Compare plans</h1>
         <div className="rounded-lg border border-dashed bg-muted/30 p-8 text-sm text-muted-foreground">
-          You&apos;re viewing the <b>master</b> plan. Switch to a scenario (top-bar selector) to compare it against master.
+          You need at least two plans to compare. Create a scenario or an official plan first.
         </div>
       </div>
     );
   }
 
-  const plans = await getSelectablePlans();
   const master = plans.find((p) => p.type === 'master');
-  if (!master) return <div className="text-sm text-muted-foreground">No master plan.</div>;
+  // A defaults to the master; B defaults to the active plan (if it isn't A).
+  const planA = plans.find((p) => p.id === sp.a) ?? master ?? plans[0];
+  let planB =
+    plans.find((p) => p.id === sp.b) ??
+    (active && active.id !== planA.id ? active : undefined) ??
+    plans.find((p) => p.id !== planA.id) ??
+    plans[0];
+  if (planB.id === planA.id) planB = plans.find((p) => p.id !== planA.id) ?? planB;
+
+  const pick: PickPlan[] = plans.map((p) => ({ id: p.id, name: p.name, label: kindOf(p) }));
 
   const supabase = await createClient();
-  const d = await computeDiff(supabase, master, active);
+  const d = await computeDiff(supabase, planA, planB);
   const empty =
     !d.settings.length && !d.programs.length && !d.programsAdded.length && !d.programsRemoved.length &&
     !d.demand.length && !d.harvest.length;
@@ -30,56 +48,66 @@ export default async function DiffPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Compare to master</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Scenario <span className="font-medium">{active.name}</span> vs. Master Plan.</p>
+        <h1 className="text-2xl font-semibold tracking-tight">Compare plans</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Differences from <span className="font-medium text-foreground">{planA.name}</span> (A) to <span className="font-medium text-foreground">{planB.name}</span> (B).
+        </p>
       </div>
 
-      <Section title="Outputs summary">
-        <table className="w-full text-sm">
-          <thead className="text-xs uppercase tracking-wide text-muted-foreground">
-            <tr><th className="py-1 text-left">Metric</th><th className="py-1 text-right">Master</th><th className="py-1 text-right">Scenario</th></tr>
-          </thead>
-          <tbody>
-            {d.outputs.map((o) => (
-              <tr key={o.metric} className="border-t"><td className="py-1.5">{o.metric}</td><td className="py-1.5 text-right tabular-nums">{o.master}</td><td className="py-1.5 text-right font-medium tabular-nums">{o.scenario}</td></tr>
-            ))}
-          </tbody>
-        </table>
-      </Section>
+      <ComparePicker plans={pick} a={planA.id} b={planB.id} />
 
-      {empty ? (
-        <div className="rounded-lg border border-dashed bg-muted/30 p-6 text-sm text-muted-foreground">
-          No input differences from master yet. Edit the scenario&apos;s programs, demand, harvest, or settings, then come back.
-        </div>
+      {planA.id === planB.id ? (
+        <div className="rounded-lg border border-dashed bg-muted/30 p-8 text-sm text-muted-foreground">Pick two different plans to compare.</div>
       ) : (
         <>
-          {d.settings.length > 0 && (
-            <Section title="Plan settings"><FieldTable rows={d.settings} /></Section>
-          )}
+          <Section title="Outputs summary">
+            <table className="w-full text-sm">
+              <thead className="text-xs uppercase tracking-wide text-muted-foreground">
+                <tr><th className="py-1 text-left">Metric</th><th className="py-1 text-right">{planA.name}</th><th className="py-1 text-right">{planB.name}</th></tr>
+              </thead>
+              <tbody>
+                {d.outputs.map((o) => (
+                  <tr key={o.metric} className="border-t"><td className="py-1.5">{o.metric}</td><td className="py-1.5 text-right tabular-nums">{o.master}</td><td className="py-1.5 text-right font-medium tabular-nums">{o.scenario}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          </Section>
 
-          {(d.programs.length > 0 || d.programsAdded.length > 0 || d.programsRemoved.length > 0) && (
-            <Section title="Programs">
-              {d.programs.map((p) => (
-                <div key={p.item_code} className="border-t py-2 first:border-t-0">
-                  <div className="font-medium">{p.name} <span className="text-muted-foreground">({p.item_code})</span></div>
-                  <FieldTable rows={p.changes} indent />
-                </div>
-              ))}
-              {d.programsAdded.length > 0 && <p className="pt-2 text-sm text-green-700">Added: {d.programsAdded.join(', ')}</p>}
-              {d.programsRemoved.length > 0 && <p className="text-sm text-red-700">Removed: {d.programsRemoved.join(', ')}</p>}
-            </Section>
-          )}
+          {empty ? (
+            <div className="rounded-lg border border-dashed bg-muted/30 p-6 text-sm text-muted-foreground">
+              No input differences between these two plans (programs, demand, harvest, settings).
+            </div>
+          ) : (
+            <>
+              {d.settings.length > 0 && (
+                <Section title="Plan settings"><FieldTable rows={d.settings} aLabel={planA.name} bLabel={planB.name} /></Section>
+              )}
 
-          {d.demand.length > 0 && (
-            <Section title={`Demand overrides (${d.demand.length}${d.demandMore ? '+' + d.demandMore + ' more' : ''})`}>
-              <CellTable rows={d.demand} startDate={active.plan_start_date} />
-            </Section>
-          )}
+              {(d.programs.length > 0 || d.programsAdded.length > 0 || d.programsRemoved.length > 0) && (
+                <Section title="Programs">
+                  {d.programs.map((p) => (
+                    <div key={p.item_code} className="border-t py-2 first:border-t-0">
+                      <div className="font-medium">{p.name} <span className="text-muted-foreground">({p.item_code})</span></div>
+                      <FieldTable rows={p.changes} indent />
+                    </div>
+                  ))}
+                  {d.programsAdded.length > 0 && <p className="pt-2 text-sm text-green-700">Only in B: {d.programsAdded.join(', ')}</p>}
+                  {d.programsRemoved.length > 0 && <p className="text-sm text-red-700">Only in A: {d.programsRemoved.join(', ')}</p>}
+                </Section>
+              )}
 
-          {d.harvest.length > 0 && (
-            <Section title={`Harvest changes (${d.harvest.length}${d.harvestMore ? '+' + d.harvestMore + ' more' : ''})`}>
-              <CellTable rows={d.harvest} startDate={active.plan_start_date} />
-            </Section>
+              {d.demand.length > 0 && (
+                <Section title={`Demand differences (${d.demand.length}${d.demandMore ? '+' + d.demandMore + ' more' : ''})`}>
+                  <CellTable rows={d.demand} startDate={planB.plan_start_date} />
+                </Section>
+              )}
+
+              {d.harvest.length > 0 && (
+                <Section title={`Harvest differences (${d.harvest.length}${d.harvestMore ? '+' + d.harvestMore + ' more' : ''})`}>
+                  <CellTable rows={d.harvest} startDate={planB.plan_start_date} />
+                </Section>
+              )}
+            </>
           )}
         </>
       )}
@@ -96,9 +124,14 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function FieldTable({ rows, indent }: { rows: FieldDiff[]; indent?: boolean }) {
+function FieldTable({ rows, indent, aLabel, bLabel }: { rows: FieldDiff[]; indent?: boolean; aLabel?: string; bLabel?: string }) {
   return (
     <div className={indent ? 'pl-4 text-sm' : 'text-sm'}>
+      {(aLabel || bLabel) && (
+        <div className="flex gap-2 pb-1 text-xs uppercase tracking-wide text-muted-foreground">
+          <span className="w-32" /><span>{aLabel}</span><span className="w-4" /><span>{bLabel}</span>
+        </div>
+      )}
       {rows.map((r, i) => (
         <div key={i} className="flex gap-2 py-0.5">
           <span className="w-32 text-muted-foreground">{r.label}</span>
