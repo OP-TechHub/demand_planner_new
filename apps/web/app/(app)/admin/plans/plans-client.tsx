@@ -35,6 +35,25 @@ function kindOf(p: AdminPlan): string {
   return 'Official';
 }
 
+/** Inclusive month count between two 'YYYY-MM' values; 0 if invalid or reversed. */
+function monthsBetween(startYM: string, endYM: string): number {
+  const s = /^(\d{4})-(\d{2})$/.exec(startYM);
+  const e = /^(\d{4})-(\d{2})$/.exec(endYM);
+  if (!s || !e) return 0;
+  const diff = (Number(e[1]) - Number(s[1])) * 12 + (Number(e[2]) - Number(s[2])) + 1;
+  return diff >= 1 ? diff : 0;
+}
+
+/** Add n months to a 'YYYY-MM' value, returning 'YYYY-MM'. */
+function addMonthsYM(ym: string, n: number): string {
+  const m = /^(\d{4})-(\d{2})$/.exec(ym);
+  if (!m) return '';
+  const total = Number(m[1]) * 12 + (Number(m[2]) - 1) + n;
+  const y = Math.floor(total / 12);
+  const mo = (total % 12) + 1;
+  return `${y}-${String(mo).padStart(2, '0')}`;
+}
+
 export function PlansAdminClient({ plans, users }: { plans: AdminPlan[]; users: AccessUser[] }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -42,23 +61,47 @@ export function PlansAdminClient({ plans, users }: { plans: AdminPlan[]; users: 
   const [newOpen, setNewOpen] = useState(false);
   const [newName, setNewName] = useState('');
   const [newSource, setNewSource] = useState('');
+  const [newStart, setNewStart] = useState(''); // 'YYYY-MM'
+  const [newEnd, setNewEnd] = useState('');     // 'YYYY-MM'
   const [newErr, setNewErr] = useState<string | null>(null);
   const [creating, startCreate] = useTransition();
 
   const master = plans.find((p) => p.type === 'master');
+  const horizon = monthsBetween(newStart, newEnd);
+  const windowOk = horizon >= 1 && horizon <= 60;
+
+  // Default the start/end pickers to a plan's own window.
+  function windowFromPlan(p: AdminPlan | undefined) {
+    const start = p ? p.plan_start_date.slice(0, 7) : '';
+    setNewStart(start);
+    setNewEnd(start ? addMonthsYM(start, (p?.horizon_months ?? 1) - 1) : '');
+  }
 
   function openNew() {
     setNewErr(null);
     setNewName('');
     setNewSource(master?.id ?? '');
+    windowFromPlan(master);
     setNewOpen(true);
+  }
+
+  // Changing the source resets the window to that source's own window as a start.
+  function chooseSource(id: string) {
+    setNewSource(id);
+    windowFromPlan(plans.find((p) => p.id === id));
   }
 
   function createOfficial() {
     setNewErr(null);
     if (!newName.trim()) { setNewErr('Name is required.'); return; }
+    if (!windowOk) { setNewErr('Pick a start and end month within 60 months.'); return; }
     startCreate(async () => {
-      const res = await createScenario(newName.trim(), '', { official: true, sourcePlanId: newSource || undefined });
+      const res = await createScenario(newName.trim(), '', {
+        official: true,
+        sourcePlanId: newSource || undefined,
+        planStartDate: `${newStart}-01`,
+        horizonMonths: horizon,
+      });
       if (res.error) { setNewErr(res.error); return; }
       toast.success('Official plan created.');
       setNewOpen(false); setNewName(''); router.refresh();
@@ -216,7 +259,7 @@ export function PlansAdminClient({ plans, users }: { plans: AdminPlan[]; users: 
             <span className="mb-1 block font-medium">Clone from</span>
             <select
               value={newSource}
-              onChange={(e) => setNewSource(e.target.value)}
+              onChange={(e) => chooseSource(e.target.value)}
               className="w-full rounded-md border px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-primary"
             >
               {plans.map((p) => (
@@ -225,12 +268,34 @@ export function PlansAdminClient({ plans, users }: { plans: AdminPlan[]; users: 
                 </option>
               ))}
             </select>
-            <span className="mt-1 block text-xs text-muted-foreground">Copies that plan’s programs, demand, harvest, window, and settings.</span>
+            <span className="mt-1 block text-xs text-muted-foreground">Copies that plan’s programs, demand, harvest, and settings.</span>
           </label>
+
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block text-sm">
+              <span className="mb-1 block font-medium">Start month</span>
+              <Input type="month" value={newStart} onChange={(e) => setNewStart(e.target.value)} />
+            </label>
+            <label className="block text-sm">
+              <span className="mb-1 block font-medium">End month</span>
+              <Input type="month" value={newEnd} onChange={(e) => setNewEnd(e.target.value)} />
+            </label>
+          </div>
+          <p className="-mt-1 text-xs">
+            {windowOk ? (
+              <span className="text-muted-foreground">
+                Plan length: <span className="font-medium text-foreground">{horizon} month{horizon === 1 ? '' : 's'}</span>
+                {horizon >= 12 && <> (~{(horizon / 12).toFixed(horizon % 12 === 0 ? 0 : 1)} yr)</>}. Demand &amp; harvest past the end month aren’t copied.
+              </span>
+            ) : (
+              <span className="text-destructive">{newStart && newEnd ? 'End must be on/after the start, within 60 months.' : 'Pick a start and end month.'}</span>
+            )}
+          </p>
+
           {newErr && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{newErr}</p>}
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => setNewOpen(false)}>Cancel</Button>
-            <Button onClick={createOfficial} disabled={creating}>{creating ? 'Creating…' : 'Create plan'}</Button>
+            <Button onClick={createOfficial} disabled={creating || !newName.trim() || !windowOk}>{creating ? 'Creating…' : 'Create plan'}</Button>
           </div>
         </div>
       </Dialog>
