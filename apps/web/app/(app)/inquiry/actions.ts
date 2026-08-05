@@ -421,24 +421,64 @@ async function recordInquiry(
 /** A pipeline program's reduced demand for some months, to free capacity. */
 export type PipelineTrim = { programId: string; entries: InquiryEntry[] };
 
-/** Apply pipeline trims: SET each program's demand for the given months to the reduced value. */
+/** Per-program before→after detail of a trim, for the audit trail / undo. */
+type TrimDetail = { programId: string; edits: { m: number; old: number; new: number }[] };
+
+/**
+ * Apply pipeline trims: SET each program's demand for the given months to the
+ * reduced value, capturing the previous value per cell so the change can be shown
+ * and later undone. Returns an error string (or null) plus the before→after detail.
+ */
 async function applyTrims(
   svc: ReturnType<typeof createServiceClient>,
   planId: string,
   userId: string,
   trims: PipelineTrim[] | undefined
-): Promise<string | null> {
-  if (!trims?.length) return null;
+): Promise<{ error: string | null; detail: TrimDetail[] }> {
+  if (!trims?.length) return { error: null, detail: [] };
   const rows: Record<string, unknown>[] = [];
+  const detail: TrimDetail[] = [];
   for (const t of trims) {
     if (!t.programId) continue;
-    for (const e of cleanEntries(t.entries)) {
+    const clean = cleanEntries(t.entries);
+    if (!clean.length) continue;
+    const months = clean.map((e) => e.month_index);
+    const { data: existing } = await svc
+      .from('demand_plan')
+      .select('month_index, demand_fp')
+      .eq('program_id', t.programId)
+      .in('month_index', months);
+    const cur = new Map<number, number>((existing ?? []).map((r: { month_index: number; demand_fp: number }) => [r.month_index, Number(r.demand_fp)]));
+    const edits: { m: number; old: number; new: number }[] = [];
+    for (const e of clean) {
+      const old = cur.get(e.month_index) ?? 0;
+      if (old !== e.demand_fp) edits.push({ m: e.month_index, old, new: e.demand_fp });
       rows.push({ plan_id: planId, program_id: t.programId, month_index: e.month_index, demand_fp: e.demand_fp, created_by: userId, updated_by: userId });
     }
+    if (edits.length) detail.push({ programId: t.programId, edits });
   }
-  if (rows.length === 0) return null;
+  if (rows.length === 0) return { error: null, detail: [] };
   const { error } = await svc.from('demand_plan').upsert(rows, { onConflict: 'program_id,month_index' });
-  return error ? error.message : null;
+  return { error: error ? error.message : null, detail: error ? [] : detail };
+}
+
+/**
+ * Log each pipeline trim as its own demand edit (with before→after values), so it
+ * shows in the audit log per program and an admin can undo it within the window.
+ * Uses the same {edits} shape as an ordinary demand edit, which the undo path
+ * already recognises as reversible.
+ */
+async function logTrims(
+  rls: unknown,
+  planId: string,
+  detail: TrimDetail[]
+): Promise<void> {
+  for (const d of detail) {
+    await logAudit(rls, {
+      planId, entityType: 'demand_plan', entityId: d.programId, action: 'update',
+      changes: { edits: d.edits, set: d.edits.length, more: 0, trim_for_inquiry: true },
+    });
+  }
 }
 
 /** Add `entries` (additional volume) onto a program's existing demand for those months. */
@@ -513,8 +553,9 @@ export async function saveInquiryToPipeline(
     const err = await accumulateDemand(supabase, planId, source.id, userId, rows0);
     if (err) return { ok: false, error: permError(err) };
     const te = await applyTrims(supabase, planId, userId, trims);
-    if (te) return { ok: false, error: permError(te) };
-    await logAudit(rls, { planId, entityType: 'demand_plan', entityId: source.id, action: 'update', changes: { saved_from: 'inquiry', months: rows0.length, additional: true, trimmed: trims?.length ?? 0 } });
+    if (te.error) return { ok: false, error: permError(te.error) };
+    await logAudit(rls, { planId, entityType: 'demand_plan', entityId: source.id, action: 'update', changes: { saved_from: 'inquiry', months: rows0.length, additional: true, trimmed: te.detail.length } });
+    await logTrims(rls, planId, te.detail);
     await recordInquiry(supabase, { orgId, planId, userId, kind: 'existing', customer: source.customer, itemCode: source.item_code, itemDescription: source.item_description, targetProgramId: source.id, entries: rows0 });
     revalidatePath('/demand-plan');
     revalidatePath('/programs');
@@ -569,8 +610,9 @@ export async function saveInquiryToPipeline(
   const err = await accumulateDemand(supabase, planId, targetId, userId, rows0);
   if (err) return { ok: false, error: permError(err) };
   const te = await applyTrims(supabase, planId, userId, trims);
-  if (te) return { ok: false, error: permError(te) };
-  await logAudit(rls, { planId, entityType: 'demand_plan', entityId: targetId, action: 'update', changes: { saved_from: 'inquiry', months: rows0.length, additional: true, trimmed: trims?.length ?? 0 } });
+  if (te.error) return { ok: false, error: permError(te.error) };
+  await logAudit(rls, { planId, entityType: 'demand_plan', entityId: targetId, action: 'update', changes: { saved_from: 'inquiry', months: rows0.length, additional: true, trimmed: te.detail.length } });
+  await logTrims(rls, planId, te.detail);
   await recordInquiry(supabase, { orgId, planId, userId, kind: 'existing', customer: source.customer, itemCode: twinCode, itemDescription: source.item_description, targetProgramId: targetId, entries: rows0 });
 
   revalidatePath('/demand-plan');
@@ -659,12 +701,13 @@ export async function saveNewInquiry(input: SaveNewInquiryInput): Promise<SaveRe
   if (de) return { ok: false, error: permError(de.message) };
 
   const te = await applyTrims(supabase, input.planId, userId, input.trims);
-  if (te) return { ok: false, error: permError(te) };
+  if (te.error) return { ok: false, error: permError(te.error) };
 
   await logAudit(rls, {
     planId: input.planId, entityType: 'programs', entityId: created.id, action: 'insert',
-    changes: { item_code: itemCode, customer, status: 'pipeline', saved_from: 'inquiry', trimmed: input.trims?.length ?? 0 },
+    changes: { item_code: itemCode, customer, status: 'pipeline', saved_from: 'inquiry', trimmed: te.detail.length },
   });
+  await logTrims(rls, input.planId, te.detail);
   await recordInquiry(supabase, { orgId, planId: input.planId, userId, kind: 'new', customer, itemCode, itemDescription: itemDescription || itemCode, targetProgramId: created.id, entries: rows0 });
 
   revalidatePath('/demand-plan');

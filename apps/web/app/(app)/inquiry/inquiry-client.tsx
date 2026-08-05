@@ -33,6 +33,8 @@ export type InquiryProgram = {
   status: string;
 };
 export type InquiryBucket = { id: string; name: string };
+/** Human-readable preview of one pipeline program's trim, for the confirm step. */
+export type TrimPreview = { programId: string; label: string; bucket: string; rows: { m: number; old: number; new: number; freed: number }[] };
 
 const EPS = 1e-6;
 const kg = (n: number) => `${Math.round(n).toLocaleString()} kg`;
@@ -160,6 +162,110 @@ export function InquiryClient({
 
 type Loaded = Extract<InquiryContext, { ok: true }>;
 
+/** Full label for a program option. */
+function programLabel(p: InquiryProgram): string {
+  return `${p.customer} — ${p.item_description} (${p.item_code})${p.status !== 'active' ? ` · ${p.status}` : ''}`;
+}
+
+/**
+ * Searchable program picker: a text box that filters the program list by
+ * customer, product, or item code, with a dropdown of matches. Keyboard-friendly
+ * (↑/↓/Enter/Esc) and closes on outside click.
+ */
+function ProgramCombobox({
+  programs,
+  value,
+  onChange,
+}: {
+  programs: InquiryProgram[];
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [active, setActive] = useState(0);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  const selected = programs.find((p) => p.id === value) ?? null;
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return programs;
+    return programs.filter(
+      (p) =>
+        p.customer.toLowerCase().includes(q) ||
+        p.item_description.toLowerCase().includes(q) ||
+        p.item_code.toLowerCase().includes(q)
+    );
+  }, [programs, query]);
+
+  // Close on click outside.
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  // Keep the highlighted row in view while arrowing.
+  useEffect(() => {
+    if (open) (listRef.current?.children[active] as HTMLElement | undefined)?.scrollIntoView({ block: 'nearest' });
+  }, [active, open]);
+
+  const openList = () => { setQuery(''); setActive(0); setOpen(true); };
+  const choose = (p: InquiryProgram) => { onChange(p.id); setQuery(''); setOpen(false); };
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <input
+        type="text"
+        role="combobox"
+        aria-expanded={open}
+        className={selectCls}
+        placeholder="Search customer, product, or code…"
+        value={open ? query : selected ? programLabel(selected) : ''}
+        onFocus={openList}
+        onChange={(e) => { setQuery(e.target.value); setActive(0); setOpen(true); }}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowDown') { e.preventDefault(); if (!open) openList(); else setActive((a) => Math.min(a + 1, filtered.length - 1)); }
+          else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((a) => Math.max(a - 1, 0)); }
+          else if (e.key === 'Enter') { e.preventDefault(); const p = filtered[active]; if (p) choose(p); }
+          else if (e.key === 'Escape') { setOpen(false); }
+        }}
+      />
+      {open && (
+        <div ref={listRef} className="absolute z-20 mt-1 max-h-64 w-full overflow-y-auto rounded-md border bg-card shadow-lg">
+          {filtered.length === 0 ? (
+            <div className="px-3 py-2 text-sm text-muted-foreground">No matching programs.</div>
+          ) : (
+            filtered.map((p, i) => (
+              <button
+                type="button"
+                key={p.id}
+                onMouseEnter={() => setActive(i)}
+                onClick={() => choose(p)}
+                className={cn(
+                  'flex w-full flex-col items-start gap-0.5 px-3 py-1.5 text-left',
+                  i === active ? 'bg-primary/10' : 'hover:bg-muted',
+                  p.id === value && 'font-medium'
+                )}
+              >
+                <span className="text-sm">{p.customer}</span>
+                <span className="text-xs text-muted-foreground">
+                  {p.item_description} · {p.item_code}{p.status !== 'active' ? ` · ${p.status}` : ''}
+                </span>
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ExistingInquiry({
   planId,
   planStartDate,
@@ -186,6 +292,8 @@ function ExistingInquiry({
   const [details, setDetails] = useState<{ suggestedItemCode: string; price: number } | null>(null);
   const [freed, setFreed] = useState<Map<string, number>>(new Map());
   const [trims, setTrims] = useState<PipelineTrim[]>([]);
+  const [trimPreview, setTrimPreview] = useState<TrimPreview[]>([]);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   const filledMonths = ctx ? entriesFrom(ctx.months.map((m) => m.month_index), qtyByMonth).filter((e) => e.demand_fp > 0) : [];
   // Availability after any pipeline trims fed back in, plus which months still
@@ -236,17 +344,10 @@ function ExistingInquiry({
   return (
     <div className="space-y-5">
       <div className="space-y-3 rounded-lg border bg-card p-4">
-        <label className="block text-sm">
+        <div className="block text-sm">
           <span className="mb-1 block font-medium">Program</span>
-          <select value={programId} onChange={(e) => onProgram(e.target.value)} className={selectCls}>
-            <option value="">Select a program…</option>
-            {programs.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.customer} — {p.item_description} ({p.item_code}){p.status !== 'active' ? ` · ${p.status}` : ''}
-              </option>
-            ))}
-          </select>
-        </label>
+          <ProgramCombobox programs={programs} value={programId} onChange={onProgram} />
+        </div>
         <MonthSelector months={horizon} planStartDate={planStartDate} onChange={onMonths} />
       </div>
 
@@ -268,14 +369,29 @@ function ExistingInquiry({
           </div>
           <AllocationTable months={effectiveMonths} qtyByMonth={qtyByMonth} setQtyByMonth={setQtyByMonth} planStartDate={planStartDate} qtyLabel="Additional (kg FP)" />
           {shortMonths.length > 0 && (
-            <MakeRoom planId={planId} bucketIds={inquiryBuckets} months={shortMonths} planStartDate={planStartDate} onChange={(f, t) => { setFreed(f); setTrims(t); }} />
+            <MakeRoom planId={planId} bucketIds={inquiryBuckets} months={shortMonths} planStartDate={planStartDate} onChange={(f, t, p) => { setFreed(f); setTrims(t); setTrimPreview(p); }} />
           )}
           {canSave && (
             <div className="flex items-center justify-end gap-2">
               <span className="text-xs text-muted-foreground">Adds this as pipeline volume on top of the plan.</span>
-              <Button onClick={save} disabled={saving}><Save className="h-4 w-4" /> {saving ? 'Saving…' : 'Add to pipeline'}</Button>
+              <Button
+                onClick={() => { if (filledMonths.length === 0) { toast.error('Enter an additional quantity first.'); return; } setConfirmOpen(true); }}
+                disabled={saving}
+              >
+                <Save className="h-4 w-4" /> {saving ? 'Saving…' : 'Add to pipeline'}
+              </Button>
             </div>
           )}
+          <ConfirmInquiryDialog
+            open={confirmOpen}
+            onClose={() => setConfirmOpen(false)}
+            onConfirm={() => { setConfirmOpen(false); save(); }}
+            submitting={saving}
+            planStartDate={planStartDate}
+            additions={filledMonths}
+            programName={`${ctx.program.customer} — ${ctx.program.item_description}`}
+            preview={trimPreview}
+          />
           <OtherActivePanel customer={ctx.program.customer} otherActive={ctx.otherActive} />
         </>
       )}
@@ -338,6 +454,7 @@ function NewInquiry({
   const [saving, startSave] = useTransition();
   const [freed, setFreed] = useState<Map<string, number>>(new Map());
   const [trims, setTrims] = useState<PipelineTrim[]>([]);
+  const [trimPreview, setTrimPreview] = useState<TrimPreview[]>([]);
 
   const bucketName = useMemo(() => new Map(buckets.map((b) => [b.id, b.name])), [buckets]);
 
@@ -497,7 +614,7 @@ function NewInquiry({
         <>
           <AllocationTable months={effectiveMonths} qtyByMonth={qtyByMonth} setQtyByMonth={setQtyByMonth} planStartDate={planStartDate} />
           {shortMonths.length > 0 && (
-            <MakeRoom planId={planId} bucketIds={inquiryBuckets} months={shortMonths} planStartDate={planStartDate} onChange={(f, t) => { setFreed(f); setTrims(t); }} />
+            <MakeRoom planId={planId} bucketIds={inquiryBuckets} months={shortMonths} planStartDate={planStartDate} onChange={(f, t, p) => { setFreed(f); setTrims(t); setTrimPreview(p); }} />
           )}
           {canSave && (
             <div className="flex items-center justify-end gap-2">
@@ -526,6 +643,14 @@ function NewInquiry({
         submitting={saving}
         error={saveErr}
         onSubmit={doSave}
+        summary={
+          <ChangeSummary
+            planStartDate={planStartDate}
+            additions={filledMonths}
+            programName={`${customer.trim() || 'New program'}${description.trim() ? ` — ${description.trim()}` : ''}`}
+            preview={trimPreview}
+          />
+        }
       />
     </div>
   );
@@ -793,7 +918,7 @@ function MakeRoom({
   bucketIds: string[];
   months: number[];
   planStartDate: string;
-  onChange: (freed: Map<string, number>, trims: PipelineTrim[]) => void;
+  onChange: (freed: Map<string, number>, trims: PipelineTrim[], preview: TrimPreview[]) => void;
 }) {
   const [cands, setCands] = useState<PipelineCandidate[] | null>(null);
   const [newDemand, setNewDemand] = useState<Record<string, Record<number, string>>>({});
@@ -817,21 +942,26 @@ function MakeRoom({
     if (!cands) return;
     const freed = new Map<string, number>();
     const trims: PipelineTrim[] = [];
+    const preview: TrimPreview[] = [];
     for (const c of cands) {
       const entries: InquiryEntry[] = [];
+      const rows: TrimPreview['rows'] = [];
       for (const m of months) {
         const orig = c.demand[m] ?? 0;
         const nv = Number(newDemand[c.id]?.[m]);
         const val = Number.isFinite(nv) && nv >= 0 ? nv : orig;
+        let freedWr = 0;
         if (val < orig && c.primary_yield > 0) {
+          freedWr = (orig - val) / c.primary_yield;
           const fk = `${c.primary_bucket_id}:${m}`;
-          freed.set(fk, (freed.get(fk) ?? 0) + (orig - val) / c.primary_yield);
+          freed.set(fk, (freed.get(fk) ?? 0) + freedWr);
         }
-        if (val !== orig) entries.push({ month_index: m, demand_fp: val });
+        if (val !== orig) { entries.push({ month_index: m, demand_fp: val }); rows.push({ m, old: orig, new: val, freed: freedWr }); }
       }
       if (entries.length) trims.push({ programId: c.id, entries });
+      if (rows.length) preview.push({ programId: c.id, label: `${c.item_code} ${c.item_description}`, bucket: c.bucket_name, rows });
     }
-    onChangeRef.current(freed, trims);
+    onChangeRef.current(freed, trims, preview);
   }, [cands, newDemand, months]);
 
   return (
@@ -882,6 +1012,103 @@ function MakeRoom({
   );
 }
 
+/**
+ * "Here's what will change" summary: the additional inquiry demand, plus any
+ * pipeline reductions (before → after per month) and the capacity they free.
+ */
+function ChangeSummary({
+  planStartDate,
+  additions,
+  programName,
+  preview,
+}: {
+  planStartDate: string;
+  additions: InquiryEntry[];
+  programName: string;
+  preview: TrimPreview[];
+}) {
+  const totalAdd = additions.reduce((s, a) => s + a.demand_fp, 0);
+  const freedByBucket = new Map<string, number>();
+  for (const p of preview) for (const r of p.rows) if (r.freed > 0) freedByBucket.set(p.bucket, (freedByBucket.get(p.bucket) ?? 0) + r.freed);
+
+  return (
+    <div className="space-y-3 text-sm">
+      <div>
+        <div className="font-medium">Inquiry adds</div>
+        <div className="mt-1 rounded-md border bg-muted/30 p-2 text-xs">
+          <div className="mb-1 text-muted-foreground">
+            +{kg(totalAdd)} FP to <span className="font-medium text-foreground">{programName}</span> across {additions.length} month{additions.length === 1 ? '' : 's'}
+          </div>
+          <div className="flex flex-wrap gap-x-3 gap-y-0.5 tabular-nums">
+            {additions.map((a) => <span key={a.month_index}>{monthLabel(planStartDate, a.month_index)}: +{Math.round(a.demand_fp).toLocaleString()}</span>)}
+          </div>
+        </div>
+      </div>
+
+      {preview.length > 0 ? (
+        <div>
+          <div className="font-medium text-warning">Pipeline reductions</div>
+          <div className="mt-1 space-y-1.5">
+            {preview.map((p) => (
+              <div key={p.programId} className="rounded-md border border-warning/30 bg-warning/5 p-2 text-xs">
+                <div className="font-medium">{p.label} <span className="text-muted-foreground">· {p.bucket}</span></div>
+                <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 tabular-nums text-muted-foreground">
+                  {p.rows.map((r) => (
+                    <span key={r.m}>
+                      {monthLabel(planStartDate, r.m)}: {Math.round(r.old).toLocaleString()} → <span className="font-medium text-foreground">{Math.round(r.new).toLocaleString()}</span>
+                      {r.freed > 0 && <span className="text-success"> (frees ~{Math.round(r.freed).toLocaleString()} kg WR)</span>}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+          {freedByBucket.size > 0 && (
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              Frees {[...freedByBucket.entries()].map(([b, w]) => `~${Math.round(w).toLocaleString()} kg WR on ${b}`).join(' · ')}. A Recalculate confirms exact fulfilment.
+            </p>
+          )}
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">No pipeline demand will be changed.</p>
+      )}
+    </div>
+  );
+}
+
+/** Review step for the existing-program flow — shows the change summary, then commits. */
+function ConfirmInquiryDialog({
+  open,
+  onClose,
+  onConfirm,
+  submitting,
+  planStartDate,
+  additions,
+  programName,
+  preview,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  submitting: boolean;
+  planStartDate: string;
+  additions: InquiryEntry[];
+  programName: string;
+  preview: TrimPreview[];
+}) {
+  return (
+    <Dialog open={open} onClose={onClose} title="Review before adding to pipeline" description="Check the additional demand and any pipeline changes, then confirm.">
+      <div className="space-y-4">
+        <ChangeSummary planStartDate={planStartDate} additions={additions} programName={programName} preview={preview} />
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={onConfirm} disabled={submitting}><Save className="h-4 w-4" /> {submitting ? 'Saving…' : 'Confirm & add'}</Button>
+        </div>
+      </div>
+    </Dialog>
+  );
+}
+
 /** Collects the two schema-required fields (item code + price) to mint a pipeline program. */
 function PipelineSaveDialog({
   open,
@@ -894,6 +1121,7 @@ function PipelineSaveDialog({
   submitting,
   error,
   onSubmit,
+  summary,
 }: {
   open: boolean;
   onClose: () => void;
@@ -905,6 +1133,7 @@ function PipelineSaveDialog({
   submitting: boolean;
   error: string | null;
   onSubmit: (itemCode: string, price: number) => void;
+  summary?: ReactNode;
 }) {
   const [itemCode, setItemCode] = useState(defaultItemCode);
   const [price, setPrice] = useState(defaultPrice);
@@ -918,6 +1147,7 @@ function PipelineSaveDialog({
           <div><span className="font-medium text-foreground">{customer || '—'}</span>{description ? ` · ${description}` : ''}</div>
           <div className="mt-0.5">demand in {monthCount} month{monthCount === 1 ? '' : 's'}</div>
         </div>
+        {summary}
         <label className="block text-sm">
           <span className="mb-1 block font-medium">Item code</span>
           <Input value={itemCode} onChange={(e) => setItemCode(e.target.value)} placeholder="e.g. 7499" />
