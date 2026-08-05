@@ -81,6 +81,7 @@ function describeChanges(changes: any): string {
 
   if (c.imported_cells) parts.push(`${c.imported_cells} cells imported`);
   if (c.imported_new || c.imported_updated) parts.push(`${c.imported_new ?? 0} added, ${c.imported_updated ?? 0} updated`);
+  if (c.trim_for_inquiry) parts.unshift('Trimmed to free capacity for an inquiry');
   return parts.join(' · ');
 }
 
