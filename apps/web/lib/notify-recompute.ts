@@ -2,11 +2,12 @@
 
 /**
  * After an official/admin plan is recalculated, email every active user a summary
- * of what changed since the previous recalculation: who changed what, when, and
- * which output tabs those changes flow through.
+ * of the HARVEST PLAN changes made since the previous recalculation: who changed
+ * what, when, and which output tabs those changes flow through.
  *
- * Called best-effort from the recompute background job once results are saved.
- * Personal sandboxes never notify; a recompute with no input changes is silent.
+ * Only harvest-plan edits trigger this — changes to programs, demand, or buckets
+ * are recalculated silently. Called best-effort from the recompute background job
+ * once results are saved. Personal sandboxes never notify.
  */
 
 import { sendEmails, type Mail } from './email';
@@ -109,16 +110,16 @@ export async function notifyPlanRecomputed(
   if (!prior?.finished_at) return { skipped: 'first publish — baseline, no notification' };
   const since: string = prior.finished_at;
 
-  // Input changes recorded against this plan since the last publish.
+  // Only harvest-plan changes trigger a notification.
   const { data: audit } = await svc
     .from('audit_log')
     .select('user_id, entity_type, entity_id, action, changes, at')
     .eq('plan_id', planId)
-    .in('entity_type', ['programs', 'demand_plan', 'harvest_plan', 'buckets'])
+    .eq('entity_type', 'harvest_plan')
     .gt('at', since)
     .order('at', { ascending: true });
   const entries = (audit ?? []) as any[];
-  if (!entries.length) return { skipped: 'no input changes since last publish' };
+  if (!entries.length) return { skipped: 'no harvest-plan changes since last publish' };
 
   // Resolve user names and program labels for readability.
   const { data: users } = await svc.from('users').select('id, full_name, email, is_active').eq('org_id', plan.org_id);
@@ -148,7 +149,7 @@ export async function notifyPlanRecomputed(
   if (!recipients.length) return { skipped: 'no active recipients' };
 
   const base = (process.env.NEXT_PUBLIC_SITE_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '')).replace(/\/$/, '');
-  const subject = `Plan updated: ${plan.name} — ${rows.length} change${rows.length === 1 ? '' : 's'} recalculated`;
+  const subject = `Harvest plan updated: ${plan.name} — ${rows.length} change${rows.length === 1 ? '' : 's'} recalculated`;
   const html = renderHtml({ planName: plan.name, rows, tabs, editors, since: fmtWhen(since), base });
   const text = renderText({ planName: plan.name, rows, tabs, editors, since: fmtWhen(since), base });
 
@@ -183,11 +184,11 @@ function renderHtml(d: { planName: string; rows: Row[]; tabs: string[]; editors:
       <div style="background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
         <div style="padding:20px 24px;background:linear-gradient(135deg,#1e6fd9,#0ea5b7);color:#ffffff;">
           <div style="font-size:12px;letter-spacing:.06em;text-transform:uppercase;opacity:.85;">Oceanpick Demand Planner</div>
-          <div style="font-size:18px;font-weight:700;margin-top:4px;">Plan recalculated: ${esc(d.planName)}</div>
+          <div style="font-size:18px;font-weight:700;margin-top:4px;">Harvest plan updated: ${esc(d.planName)}</div>
         </div>
         <div style="padding:20px 24px;">
           <p style="margin:0 0 4px;font-size:14px;color:#334155;">
-            <strong>${d.rows.length}</strong> change${d.rows.length === 1 ? '' : 's'} by ${esc(d.editors.join(', '))} ${d.editors.length === 1 ? 'was' : 'were'} recalculated and saved.
+            <strong>${d.rows.length}</strong> harvest change${d.rows.length === 1 ? '' : 's'} by ${esc(d.editors.join(', '))} ${d.editors.length === 1 ? 'was' : 'were'} recalculated and saved.
           </p>
           <p style="margin:0 0 16px;font-size:12px;color:#64748b;">Changes since the previous recalculation on ${esc(d.since)} (times in Sri Lanka time).</p>
 
@@ -217,9 +218,9 @@ function renderHtml(d: { planName: string; rows: Row[]; tabs: string[]; editors:
 
 function renderText(d: { planName: string; rows: Row[]; tabs: string[]; editors: string[]; since: string; base: string }): string {
   const lines = [
-    `Plan recalculated: ${d.planName}`,
+    `Harvest plan updated: ${d.planName}`,
     '',
-    `${d.rows.length} change(s) by ${d.editors.join(', ')} recalculated and saved.`,
+    `${d.rows.length} harvest change(s) by ${d.editors.join(', ')} recalculated and saved.`,
     `Changes since the previous recalculation on ${d.since} (Sri Lanka time).`,
     '',
     'Changes:',
