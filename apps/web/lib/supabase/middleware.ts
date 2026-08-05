@@ -9,7 +9,7 @@ import { NextResponse, type NextRequest } from 'next/server';
  */
 type CookiesToSet = Parameters<SetAllCookies>[0];
 
-const PUBLIC_ROUTES = ['/login', '/signup', '/auth'];
+const PUBLIC_ROUTES = ['/login', '/signup', '/auth', '/forgot-password'];
 
 export async function updateSession(request: NextRequest) {
   // API routes authenticate themselves (API key for /api/v1, the caller's own
