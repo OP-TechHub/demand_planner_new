@@ -80,7 +80,9 @@ export default async function HomePage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            {lastComputed ? `Last computed ${lastComputed}.` : 'Plan has not been computed yet.'}
+            {plan && <span className="font-medium text-foreground">{plan.name}</span>}
+            {plan ? ' · ' : ''}
+            {lastComputed ? `last computed ${lastComputed}.` : 'not computed yet.'}
           </p>
         </div>
         {plan && <RecalculateButton planId={plan.id} />}
@@ -136,7 +138,7 @@ export default async function HomePage() {
       )}
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <MiniStat label="Master plan" value={plan ? plan.name : 'Not seeded'} />
+        <MiniStat label={plan?.is_live ? 'Live plan' : 'Plan'} value={plan ? plan.name : 'Not seeded'} />
         <MiniStat label="Size buckets" value={String(bucketCount ?? 0)} />
         <MiniStat label="Team members" value={String(userCount ?? 0)} />
       </div>
