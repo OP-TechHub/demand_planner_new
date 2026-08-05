@@ -3,7 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { monthLabel } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 import { fetchAllByPlan } from '@/lib/fetch-all';
-import { getDefaultPlan } from '@/lib/plan';
+import { getActivePlan } from '@/lib/plan';
 import { Card } from '@/components/ui/card';
 import { RecalculateButton } from '../recalculate-button';
 import { StalePlanNotice } from '../stale-banner';
@@ -12,8 +12,8 @@ import { DashboardOverview, type MonthPoint } from './dashboard-overview';
 export default async function HomePage() {
   const supabase = await createClient();
 
-  // The org's live plan (or the master, if none is designated).
-  const plan = await getDefaultPlan();
+  // The plan selected in the top bar, defaulting to the org's live plan.
+  const plan = await getActivePlan();
   const [{ count: bucketCount }, { count: userCount }, { data: summary }] = await Promise.all([
     supabase.from('buckets').select('*', { count: 'exact', head: true }),
     supabase.from('users').select('*', { count: 'exact', head: true }),
