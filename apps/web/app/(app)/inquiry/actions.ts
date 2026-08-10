@@ -12,13 +12,12 @@ function permError(message: string): string {
     : message;
 }
 
-/** One of a program's sourcing paths, with the spare WR in its bucket that month. */
+/** One of a program's sourcing paths. Spare WR lives in the plan-wide `spare` map. */
 export type InquiryPath = {
   path: 'primary' | 'secondary' | 'tertiary';
   bucket_id: string;
   bucket_name: string;
   yield: number;
-  unallocated_wr: number;
 };
 
 /** The program's picture for one month in the inquiry range. */
@@ -27,6 +26,36 @@ export type InquiryMonth = {
   current_demand_fp: number;
   paths: InquiryPath[];
 };
+
+/**
+ * How far back the engine's borrow channels reach (rolling.ts CHANNELS: M-1 and
+ * M-2). The plan's `settings_lookback_months` can narrow this, never widen it.
+ */
+const MAX_LOOKBACK = 2;
+
+/**
+ * The months whose spare capacity an inquiry can draw on: the inquiry months
+ * themselves, plus each one's borrow sources (M-1, M-2). An inquiry for Jan can
+ * be met from Nov and Dec harvest, exactly as the rolling calc does it (§5.4).
+ */
+function sourceMonthsFor(monthsSel: number[]): number[] {
+  const out = new Set<number>();
+  for (const m of monthsSel) {
+    out.add(m);
+    for (let o = 1; o <= MAX_LOOKBACK; o++) if (m - o >= 1) out.add(m - o);
+  }
+  return [...out].sort((a, b) => a - b);
+}
+
+/** The plan's borrow reach, clamped to what the engine actually implements. */
+async function lookbackOf(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  planId: string
+): Promise<number> {
+  const { data } = await supabase.from('plans').select('settings_lookback_months').eq('id', planId).maybeSingle();
+  const n = Number((data as { settings_lookback_months?: number } | null)?.settings_lookback_months ?? MAX_LOOKBACK);
+  return Number.isFinite(n) ? Math.max(0, Math.min(MAX_LOOKBACK, n)) : MAX_LOOKBACK;
+}
 
 export type InquiryOtherProgram = {
   item_code: string;
@@ -49,6 +78,13 @@ export type InquiryContext =
         status: string;
       };
       months: InquiryMonth[];
+      /**
+       * Spare whole-round keyed `${bucket_id}:${month_index}`, covering the
+       * inquiry months AND their borrow sources (M-1, M-2).
+       */
+      spare: Record<string, number>;
+      /** How many months back this plan lets the engine borrow (0–2). */
+      lookbackMonths: number;
       otherActive: InquiryOtherProgram[];
     }
   | { ok: false; error: string };
@@ -56,10 +92,11 @@ export type InquiryContext =
 /**
  * Gather everything the inquiry screen needs for one program across a set of
  * months (a contiguous range or hand-picked months — the caller decides and
- * passes the resolved list): per month, the program's sourcing paths with each
- * bucket's spare whole-round (unallocated_wr) and the currently-planned demand
- * (so each month can be overridden). Months are independent — each draws from
- * its own month's spare capacity — so the client cascades each one on its own.
+ * passes the resolved list): per month, the program's sourcing paths and the
+ * currently-planned demand (so each month can be overridden), plus the spare
+ * whole-round of every month those inquiries can reach — their own month and the
+ * lookback sources M-1 and M-2. Months are NOT independent (two can compete for
+ * the same earlier month's spare), so the client plans them from one shared pool.
  */
 export async function getInquiryContext(
   planId: string,
@@ -104,30 +141,30 @@ export async function getInquiryContext(
   ].filter((p): p is { path: 'primary' | 'secondary' | 'tertiary'; bucket_id: string; yield: number } => p !== null);
 
   const bucketIds = [...new Set(rawPaths.map((p) => p.bucket_id))];
+  const srcMonths = sourceMonthsFor(monthsSel);
 
-  const [{ data: buckets }, { data: unalloc }, { data: anyResult }, { data: ownDemand }] = await Promise.all([
+  const [{ data: buckets }, { data: unalloc }, { data: anyResult }, { data: ownDemand }, lookbackMonths] = await Promise.all([
     supabase.from('buckets').select('id, name').in('id', bucketIds),
     supabase
       .from('unallocated_wr')
       .select('bucket_id, month_index, unallocated_wr')
       .eq('plan_id', planId)
       .in('bucket_id', bucketIds)
-      .in('month_index', monthsSel),
+      .in('month_index', srcMonths),
     supabase.from('unallocated_wr').select('bucket_id').eq('plan_id', planId).limit(1),
     supabase
       .from('demand_plan')
       .select('month_index, demand_fp')
       .eq('program_id', programId)
       .in('month_index', monthsSel),
+    lookbackOf(supabase, planId),
   ]);
 
   const nameById = new Map((buckets ?? []).map((b: { id: string; name: string }) => [b.id, b.name]));
-  const unallocByKey = new Map(
-    (unalloc ?? []).map((u: { bucket_id: string; month_index: number; unallocated_wr: number }) => [
-      `${u.bucket_id}:${u.month_index}`,
-      Number(u.unallocated_wr),
-    ])
-  );
+  const spare: Record<string, number> = {};
+  for (const u of (unalloc ?? []) as { bucket_id: string; month_index: number; unallocated_wr: number }[]) {
+    spare[`${u.bucket_id}:${u.month_index}`] = Number(u.unallocated_wr);
+  }
   const demandByMonth = new Map(
     (ownDemand ?? []).map((d: { month_index: number; demand_fp: number }) => [d.month_index, Number(d.demand_fp)])
   );
@@ -136,11 +173,7 @@ export async function getInquiryContext(
   const months: InquiryMonth[] = monthsSel.map((m) => ({
     month_index: m,
     current_demand_fp: demandByMonth.get(m) ?? baseline,
-    paths: rawPaths.map((p) => ({
-      ...p,
-      bucket_name: nameById.get(p.bucket_id) ?? 'Unknown bucket',
-      unallocated_wr: unallocByKey.get(`${p.bucket_id}:${m}`) ?? 0,
-    })),
+    paths: rawPaths.map((p) => ({ ...p, bucket_name: nameById.get(p.bucket_id) ?? 'Unknown bucket' })),
   }));
 
   // Other active programs for the same customer, with total demand across the range.
@@ -189,6 +222,8 @@ export async function getInquiryContext(
       status: prog.status,
     },
     months,
+    spare,
+    lookbackMonths,
     otherActive,
   };
 }
@@ -197,8 +232,13 @@ export type NewInquiryData =
   | {
       ok: true;
       computed: boolean;
-      /** Spare whole-round per chosen bucket per month, keyed `${bucketId}:${month}`. */
-      unallocated: Record<string, number>;
+      /**
+       * Spare whole-round per chosen bucket per month, keyed `${bucketId}:${month}`
+       * — the inquiry months plus their borrow sources (M-1, M-2).
+       */
+      spare: Record<string, number>;
+      /** How many months back this plan lets the engine borrow (0–2). */
+      lookbackMonths: number;
       otherActive: InquiryOtherProgram[];
     }
   | { ok: false; error: string };
@@ -222,19 +262,24 @@ export async function getNewInquiryData(
   const supabase = await createClient();
 
   // Whether the plan has any computed results at all (drives the recalc notice).
-  const { data: anyResult } = await supabase.from('unallocated_wr').select('bucket_id').eq('plan_id', planId).limit(1);
+  const [{ data: anyResult }, lookbackMonths] = await Promise.all([
+    supabase.from('unallocated_wr').select('bucket_id').eq('plan_id', planId).limit(1),
+    lookbackOf(supabase, planId),
+  ]);
   const computed = (anyResult ?? []).length > 0;
 
-  const unallocated: Record<string, number> = {};
+  // Spare capacity for the inquiry months AND their borrow sources (M-1, M-2),
+  // so the client can offer earlier-month capacity the engine could draw on.
+  const spare: Record<string, number> = {};
   if (buckets.length && monthsSel.length) {
     const { data: rows } = await supabase
       .from('unallocated_wr')
       .select('bucket_id, month_index, unallocated_wr')
       .eq('plan_id', planId)
       .in('bucket_id', buckets)
-      .in('month_index', monthsSel);
+      .in('month_index', sourceMonthsFor(monthsSel));
     for (const u of (rows ?? []) as { bucket_id: string; month_index: number; unallocated_wr: number }[]) {
-      unallocated[`${u.bucket_id}:${u.month_index}`] = Number(u.unallocated_wr);
+      spare[`${u.bucket_id}:${u.month_index}`] = Number(u.unallocated_wr);
     }
   }
 
@@ -274,7 +319,7 @@ export async function getNewInquiryData(
     }
   }
 
-  return { ok: true, computed, unallocated, otherActive };
+  return { ok: true, computed, spare, lookbackMonths, otherActive };
 }
 
 // ---------------------------------------------------------------------------
