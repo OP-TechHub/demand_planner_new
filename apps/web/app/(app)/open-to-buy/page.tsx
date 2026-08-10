@@ -82,9 +82,28 @@ export default async function OpenToBuyPage() {
   const allocatedRows = gridFor(pwByBM);
   const computed = uw.length > 0 || pw.length > 0;
 
+  const kg = (n: number) => `${Math.round(n).toLocaleString()} kg`;
+
+  // Total OTB = spare capacity + the WR still held by UNCONFIRMED inquiries.
+  // Every `pipeline` program is unconfirmed by definition — confirming one promotes
+  // it to `active`, which moves its WR out of pipeline_wr and so out of OTB.
+  const otbRows: GridRow[] = (buckets ?? []).map((b) => ({
+    key: b.id,
+    label: b.name,
+    values: months.map((m) => (uwByBM.get(`${b.id}:${m}`) ?? 0) + (pwByBM.get(`${b.id}:${m}`) ?? 0)),
+  }));
+  const otbTitles = new Map<string, string>();
+  for (const b of buckets ?? []) {
+    for (const m of months) {
+      const u = uwByBM.get(`${b.id}:${m}`) ?? 0;
+      const p = pwByBM.get(`${b.id}:${m}`) ?? 0;
+      if (u + p <= 0) continue;
+      otbTitles.set(`${b.id}:${m}`, `Unallocated: ${kg(u)}\nUnconfirmed inquiries: ${kg(p)}\nTotal OTB: ${kg(u + p)}`);
+    }
+  }
+
   // Inquiry fulfilment: each pipeline program's demand vs what the plan can fulfil,
   // per month — coloured green (fulfilled) to red (short), proportionally.
-  const kg = (n: number) => `${Math.round(n).toLocaleString()} kg`;
   const pipeRows = (pipePrograms ?? []) as { id: string; item_code: string; item_description: string; customer: string }[];
   const demByPM = new Map<string, number>();
   const fulByPM = new Map<string, number>();
@@ -115,7 +134,7 @@ export default async function OpenToBuyPage() {
     <div className="space-y-8">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Open to buy</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Spare capacity and inquiry-committed whole round, per bucket × month.</p>
+        <p className="mt-1 text-sm text-muted-foreground">What&apos;s still available to sell — spare capacity plus unconfirmed inquiry whole round, per bucket × month.</p>
       </div>
 
       <StalePlanNotice planId={plan.id} lastComputedAt={plan.last_computed_at} />
@@ -124,6 +143,20 @@ export default async function OpenToBuyPage() {
         <NotComputed />
       ) : (
         <>
+          {/* Total OTB — unallocated + unconfirmed (pipeline) inquiry WR, in one table */}
+          <section className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold">Total OTB</h2>
+              <ExportCsvButton filename="total-otb.csv" rows={gridCsvRows('Bucket', plan.plan_start_date, plan.horizon_months, otbRows)} />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Everything still available to sell (kg WR) per bucket × month: <b>unallocated WR</b> plus the WR held by
+              <b> unconfirmed inquiries</b> (pipeline programs — confirming one promotes it to active and drops it out of OTB).
+              Hover a value for the split.
+            </p>
+            <OutputGrid planStartDate={plan.plan_start_date} horizon={plan.horizon_months} rows={otbRows} format="num0" firstColLabel="Bucket" cellTitle={otbTitles} />
+          </section>
+
           {/* Unallocated WR */}
           <section className="space-y-3">
             <div className="flex items-center justify-between">

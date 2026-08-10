@@ -49,47 +49,117 @@ function entriesFrom(monthList: number[], qtyByMonth: Record<number, string>): I
   return out;
 }
 
+/** One draw the inquiry makes: a path, and the source month it pulls WR from. */
+type Draw = {
+  path: InquiryPath;
+  /** 0 = the inquiry's own month, 1 = M-1, 2 = M-2. */
+  offset: number;
+  sourceMonth: number;
+  /** Spare WR left in that (bucket, month) when this draw ran. */
+  availWr: number;
+  useWr: number;
+  gotFp: number;
+};
+
+type MonthPlan = {
+  month: InquiryMonth;
+  qty: number;
+  draws: Draw[];
+  maxFp: number;
+  /** Of `maxFp`, how much came from earlier months (M-1 / M-2). */
+  borrowedFp: number;
+  shortfallFp: number;
+  canFulfil: boolean;
+};
+
 /**
- * Cascade an FP inquiry through a program's paths (primary → secondary →
- * tertiary), drawing each path's WR from its bucket's spare (unallocated_wr).
- * Mirrors the engine's own-month allocation. Buckets shared across paths draw
- * from one shared pool so capacity is never double-counted.
+ * Plan a multi-month inquiry against spare whole-round capacity, mirroring the
+ * engine (§5.4): every month first takes its OWN month's spare across the paths
+ * (primary → secondary → tertiary), then each month borrows backwards from M-1
+ * and then M-2 — so a January order can be met from November and December
+ * harvest, exactly as the rolling calc does it.
+ *
+ * All draws come from ONE pool keyed (bucket, source month), so two inquiry
+ * months sharing a lookback source can't both spend it, and a bucket reached by
+ * two paths is never double-counted.
  */
-function cascade(qtyFp: number, paths: InquiryPath[]) {
-  const remaining = new Map<string, number>();
-  for (const p of paths) if (!remaining.has(p.bucket_id)) remaining.set(p.bucket_id, p.unallocated_wr);
+function planInquiry(
+  months: InquiryMonth[],
+  qtyByMonth: Record<number, string>,
+  spare: Record<string, number>,
+  lookback: number
+): MonthPlan[] {
+  const pool = new Map<string, number>();
+  const left = (bucketId: string, m: number) => {
+    const k = `${bucketId}:${m}`;
+    if (!pool.has(k)) pool.set(k, spare[k] ?? 0);
+    return pool.get(k) ?? 0;
+  };
 
-  let residualFp = Math.max(0, qtyFp);
-  const rows = paths.map((p) => {
-    const availWr = remaining.get(p.bucket_id) ?? 0;
-    const useWr = Math.min(residualFp / p.yield, availWr);
-    const gotFp = useWr * p.yield;
-    remaining.set(p.bucket_id, availWr - useWr);
-    residualFp -= gotFp;
-    return { path: p, useWr, gotFp };
+  const ordered = [...months].sort((a, b) => a.month_index - b.month_index);
+  const state = new Map<number, { qty: number; gotFp: number; borrowedFp: number; draws: Draw[] }>();
+  for (const m of ordered) {
+    const n = Number(qtyByMonth[m.month_index]);
+    state.set(m.month_index, { qty: Number.isFinite(n) && n > 0 ? n : 0, gotFp: 0, borrowedFp: 0, draws: [] });
+  }
+
+  const drawFrom = (m: InquiryMonth, offset: number) => {
+    const st = state.get(m.month_index);
+    if (!st || st.qty <= 0) return;
+    const src = m.month_index - offset;
+    if (src < 1) return;
+    for (const p of m.paths) {
+      const residualFp = st.qty - st.gotFp;
+      if (residualFp <= EPS) break;
+      const availWr = left(p.bucket_id, src);
+      const useWr = Math.min(residualFp / p.yield, availWr);
+      const gotFp = useWr * p.yield;
+      // Own-month rows always show (they're the baseline picture); a lookback row
+      // only earns its place if there's something there to see.
+      if (offset === 0 || availWr > EPS || useWr > EPS) {
+        st.draws.push({ path: p, offset, sourceMonth: src, availWr, useWr, gotFp });
+      }
+      if (useWr > EPS) {
+        pool.set(`${p.bucket_id}:${src}`, availWr - useWr);
+        st.gotFp += gotFp;
+        if (offset > 0) st.borrowedFp += gotFp;
+      }
+    }
+  };
+
+  // The engine resolves ALL own-month allocation before any borrowing, then walks
+  // target months ascending running each one's channels (M-1 paths, then M-2).
+  for (const m of ordered) drawFrom(m, 0);
+  for (const m of ordered) for (let o = 1; o <= lookback; o++) drawFrom(m, o);
+
+  return ordered.map((m) => {
+    const st = state.get(m.month_index)!;
+    const shortfallFp = Math.max(0, st.qty - st.gotFp);
+    return {
+      month: m, qty: st.qty, draws: st.draws, maxFp: st.gotFp, borrowedFp: st.borrowedFp,
+      shortfallFp, canFulfil: st.qty > 0 ? shortfallFp <= EPS : true,
+    };
   });
-
-  const maxFp = Math.max(0, qtyFp) - residualFp;
-  return { rows, maxFp, shortfallFp: Math.max(0, residualFp), canFulfil: residualFp <= EPS };
 }
 
-/** Add freed WR (from pipeline trims) back into each bucket's spare, per month. */
-function augmentMonths(months: InquiryMonth[], freed: Map<string, number>): InquiryMonth[] {
-  if (freed.size === 0) return months;
-  return months.map((m) => ({
-    ...m,
-    paths: m.paths.map((p) => ({ ...p, unallocated_wr: p.unallocated_wr + (freed.get(`${p.bucket_id}:${m.month_index}`) ?? 0) })),
-  }));
+/** Add freed WR (from pipeline trims) into the spare pool, per bucket × month. */
+function augmentSpare(spare: Record<string, number>, freed: Map<string, number>): Record<string, number> {
+  if (freed.size === 0) return spare;
+  const out = { ...spare };
+  for (const [k, wr] of freed) out[k] = (out[k] ?? 0) + wr;
+  return out;
 }
 
 /** Which months fall short at the given availability, for a set of quantities. */
-function shortMonthsOf(months: InquiryMonth[], qtyByMonth: Record<number, string>): number[] {
-  const out: number[] = [];
-  for (const m of months) {
-    const q = Number(qtyByMonth[m.month_index]);
-    if (Number.isFinite(q) && q > 0 && cascade(q, m.paths).shortfallFp > EPS) out.push(m.month_index);
-  }
-  return out;
+function shortMonthsOf(
+  months: InquiryMonth[],
+  qtyByMonth: Record<number, string>,
+  spare: Record<string, number>,
+  lookback: number
+): number[] {
+  return planInquiry(months, qtyByMonth, spare, lookback)
+    .filter((r) => r.qty > 0 && r.shortfallFp > EPS)
+    .map((r) => r.month.month_index);
 }
 
 const bucketsOf = (months: InquiryMonth[]): string[] =>
@@ -298,8 +368,11 @@ function ExistingInquiry({
   const filledMonths = ctx ? entriesFrom(ctx.months.map((m) => m.month_index), qtyByMonth).filter((e) => e.demand_fp > 0) : [];
   // Availability after any pipeline trims fed back in, plus which months still
   // (originally) fall short — the trigger for the make-room panel.
-  const effectiveMonths = useMemo(() => (ctx ? augmentMonths(ctx.months, freed) : []), [ctx, freed]);
-  const shortMonths = useMemo(() => (ctx ? shortMonthsOf(ctx.months, qtyByMonth) : []), [ctx, qtyByMonth]);
+  const effectiveSpare = useMemo(() => (ctx ? augmentSpare(ctx.spare, freed) : {}), [ctx, freed]);
+  const shortMonths = useMemo(
+    () => (ctx ? shortMonthsOf(ctx.months, qtyByMonth, ctx.spare, ctx.lookbackMonths) : []),
+    [ctx, qtyByMonth]
+  );
   const inquiryBuckets = useMemo(() => (ctx ? bucketsOf(ctx.months) : []), [ctx]);
 
   // Add the additional volume to pipeline. The server accumulates onto the
@@ -367,7 +440,7 @@ function ExistingInquiry({
               Enter the <span className="font-medium text-foreground">additional</span> volume on top of the current plan (the “Planned” column is for reference). It’s checked against spare capacity; saving adds it as pipeline and leaves the active demand untouched.
             </p>
           </div>
-          <AllocationTable months={effectiveMonths} qtyByMonth={qtyByMonth} setQtyByMonth={setQtyByMonth} planStartDate={planStartDate} qtyLabel="Additional (kg FP)" />
+          <AllocationTable months={ctx.months} qtyByMonth={qtyByMonth} setQtyByMonth={setQtyByMonth} planStartDate={planStartDate} spare={effectiveSpare} lookback={ctx.lookbackMonths} qtyLabel="Additional (kg FP)" />
           {shortMonths.length > 0 && (
             <MakeRoom planId={planId} bucketIds={inquiryBuckets} months={shortMonths} planStartDate={planStartDate} onChange={(f, t, p) => { setFreed(f); setTrims(t); setTrimPreview(p); }} />
           )}
@@ -444,7 +517,8 @@ function NewInquiry({
   const [selectedMonths, setSelectedMonths] = useState<number[]>([]);
   const [qtyByMonth, setQtyByMonth] = useState<Record<number, string>>({});
   const [computed, setComputed] = useState(true);
-  const [unalloc, setUnalloc] = useState<Record<string, number>>({});
+  const [spare, setSpare] = useState<Record<string, number>>({});
+  const [lookback, setLookback] = useState(0);
   const [otherActive, setOtherActive] = useState<InquiryOtherProgram[]>([]);
   const [pending, start] = useTransition();
 
@@ -476,13 +550,14 @@ function NewInquiry({
   // Refetch spare capacity + the customer's other programs whenever the chosen
   // buckets, months, or customer change.
   useEffect(() => {
-    if (bucketIds.length === 0 || selectedMonths.length === 0) { setUnalloc({}); setOtherActive([]); return; }
+    if (bucketIds.length === 0 || selectedMonths.length === 0) { setSpare({}); setOtherActive([]); return; }
     let cancelled = false;
     start(async () => {
       const res = await getNewInquiryData(planId, bucketKey ? bucketKey.split(',') : [], monthKey ? monthKey.split(',').map(Number) : [], custRef.current);
       if (cancelled || !res.ok) return;
       setComputed(res.computed);
-      setUnalloc(res.unallocated);
+      setSpare(res.spare);
+      setLookback(res.lookbackMonths);
       setOtherActive(res.otherActive);
     });
     return () => { cancelled = true; };
@@ -500,10 +575,9 @@ function NewInquiry({
           bucket_id: p.bucketId,
           bucket_name: bucketName.get(p.bucketId) ?? 'Bucket',
           yield: p.yield,
-          unallocated_wr: unalloc[`${p.bucketId}:${m}`] ?? 0,
         })),
       })),
-    [selectedMonths, validPaths, unalloc, bucketName]
+    [selectedMonths, validPaths, bucketName]
   );
 
   const setPath = (i: number, patch: Partial<PathInput>) =>
@@ -517,8 +591,8 @@ function NewInquiry({
     () => entriesFrom(selectedMonths, qtyByMonth).filter((e) => e.demand_fp > 0),
     [selectedMonths, qtyByMonth]
   );
-  const effectiveMonths = useMemo(() => augmentMonths(months, freed), [months, freed]);
-  const shortMonths = useMemo(() => shortMonthsOf(months, qtyByMonth), [months, qtyByMonth]);
+  const effectiveSpare = useMemo(() => augmentSpare(spare, freed), [spare, freed]);
+  const shortMonths = useMemo(() => shortMonthsOf(months, qtyByMonth, spare, lookback), [months, qtyByMonth, spare, lookback]);
   const inquiryBuckets = useMemo(() => bucketsOf(months), [months]);
 
   function doSave(itemCode: string, price: number) {
@@ -612,7 +686,7 @@ function NewInquiry({
 
       {ready && computed && (
         <>
-          <AllocationTable months={effectiveMonths} qtyByMonth={qtyByMonth} setQtyByMonth={setQtyByMonth} planStartDate={planStartDate} />
+          <AllocationTable months={months} qtyByMonth={qtyByMonth} setQtyByMonth={setQtyByMonth} planStartDate={planStartDate} spare={effectiveSpare} lookback={lookback} />
           {shortMonths.length > 0 && (
             <MakeRoom planId={planId} bucketIds={inquiryBuckets} months={shortMonths} planStartDate={planStartDate} onChange={(f, t, p) => { setFreed(f); setTrims(t); setTrimPreview(p); }} />
           )}
@@ -758,33 +832,33 @@ function AllocationTable({
   qtyByMonth,
   setQtyByMonth,
   planStartDate,
+  spare,
+  lookback,
   qtyLabel = 'Inquiry (kg FP)',
 }: {
   months: InquiryMonth[];
   qtyByMonth: Record<number, string>;
   setQtyByMonth: Dispatch<SetStateAction<Record<number, string>>>;
   planStartDate: string;
+  spare: Record<string, number>;
+  lookback: number;
   qtyLabel?: string;
 }) {
   const [setAll, setSetAll] = useState('');
   const [expanded, setExpanded] = useState<number | null>(null);
 
   const perMonth = useMemo(
-    () =>
-      months.map((m) => {
-        const qtyNum = Number(qtyByMonth[m.month_index]);
-        const qty = Number.isFinite(qtyNum) && qtyNum > 0 ? qtyNum : 0;
-        return { month: m, qty, ...cascade(qty, m.paths) };
-      }),
-    [months, qtyByMonth]
+    () => planInquiry(months, qtyByMonth, spare, lookback),
+    [months, qtyByMonth, spare, lookback]
   );
 
   const totals = useMemo(() => {
     const inquired = perMonth.reduce((s, r) => s + r.qty, 0);
     const providable = perMonth.reduce((s, r) => s + r.maxFp, 0);
+    const borrowed = perMonth.reduce((s, r) => s + r.borrowedFp, 0);
     const covered = perMonth.filter((r) => r.qty > 0 && r.canFulfil).length;
     const withQty = perMonth.filter((r) => r.qty > 0).length;
-    return { inquired, providable, shortfall: inquired - providable, covered, withQty };
+    return { inquired, providable, borrowed, shortfall: inquired - providable, covered, withQty };
   }, [perMonth]);
 
   const applySetAll = () => {
@@ -804,7 +878,12 @@ function AllocationTable({
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="Total inquired" value={kg(totals.inquired)} />
-        <Stat label="We can provide" value={kg(totals.providable)} tone={totals.shortfall > EPS ? 'warn' : 'good'} />
+        <Stat
+          label="We can provide"
+          value={kg(totals.providable)}
+          tone={totals.shortfall > EPS ? 'warn' : 'good'}
+          sub={lookback > 0 && totals.borrowed > EPS ? `incl. ${kg(totals.borrowed)} from earlier months` : undefined}
+        />
         <Stat label="Shortfall" value={kg(Math.max(0, totals.shortfall))} tone={totals.shortfall > EPS ? 'bad' : 'good'} />
         <Stat label="Months fully covered" value={`${totals.covered} / ${totals.withQty}`} />
       </div>
@@ -846,7 +925,12 @@ function AllocationTable({
                         className="w-28 rounded-md border px-2 py-1 text-right text-sm tabular-nums outline-none focus:ring-2 focus:ring-primary"
                       />
                     </td>
-                    <td className="px-3 py-2 text-right tabular-nums font-medium">{has ? kg(r.maxFp) : '—'}</td>
+                    <td className="px-3 py-2 text-right tabular-nums font-medium">
+                      {has ? kg(r.maxFp) : '—'}
+                      {has && r.borrowedFp > EPS && (
+                        <div className="text-[11px] font-normal text-muted-foreground">incl. {kg(r.borrowedFp)} from earlier months</div>
+                      )}
+                    </td>
                     <td className="px-3 py-2">
                       {!has ? (
                         <span className="text-muted-foreground">—</span>
@@ -864,20 +948,27 @@ function AllocationTable({
                           <table className="w-full text-xs">
                             <thead className="bg-muted/50 text-muted-foreground">
                               <tr>
+                                <th className="px-3 py-1.5 text-left font-medium">From harvest</th>
                                 <th className="px-3 py-1.5 text-left font-medium">Path</th>
                                 <th className="px-3 py-1.5 text-left font-medium">Bucket</th>
                                 <th className="px-3 py-1.5 text-right font-medium">Yield</th>
                                 <th className="px-3 py-1.5 text-right font-medium">Spare WR</th>
+                                <th className="px-3 py-1.5 text-right font-medium">WR used</th>
                                 <th className="px-3 py-1.5 text-right font-medium">FP from here</th>
                               </tr>
                             </thead>
                             <tbody>
-                              {r.rows.map((br) => (
-                                <tr key={br.path.path} className="border-t">
+                              {r.draws.map((br, i) => (
+                                <tr key={`${br.offset}:${br.path.path}:${i}`} className={cn('border-t', br.offset > 0 && 'bg-primary/[0.04]')}>
+                                  <td className="px-3 py-1.5 whitespace-nowrap">
+                                    {monthLabel(planStartDate, br.sourceMonth)}
+                                    {br.offset > 0 && <span className="ml-1 rounded bg-primary/10 px-1 py-0.5 text-[10px] font-medium text-primary">M−{br.offset}</span>}
+                                  </td>
                                   <td className="px-3 py-1.5 capitalize">{br.path.path}</td>
                                   <td className="px-3 py-1.5">{br.path.bucket_name}</td>
                                   <td className="px-3 py-1.5 text-right tabular-nums">{(br.path.yield * 100).toFixed(1)}%</td>
-                                  <td className="px-3 py-1.5 text-right tabular-nums text-muted-foreground">{kg(br.path.unallocated_wr)}</td>
+                                  <td className="px-3 py-1.5 text-right tabular-nums text-muted-foreground">{kg(br.availWr)}</td>
+                                  <td className="px-3 py-1.5 text-right tabular-nums text-muted-foreground">{kg(br.useWr)}</td>
                                   <td className="px-3 py-1.5 text-right font-medium tabular-nums">{kg(br.gotFp)}</td>
                                 </tr>
                               ))}
@@ -894,9 +985,19 @@ function AllocationTable({
         </table>
       </div>
 
-      <p className="flex items-center gap-1 text-[11px] text-muted-foreground">
-        <Info className="h-3 w-3" />
-        Each month is checked against its own spare whole-round capacity (capacity already committed to the plan is excluded). Click a month to see the per-bucket breakdown.
+      <p className="flex items-start gap-1 text-[11px] text-muted-foreground">
+        <Info className="mt-0.5 h-3 w-3 shrink-0" />
+        <span>
+          Each month takes its own spare whole-round capacity first (capacity already committed to the plan is excluded)
+          {lookback > 0 && (
+            <>
+              , then borrows backwards from the previous {lookback === 1 ? 'month' : `${lookback} months`} — the same
+              lookback the engine uses, so an order in one month can be met from earlier harvest
+            </>
+          )}
+          . Click a month to see where every kilo comes from. Earlier-month spare is shared with every other program that
+          could borrow it; a Recalculate settles who gets it, by rank.
+        </span>
       </p>
     </>
   );
@@ -1212,7 +1313,7 @@ function PickHint() {
   );
 }
 
-function Stat({ label, value, tone }: { label: string; value: string; tone?: 'good' | 'warn' | 'bad' }) {
+function Stat({ label, value, tone, sub }: { label: string; value: string; tone?: 'good' | 'warn' | 'bad'; sub?: string }) {
   return (
     <div className="rounded-lg border bg-card px-3 py-2">
       <div className="text-xs text-muted-foreground">{label}</div>
@@ -1220,6 +1321,7 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: 'go
         tone === 'bad' && 'text-destructive', tone === 'warn' && 'text-warning', tone === 'good' && 'text-success')}>
         {value}
       </div>
+      {sub && <div className="text-[11px] text-muted-foreground">{sub}</div>}
     </div>
   );
 }

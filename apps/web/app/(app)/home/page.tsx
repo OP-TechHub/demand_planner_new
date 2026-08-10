@@ -7,7 +7,7 @@ import { getActivePlan } from '@/lib/plan';
 import { Card } from '@/components/ui/card';
 import { RecalculateButton } from '../recalculate-button';
 import { StalePlanNotice } from '../stale-banner';
-import { DashboardOverview, type MonthPoint } from './dashboard-overview';
+import { DashboardOverview, type MonthPoint, type ShortfallRow } from './dashboard-overview';
 
 export default async function HomePage() {
   const supabase = await createClient();
@@ -26,7 +26,7 @@ export default async function HomePage() {
 
   // One rolling_results pass feeds the overview (per month) and the alerts (per program).
   let monthly: MonthPoint[] = [];
-  let topShortfall: { customer: string; shortfall: number }[] = [];
+  let shortfall: ShortfallRow[] = [];
   const alerts: { level: 'warn' | 'info'; text: string }[] = [];
   let recent: { who: string; text: string; when: string }[] = [];
 
@@ -46,30 +46,35 @@ export default async function HomePage() {
     const customerById = new Map(progList.map((p) => [p.id, p.customer]));
 
     if (summary) {
-      const rr = await fetchAllByPlan(supabase, 'rolling_results', 'program_id, month_index, demand_fp, rolling_fp, revenue, cost', plan.id);
+      const rr = await fetchAllByPlan(supabase, 'rolling_results', 'program_id, month_index, demand_fp, rolling_fp, rolling_wr, revenue, cost', plan.id);
       const dem = new Array<number>(months).fill(0), ful = new Array<number>(months).fill(0);
+      const wr = new Array<number>(months).fill(0);
       const rev = new Array<number>(months).fill(0), cst = new Array<number>(months).fill(0);
       const actDem = new Array<number>(months).fill(0), pipeDem = new Array<number>(months).fill(0);
       const pd = new Map<string, number>(), pf = new Map<string, number>();
-      const shortByCust = new Map<string, number>();
+      // Kept per month (not pre-totalled) so the overview's time filter can rank
+      // customers within the selected range rather than over the whole horizon.
+      const shortByCust = new Map<string, number[]>();
       for (const r of rr) {
         const i = r.month_index - 1;
         if (i >= 0 && i < months) {
-          dem[i] += r.demand_fp; ful[i] += r.rolling_fp; rev[i] += r.revenue; cst[i] += r.cost;
+          dem[i] += r.demand_fp; ful[i] += r.rolling_fp; wr[i] += r.rolling_wr; rev[i] += r.revenue; cst[i] += r.cost;
           const st = statusById.get(r.program_id);
           if (st === 'active') actDem[i] += r.demand_fp;
           else if (st === 'pipeline') pipeDem[i] += r.demand_fp;
+          const short = Math.max(0, r.demand_fp - r.rolling_fp);
+          if (short > 0) {
+            const cust = customerById.get(r.program_id) ?? '—';
+            let arr = shortByCust.get(cust);
+            if (!arr) { arr = new Array<number>(months).fill(0); shortByCust.set(cust, arr); }
+            arr[i] += short;
+          }
         }
         pd.set(r.program_id, (pd.get(r.program_id) ?? 0) + r.demand_fp);
         pf.set(r.program_id, (pf.get(r.program_id) ?? 0) + r.rolling_fp);
-        const short = Math.max(0, r.demand_fp - r.rolling_fp);
-        if (short > 0) {
-          const cust = customerById.get(r.program_id) ?? '—';
-          shortByCust.set(cust, (shortByCust.get(cust) ?? 0) + short);
-        }
       }
-      monthly = dem.map((d, i) => ({ demand: d, fulfilled: ful[i] ?? 0, revenue: rev[i] ?? 0, cost: cst[i] ?? 0, activeDemand: actDem[i] ?? 0, pipelineDemand: pipeDem[i] ?? 0 }));
-      topShortfall = [...shortByCust.entries()].map(([customer, shortfall]) => ({ customer, shortfall })).sort((a, b) => b.shortfall - a.shortfall).slice(0, 8);
+      monthly = dem.map((d, i) => ({ demand: d, fulfilled: ful[i] ?? 0, wrUsed: wr[i] ?? 0, revenue: rev[i] ?? 0, cost: cst[i] ?? 0, activeDemand: actDem[i] ?? 0, pipelineDemand: pipeDem[i] ?? 0 }));
+      shortfall = [...shortByCust.entries()].map(([customer, m]) => ({ customer, months: m }));
       let under = 0;
       for (const [pid, d] of pd) if (d > 0 && (pf.get(pid) ?? 0) / d < 0.5) under++;
       if (under) alerts.push({ level: 'warn', text: `${under} program${under > 1 ? 's' : ''} under 50% fulfilled over 60 months.` });
@@ -113,7 +118,7 @@ export default async function HomePage() {
       {plan && <StalePlanNotice planId={plan.id} lastComputedAt={plan.last_computed_at} />}
 
       {summary && plan ? (
-        <DashboardOverview monthly={monthly} topShortfall={topShortfall} planStartDate={plan.plan_start_date} horizon={plan.horizon_months} />
+        <DashboardOverview monthly={monthly} shortfall={shortfall} planStartDate={plan.plan_start_date} horizon={plan.horizon_months} />
       ) : (
         <Card className="border-dashed bg-muted/30 p-6 text-sm text-muted-foreground">
           No computed results yet. Add programs, demand, and harvest capacity, then{' '}
