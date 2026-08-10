@@ -9,8 +9,9 @@ import { Card } from '@/components/ui/card';
 import { MonthlyLineChart } from '@/components/charts/monthly-line-chart';
 
 /** One month of already-aggregated dashboard figures (across all programs). */
-export type MonthPoint = { demand: number; fulfilled: number; revenue: number; cost: number; activeDemand: number; pipelineDemand: number };
-export type ShortfallRow = { customer: string; shortfall: number };
+export type MonthPoint = { demand: number; fulfilled: number; wrUsed: number; revenue: number; cost: number; activeDemand: number; pipelineDemand: number };
+/** Per-customer unfulfilled FP, one entry per month — ranked client-side within the range. */
+export type ShortfallRow = { customer: string; months: number[] };
 
 // Status colours (reserved): active = green, pipeline = amber.
 const C_ACTIVE = '#16a34a';
@@ -30,12 +31,12 @@ function usd(n: number) {
  */
 export function DashboardOverview({
   monthly,
-  topShortfall,
+  shortfall,
   planStartDate,
   horizon,
 }: {
   monthly: MonthPoint[];
-  topShortfall: ShortfallRow[];
+  shortfall: ShortfallRow[];
   planStartDate: string;
   horizon: number;
 }) {
@@ -50,10 +51,11 @@ export function DashboardOverview({
   const t = useMemo(() => {
     const demand = slice.reduce((s, m) => s + m.demand, 0);
     const fulfilled = slice.reduce((s, m) => s + m.fulfilled, 0);
+    const wrUsed = slice.reduce((s, m) => s + m.wrUsed, 0);
     const revenue = slice.reduce((s, m) => s + m.revenue, 0);
     const cost = slice.reduce((s, m) => s + m.cost, 0);
     const margin = revenue - cost;
-    return { demand, fulfilled, revenue, margin, fulPct: demand > 0 ? fulfilled / demand : 0, gp: revenue > 0 ? margin / revenue : 0 };
+    return { demand, fulfilled, wrUsed, revenue, margin, fulPct: demand > 0 ? fulfilled / demand : 0, gp: revenue > 0 ? margin / revenue : 0 };
   }, [slice]);
 
   const chart = useMemo(
@@ -75,6 +77,17 @@ export function DashboardOverview({
     { name: 'Active', value: split.active, color: C_ACTIVE },
     { name: 'Pipeline', value: split.pipeline, color: C_PIPELINE },
   ];
+  // Shortfall is ranked *within* the range — the top 8 for Jan–Mar aren't
+  // necessarily the top 8 over 60 months, so sum first, then sort and slice.
+  const topShortfall = useMemo(
+    () =>
+      shortfall
+        .map((r) => ({ customer: r.customer, shortfall: r.months.slice(from - 1, to).reduce((s, v) => s + v, 0) }))
+        .filter((r) => r.shortfall > 0)
+        .sort((a, b) => b.shortfall - a.shortfall)
+        .slice(0, 8),
+    [shortfall, from, to]
+  );
   const rangeText = `${monthLabel(planStartDate, from)} – ${monthLabel(planStartDate, to)}`;
 
   return (
@@ -97,7 +110,14 @@ export function DashboardOverview({
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Stat icon={Package} tone="primary" label="Total Demand" value={`${kg(t.demand)} kg`} sub={`${full ? `${horizon} months` : rangeText}, FP`} />
+        <Stat
+          icon={Package}
+          tone="primary"
+          label="Total Demand"
+          value={`${kg(t.demand)} kg`}
+          sub={`${full ? `${horizon} months` : rangeText}, FP`}
+          foot={`${kg(t.wrUsed)} kg WR used to fulfil`}
+        />
         <Stat icon={Target} tone="accent" label="Fulfilled" value={`${(t.fulPct * 100).toFixed(0)}%`} sub={`${kg(t.fulfilled)} kg FP`} />
         <Stat icon={DollarSign} tone="success" label="Revenue" value={usd(t.revenue)} sub="allocated" />
         <Stat icon={TrendingUp} tone="primary" label="Margin" value={usd(t.margin)} sub={`GP ${(t.gp * 100).toFixed(1)}%`} />
@@ -176,12 +196,15 @@ export function DashboardOverview({
         </Card>
       </div>
 
-      {topShortfall.length > 0 && (
+      {shortfall.length > 0 && (
         <Card className="p-5">
           <div className="mb-3 flex items-center justify-between gap-2">
             <h2 className="text-sm font-semibold">Top customers by shortfall</h2>
-            <span className="text-xs text-muted-foreground">unfulfilled kg FP · {horizon} months</span>
+            <span className="text-xs text-muted-foreground">unfulfilled kg FP · {full ? `${horizon} months` : rangeText}</span>
           </div>
+          {topShortfall.length === 0 ? (
+            <div className="flex h-[180px] items-center justify-center text-sm text-muted-foreground">No shortfall in this range.</div>
+          ) : (
           <ResponsiveContainer width="100%" height={Math.max(180, topShortfall.length * 34)}>
             <BarChart data={topShortfall} layout="vertical" margin={{ top: 4, right: 56, bottom: 4, left: 8 }}>
               <XAxis type="number" tick={{ fontSize: 10, fill: '#64748b' }} tickLine={false} axisLine={false} tickFormatter={(v) => kg(Number(v))} />
@@ -196,6 +219,7 @@ export function DashboardOverview({
               </Bar>
             </BarChart>
           </ResponsiveContainer>
+          )}
         </Card>
       )}
     </>
@@ -208,12 +232,15 @@ function Stat({
   label,
   value,
   sub,
+  foot,
 }: {
   icon: LucideIcon;
   tone: 'primary' | 'accent' | 'success';
   label: string;
   value: string;
   sub?: string;
+  /** Second figure in a different unit (e.g. the WR behind an FP headline). */
+  foot?: string;
 }) {
   const tones = {
     primary: 'bg-primary/10 text-primary',
@@ -230,6 +257,7 @@ function Stat({
       </div>
       <div className="mt-2 text-2xl font-semibold tracking-tight">{value}</div>
       {sub && <div className="mt-0.5 text-xs text-muted-foreground">{sub}</div>}
+      {foot && <div className="mt-1.5 border-t pt-1.5 text-xs font-medium tabular-nums">{foot}</div>}
     </Card>
   );
 }
