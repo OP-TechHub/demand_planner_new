@@ -26,9 +26,11 @@ export function HarvestEditor({
   onSaved: () => void;
 }) {
   const months = useMemo(() => Array.from({ length: horizon }, (_, i) => i + 1), [horizon]);
+  // Shown in whole kilos. A month left untouched keeps its stored value — the
+  // save below only writes months whose rounded value actually differs.
   const original = useMemo(() => {
     const o: Cells = {};
-    for (const r of rows) o[r.month_index] = String(r.capacity_kg_wr);
+    for (const r of rows) o[r.month_index] = String(Math.round(r.capacity_kg_wr));
     return o;
   }, [rows]);
 
@@ -46,11 +48,12 @@ export function HarvestEditor({
     for (const mo of months) {
       const raw = (cells[mo] ?? '').trim();
       const had = original[mo] !== undefined;
-      const n = raw === '' ? 0 : Number(raw);
-      if (!Number.isFinite(n) || n < 0) {
+      const entered = raw === '' ? 0 : Number(raw);
+      if (!Number.isFinite(entered) || entered < 0) {
         setError(`Month ${monthLabel(planStartDate, mo)}: capacity must be zero or greater.`);
         return;
       }
+      const n = Math.round(entered); // capacity is kept in whole kg WR
       if (n === 0) {
         if (had) deletes.push(mo);
         continue;
@@ -107,7 +110,8 @@ export function HarvestEditor({
                   <td className="py-1 text-right">
                     <input
                       type="number"
-                      step="any"
+                      step="1"
+                      min={0}
                       value={cells[mo] ?? ''}
                       onChange={(e) => setMonth(mo, e.target.value)}
                       placeholder="0"
@@ -167,11 +171,11 @@ function PatternModal({
     if (mode === 'fixed') {
       const v = Number(fixed);
       if (!Number.isFinite(v)) return;
-      for (let m = 1; m <= horizon; m++) next[m] = String(v);
+      for (let m = 1; m <= horizon; m++) next[m] = String(Math.round(v));
     } else if (mode === 'range') {
       const a = clamp(Number(rFrom)), b = clamp(Number(rTo)), v = Number(rVal);
       if (!Number.isFinite(v)) return;
-      for (let m = Math.min(a, b); m <= Math.max(a, b); m++) next[m] = String(v);
+      for (let m = Math.min(a, b); m <= Math.max(a, b); m++) next[m] = String(Math.round(v));
     } else {
       const a = clamp(Number(rampMFrom)), b = clamp(Number(rampMTo));
       const v1 = Number(rampFrom), v2 = Number(rampToVal);
@@ -179,7 +183,7 @@ function PatternModal({
       const lo = Math.min(a, b), hi = Math.max(a, b), span = hi - lo;
       for (let m = lo; m <= hi; m++) {
         const t = span === 0 ? 0 : (m - lo) / span;
-        next[m] = String(Math.round((v1 + (v2 - v1) * t) * 10000) / 10000);
+        next[m] = String(Math.round(v1 + (v2 - v1) * t));
       }
     }
     onApply(next);

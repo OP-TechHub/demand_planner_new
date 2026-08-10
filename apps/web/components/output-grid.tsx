@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { BarChart3 } from 'lucide-react';
 import { monthLabel } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
-import { kg, usd, num0, pct } from '@/lib/format';
+import { kg, usd, usd0, num0, pct } from '@/lib/format';
 import { ScrollX } from '@/components/ui/scroll-x';
 import type { GridRow } from '@/lib/grid-csv';
 
@@ -15,7 +15,7 @@ export type { GridRow };
  * this is a client component, and functions can't cross the server→client
  * boundary (the output pages are server components).
  */
-const FMT = { kg, usd, num0, pct } as const;
+const FMT = { kg, usd, usd0, num0, pct } as const;
 export type FmtKey = keyof typeof FMT;
 
 const COLOR = {

@@ -14,10 +14,12 @@ export default async function SixtyMonthPage() {
   const rr = await fetchAllByPlan(supabase, 'rolling_results', 'program_id, month_index, rolling_fp, rolling_wr, rolling_margin', plan.id);
   const m = plan.horizon_months;
 
+  // Full figures, not the abbreviated `kg`/`usd` scales — this grid is read
+  // cell by cell, where "5k" hides the difference between 4,600 and 5,400.
   const metrics: Metric[] = [
-    { key: 'fp', label: 'Allocated FP', format: 'kg', rows: gridRowsFor(order, rr, m, 'rolling_fp') },
-    { key: 'wr', label: 'Allocated WR', format: 'kg', rows: gridRowsFor(order, rr, m, 'rolling_wr') },
-    { key: 'margin', label: 'Margin $', format: 'usd', rows: gridRowsFor(order, rr, m, 'rolling_margin') },
+    { key: 'fp', label: 'Allocated FP', format: 'num0', rows: gridRowsFor(order, rr, m, 'rolling_fp') },
+    { key: 'wr', label: 'Allocated WR', format: 'num0', rows: gridRowsFor(order, rr, m, 'rolling_wr') },
+    { key: 'margin', label: 'Margin $', format: 'usd0', rows: gridRowsFor(order, rr, m, 'rolling_margin') },
   ];
 
   return (

@@ -57,7 +57,10 @@ export function HarvestClient({
     return m;
   }, [harvestRows]);
 
-  const cell = (bucketId: string, month: number) => capacity.get(`${bucketId}:${month}`) ?? 0;
+  // Capacity is stored numeric(18,4); whole kilos are the useful unit, so round
+  // once here — every cell, total and export below derives from this, which keeps
+  // the columns adding up exactly as shown.
+  const cell = (bucketId: string, month: number) => Math.round(capacity.get(`${bucketId}:${month}`) ?? 0);
   // Totals cover the visible range, so the row total always matches the cells beside it.
   const bucketTotal = (b: Bucket) => visibleMonths.reduce((s, mo) => s + cell(b.id, mo), 0);
 

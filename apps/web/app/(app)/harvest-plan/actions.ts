@@ -118,7 +118,8 @@ export async function importHarvest(planId: string, rows: WideRow[]): Promise<Wi
     if (!bid) { unknown.add(row.key); continue; }
     for (const c of row.cells) {
       if (c.month < 1 || c.month > 60 || !Number.isFinite(c.value) || c.value < 0) continue;
-      upserts.push({ plan_id: planId, bucket_id: bid, month_index: c.month, capacity_kg_wr: c.value, created_by: user.id, updated_by: user.id });
+      // Capacity is kept in whole kg WR, same as the editor.
+      upserts.push({ plan_id: planId, bucket_id: bid, month_index: c.month, capacity_kg_wr: Math.round(c.value), created_by: user.id, updated_by: user.id });
     }
   }
 
