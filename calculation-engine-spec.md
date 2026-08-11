@@ -131,7 +131,7 @@ Global mode toggles that shape how the allocation runs.
 | `margin_metric` | enum | yes | 60-MS B4 / Opt D4 | `Margin/kg FP` / `Margin/kg WR` / `Total Contribution` |
 | `allocation_mode` | enum | yes | 60-MS D4 / Opt F4 | `Fill what you can` / `All-or-Nothing` |
 | `scope` | enum | yes | 60-MS F4 / Opt H4 | `Active` / `Active+Pipeline`. Default: `Active+Pipeline`. |
-| `lookback_months` | int | yes | (hardcoded 2 in v30) | Number of prior months to draw from. v1: fixed at 2; make it a setting for future. |
+| `lookback_months` | int | yes | (hardcoded 2 in v30) | Number of prior months to draw from, 1–4 (default 2, matching v30). The engine implements four offsets (§5.2); this setting truncates the cascade and cannot widen it. |
 
 ### 1.6 Time-Variable Overrides for Price and Cost
 
@@ -391,39 +391,52 @@ For each (program, month) pair, Rolling Calc produces:
 |---|---|
 | `demand_fp[P, M]` | The program's demand in FP for month M (input) |
 | `own_fp[P, M]` | FP fulfilled from month M's own harvest (from Section 4) |
-| `borrow_m1_prim_wr[P, M]` | WR borrowed from month M-1 in P's PRIMARY bucket |
-| `borrow_m1_alt_wr[P, M]` | WR borrowed from month M-1 in P's SECONDARY bucket |
-| `borrow_m1_tert_wr[P, M]` | WR borrowed from month M-1 in P's TERTIARY bucket |
-| `borrow_m2_prim_wr[P, M]` | WR borrowed from month M-2 in P's PRIMARY bucket |
-| `borrow_m2_alt_wr[P, M]` | WR borrowed from month M-2 in P's SECONDARY bucket |
-| `borrow_m2_tert_wr[P, M]` | WR borrowed from month M-2 in P's TERTIARY bucket |
-| `rolling_fp[P, M]` | Total FP fulfilled at month M = own + all 6 borrow channels × their yields |
-| `rolling_wr[P, M]` | Total WR consumed for this program's month-M demand = own_wr + all 6 borrow channels |
+| `borrow_m‹k›_prim_wr[P, M]` | WR borrowed from month M-k in P's PRIMARY bucket, k ∈ {1, 2, 3, 4} |
+| `borrow_m‹k›_alt_wr[P, M]` | WR borrowed from month M-k in P's SECONDARY bucket |
+| `borrow_m‹k›_tert_wr[P, M]` | WR borrowed from month M-k in P's TERTIARY bucket |
+| `rolling_fp[P, M]` | Total FP fulfilled at month M = own + all 12 borrow channels × their yields |
+| `rolling_wr[P, M]` | Total WR consumed for this program's month-M demand = own_wr + all 12 borrow channels |
 | `rolling_margin[P, M]` | Total margin earned for this program's month-M demand |
 
-Excel parity: Rolling Calc tab, Blocks 1-11.
+Excel parity: Rolling Calc tab, Blocks 1-11. The Excel model reaches two months
+back; the engine reaches four (see §5.2). At `lookback_months = 2` the two agree
+exactly, which is what the V30 parity tests pin.
 
-### 5.2 The six borrow channels
+### 5.2 The twelve borrow channels
 
 For a program P at target month M, borrowing is attempted in this fixed cascade
-order:
+order — **offset-major**, so the nearest harvest is always exhausted before
+reaching further back:
 
 1. **M-1 primary**: draw from month M-1, in P's primary bucket
 2. **M-1 secondary**: draw from month M-1, in P's secondary bucket
 3. **M-1 tertiary**: draw from month M-1, in P's tertiary bucket
-4. **M-2 primary**: draw from month M-2, in P's primary bucket
-5. **M-2 secondary**: draw from month M-2, in P's secondary bucket
-6. **M-2 tertiary**: draw from month M-2, in P's tertiary bucket
+4. **M-2 primary / secondary / tertiary**: the same three, from month M-2
+5. **M-3 primary / secondary / tertiary**: the same three, from month M-3
+6. **M-4 primary / secondary / tertiary**: the same three, from month M-4
 
 Each channel is attempted only if there's still residual demand after the previous
 channels. Each channel is skipped if that bucket path doesn't exist on the program.
 
+`lookback_months` (§1, plan setting, 1–4) truncates the cascade: channels whose
+offset exceeds it are skipped entirely. It can only narrow the reach — widening
+past 4 would need both new channels here and the matching `borrow_m‹k›_*_wr`
+columns on `rolling_results`.
+
+**Why depth doesn't need a separate priority pass.** The cascade runs inside the
+target→rank→channel loop of §5.4, so each program takes its fill across *all four*
+source months before the next-ranked program is considered. An unmet pipeline
+order therefore claims M-3/M-4 capacity ahead of anything ranked below it, and
+whatever survives the whole pass is what §6 reports as Unallocated WR — the spare
+an inquiry is then offered. Deepening the reach changes how much capacity is in
+play, not who gets first claim on it.
+
 ### 5.3 The core formula (per channel)
 
-For program P, target month M, channel C = (source_offset ∈ {1, 2}, path ∈ {prim, alt, tert}):
+For program P, target month M, channel C = (source_offset ∈ {1, 2, 3, 4}, path ∈ {prim, alt, tert}):
 
 ```
-source_month  = M - source_offset          # M-1 or M-2
+source_month  = M - source_offset          # M-1 … M-4
 source_bucket = P.<path>_bucket
 yield         = P.<path>_yield
 ```
@@ -476,15 +489,18 @@ Concretely, for a plan with N programs and 60 months:
 for target_M in 1..60:
     for rank in 1..N:
         program = program_at_rank(rank)
-        for channel in [M-1 prim, M-1 alt, M-1 tert, M-2 prim, M-2 alt, M-2 tert]:
+        for channel in [M-1 prim/alt/tert, M-2 prim/alt/tert,
+                        M-3 prim/alt/tert, M-4 prim/alt/tert]:   # truncated at lookback_months
             compute borrowed_wr[program, target_M, channel]
 ```
 
 This means:
 - Month M=1 has no borrowing (nothing to borrow from). All channels return 0.
-- Month M=2: only M-1 channels are viable (source_month = 1). M-2 channels return 0.
-- Month M=3 onwards: all 6 channels are viable.
-- Within target month M, rank-1 program processes ALL 6 channels before rank-2 starts.
+- Month M=2: only M-1 channels are viable (source_month = 1). The rest return 0.
+- Month M=5 onwards: all 12 channels are viable (at `lookback_months = 4`).
+- Within target month M, rank-1 program processes ALL its channels — every offset
+  it is allowed to reach — before rank-2 starts. This is what gives a higher-ranked
+  program first claim on the deep months, not just the near ones.
 
 **Critical dependency invariant** (why acyclic):
 - A borrowing at (target_M, rank, channel) can only depend on decisions ALREADY
@@ -498,27 +514,26 @@ This means:
 
 Once all borrowings are computed:
 
+All offsets for a given path share that path's yield and margin, so the
+decomposition collapses to a per-path sum over k ∈ {1, 2, 3, 4}:
+
 ```
+borrowed_prim_wr[P, M] = Σₖ borrow_m‹k›_prim_wr[P, M]      # likewise alt, tert
+
 rolling_fp[P, M] = own_fp[P, M]
-                 + borrow_m1_prim_wr[P, M] × P.primary_yield
-                 + borrow_m1_alt_wr[P, M]  × P.secondary_yield
-                 + borrow_m1_tert_wr[P, M] × P.tertiary_yield
-                 + borrow_m2_prim_wr[P, M] × P.primary_yield
-                 + borrow_m2_alt_wr[P, M]  × P.secondary_yield
-                 + borrow_m2_tert_wr[P, M] × P.tertiary_yield
+                 + borrowed_prim_wr[P, M] × P.primary_yield
+                 + borrowed_alt_wr[P, M]  × P.secondary_yield
+                 + borrowed_tert_wr[P, M] × P.tertiary_yield
 
 rolling_wr[P, M] = own_wr[P, M]              # from Section 4
-                 + borrow_m1_prim_wr[P, M]
-                 + borrow_m1_alt_wr[P, M]
-                 + borrow_m1_tert_wr[P, M]
-                 + borrow_m2_prim_wr[P, M]
-                 + borrow_m2_alt_wr[P, M]
-                 + borrow_m2_tert_wr[P, M]
+                 + borrowed_prim_wr[P, M]
+                 + borrowed_alt_wr[P, M]
+                 + borrowed_tert_wr[P, M]
 
 rolling_margin[P, M] = 
-    (own_prim_wr + borrow_m1_prim_wr + borrow_m2_prim_wr) × P.primary_yield × margin_fp[primary]
-  + (own_alt_wr  + borrow_m1_alt_wr  + borrow_m2_alt_wr)  × P.secondary_yield × margin_fp[secondary]
-  + (own_tert_wr + borrow_m1_tert_wr + borrow_m2_tert_wr) × P.tertiary_yield × margin_fp[tertiary]
+    (own_prim_wr + borrowed_prim_wr) × P.primary_yield   × margin_fp[primary]
+  + (own_alt_wr  + borrowed_alt_wr)  × P.secondary_yield × margin_fp[secondary]
+  + (own_tert_wr + borrowed_tert_wr) × P.tertiary_yield  × margin_fp[tertiary]
 ```
 
 Where `margin_fp[path] = price_fp - total_cost_fp[path]` from Section 2.1.
@@ -532,8 +547,9 @@ For any valid input, the output must satisfy:
 3. **Capped by available capacity**: for any (source_bucket, source_month), the sum
    of all borrowings drawing from it plus own-month consumption at that
    (bucket, month) does not exceed `plan_capacity[bucket, source_month]`.
-4. **Cascade order respected**: `borrow_m2_prim_wr > 0` implies primary residual
-   was still positive AFTER M-1 primary, M-1 alt, M-1 tert attempts.
+4. **Cascade order respected**: a channel at offset k borrows only if residual
+   demand survived every channel at offsets 1..k-1 — e.g. `borrow_m2_prim_wr > 0`
+   implies residual was still positive AFTER M-1 primary, M-1 alt, M-1 tert.
 5. **Determinism**: Given identical inputs, the output must be identical every
    time (no floating-point ordering dependencies).
 
@@ -563,9 +579,10 @@ borrowings_into[B, M] = sum over all programs P and target months M' ≠ M of:
                           borrow[P, M', channel] where channel targets (B, M) as source
 ```
 
-The `borrowings_into[B, M]` term specifically means:
-- For M-1 lookback: programs targeting month M+1 who chose path where path_bucket == B
-- For M-2 lookback: programs targeting month M+2 who chose path where path_bucket == B
+The `borrowings_into[B, M]` term specifically means, for each offset k ≤
+`lookback_months`: programs targeting month M+k who chose a path where
+path_bucket == B. So at the maximum reach of 4, up to four later target months
+can be drawing on (B, M).
 
 ### 6.2 Invariant
 

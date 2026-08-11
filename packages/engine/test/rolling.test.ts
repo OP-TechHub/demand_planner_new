@@ -73,6 +73,49 @@ describe('§5 Rolling Calc — behavioral', () => {
   });
 });
 
+describe('§5.2 lookback depth — M-3 and M-4', () => {
+  // Demand only at M5 (index 4); each earlier month carries a distinct leftover so
+  // the cascade's order is visible in which channel picks up what.
+  const HARVEST = { B: [500, 400, 300, 200, 0] }; // M1..M4 spare, nothing own-month
+
+  it('reaches M-3 and M-4 once the nearer months are exhausted', () => {
+    const r = run([prog('a', [0, 0, 0, 0, 1000])], B, HARVEST, { lookbackMonths: 4 });
+    const c = cell(r, 'a', 4);
+    expect(c.borrow.m1_prim).toBeCloseTo(200, 6); // M4 leftover, drained first
+    expect(c.borrow.m2_prim).toBeCloseTo(300, 6); // then M3
+    expect(c.borrow.m3_prim).toBeCloseTo(400, 6); // then M2
+    expect(c.borrow.m4_prim).toBeCloseTo(500, 6); // then M1
+    expect(c.rollingFp).toBeCloseTo(700, 6);      // 1400 WR × 0.5
+  });
+
+  it('the lookback setting still narrows the reach', () => {
+    const r = run([prog('a', [0, 0, 0, 0, 1000])], B, HARVEST, { lookbackMonths: 2 });
+    const c = cell(r, 'a', 4);
+    expect(c.borrow.m2_prim).toBeCloseTo(300, 6);
+    expect(c.borrow.m3_prim).toBe(0);
+    expect(c.borrow.m4_prim).toBe(0);
+    expect(c.rollingFp).toBeCloseTo(250, 6); // only 500 WR reachable
+  });
+
+  it('never sources before month 1', () => {
+    // Target M2 (index 1) with lookback 4 — only M1 exists to borrow from.
+    const r = run([prog('a', [0, 1000, 0, 0, 0])], B, { B: [5000, 0, 0, 0, 0] }, { lookbackMonths: 4 });
+    const c = cell(r, 'a', 1);
+    expect(c.borrow.m1_prim).toBeCloseTo(2000, 6);
+    expect(c.borrow.m2_prim + c.borrow.m3_prim + c.borrow.m4_prim).toBe(0);
+  });
+
+  it('an unmet higher-ranked order claims the deep months first', () => {
+    // One month of far-back spare, two programs competing for it across M-4.
+    const r = run([
+      prog('low', [0, 0, 0, 0, 1000], { price: 10 }),
+      prog('high', [0, 0, 0, 0, 1000], { price: 50 }),
+    ], B, { B: [1500, 0, 0, 0, 0] }, { lookbackMonths: 4 });
+    expect(cell(r, 'high', 4).borrow.m4_prim).toBeCloseTo(1500, 6);
+    expect(cell(r, 'low', 4).borrow.m4_prim).toBe(0);
+  });
+});
+
 describe('§5.6 guarantees — V30', () => {
   const input = v30Input();
   const ranked = rankPrograms(input);

@@ -130,8 +130,11 @@ Core ideas:
 - **Units:** demand is finished product **FP**; capacity is whole round **WR**.
   `FP = WR × yield`, so `WR_needed = FP / yield`.
 - **Allocation:** each program's monthly demand is met from its **primary →
-  secondary → tertiary** buckets in order; it can **borrow** capacity from the
-  previous one or two months (six channels: m1/m2 × primary/alt/tertiary).
+  secondary → tertiary** buckets in order; it can **borrow** capacity from up to
+  the previous four months (twelve channels: m1…m4 × primary/alt/tertiary),
+  truncated by the plan's `settings_lookback_months` (1–4). `MAX_LOOKBACK` in
+  `rolling.ts` is the single source of truth — the channel list, the persistence
+  mapping, and the Open-to-buy attribution all derive from it.
 - **Outputs per program-month** (`rolling_results`): `demand_fp`, `rolling_fp`
   (fulfilled), `revenue`, `cost`, `rolling_margin`, and borrow fields.
 - **Spare/consumption per bucket-month:** `unallocated_wr` (spare WR) and
