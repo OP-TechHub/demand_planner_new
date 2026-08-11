@@ -9,7 +9,8 @@ import type { EngineInput, EngineProgram, PathKey } from './types';
 import { pathCostMargin } from './derived';
 import type { RankedProgram } from './rank';
 import type { OwnMonthResult } from './allocate';
-import type { RollingResult, BorrowChannels } from './rolling';
+import { CHANNELS } from './rolling';
+import type { RollingResult } from './rolling';
 
 export interface UnallocatedCell {
   bucketId: string;
@@ -186,14 +187,10 @@ export function aggregate(
     if (!isPipeline(a.programId)) continue;
     addPipe(pathBucket(programs.get(a.programId)!, a.path), a.month, a.allocatedWr);
   }
-  const CHANNELS: [keyof BorrowChannels, PathKey, number][] = [
-    ['m1_prim', 'primary', 1], ['m1_alt', 'secondary', 1], ['m1_tert', 'tertiary', 1],
-    ['m2_prim', 'primary', 2], ['m2_alt', 'secondary', 2], ['m2_tert', 'tertiary', 2],
-  ];
   for (const c of rolling.cells) {
     if (!isPipeline(c.programId)) continue;
     const p = programs.get(c.programId)!;
-    for (const [field, path, offset] of CHANNELS) {
+    for (const { field, path, offset } of CHANNELS) {
       const wr = c.borrow[field];
       if (wr > 0) addPipe(pathBucket(p, path), c.month - offset, wr);
     }

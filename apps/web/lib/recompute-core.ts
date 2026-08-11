@@ -111,6 +111,8 @@ export async function runRecompute(planId: string): Promise<{ ms: number; comput
       demand_fp: c.demandFp, own_fp: c.ownFp, own_wr: c.ownWr,
       borrow_m1_prim_wr: c.borrow.m1_prim, borrow_m1_alt_wr: c.borrow.m1_alt, borrow_m1_tert_wr: c.borrow.m1_tert,
       borrow_m2_prim_wr: c.borrow.m2_prim, borrow_m2_alt_wr: c.borrow.m2_alt, borrow_m2_tert_wr: c.borrow.m2_tert,
+      borrow_m3_prim_wr: c.borrow.m3_prim, borrow_m3_alt_wr: c.borrow.m3_alt, borrow_m3_tert_wr: c.borrow.m3_tert,
+      borrow_m4_prim_wr: c.borrow.m4_prim, borrow_m4_alt_wr: c.borrow.m4_alt, borrow_m4_tert_wr: c.borrow.m4_tert,
       rolling_fp: c.rollingFp, rolling_wr: c.rollingWr, rolling_margin: f?.margin ?? 0,
       revenue: f?.revenue ?? 0, cost: f?.cost ?? 0,
       fulfilment_pct: f?.fulfilmentPct ?? null, unfulfilled_wr: f?.unfulfilledWr ?? 0,

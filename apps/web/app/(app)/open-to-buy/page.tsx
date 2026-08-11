@@ -5,6 +5,23 @@ import { gridCsvRows, type GridRow } from '@/lib/grid-csv';
 import { StalePlanNotice } from '../stale-banner';
 import { ExportCsvButton } from '@/components/export-csv-button';
 import { fetchAllByPlan } from '@/lib/fetch-all';
+import { MAX_LOOKBACK } from '@oceanpick/engine';
+
+/**
+ * The engine's borrow channels as `rolling_results` columns, paired with the
+ * source they draw from: offset months back, in the bucket at `pathIdx`.
+ * Generated from MAX_LOOKBACK so a deeper lookback never silently drops channels
+ * out of this attribution.
+ */
+const BORROW_CHANNELS: { col: string; offset: number; pathIdx: 0 | 1 | 2 }[] =
+  Array.from({ length: MAX_LOOKBACK }, (_, i) => i + 1).flatMap((offset) =>
+    ([['prim', 0], ['alt', 1], ['tert', 2]] as const).map(([suffix, pathIdx]) => ({
+      col: `borrow_m${offset}_${suffix}_wr`,
+      offset,
+      pathIdx,
+    }))
+  );
+const BORROW_COLS = BORROW_CHANNELS.map((c) => c.col);
 
 export default async function OpenToBuyPage() {
   const plan = await getActivePlan();
@@ -22,11 +39,11 @@ export default async function OpenToBuyPage() {
       .eq('plan_id', plan.id).eq('status', 'pipeline').is('deleted_at', null).order('sort_order'),
     fetchAllByPlan(supabase, 'allocations', 'program_id, month_index, path, allocated_wr', plan.id),
     fetchAllByPlan(supabase, 'rolling_results',
-      'program_id, month_index, demand_fp, rolling_fp, borrow_m1_prim_wr, borrow_m1_alt_wr, borrow_m1_tert_wr, borrow_m2_prim_wr, borrow_m2_alt_wr, borrow_m2_tert_wr', plan.id),
+      'program_id, month_index, demand_fp, rolling_fp, ' + BORROW_COLS.join(', '), plan.id),
   ]);
 
   // Reconstruct pipeline_wr's per-program breakdown per (bucket, month), exactly as
-  // the engine attributes it: own-month allocations + the 6 borrow channels (each
+  // the engine attributes it: own-month allocations + every borrow channel (each
   // sourcing from its path's bucket at month−offset).
   type Prog = { label: string; buckets: (string | null)[] }; // [primary, secondary, tertiary]
   const pipe = new Map<string, Prog>();
@@ -50,12 +67,9 @@ export default async function OpenToBuyPage() {
     const p = pipe.get(r.program_id as string);
     if (!p) continue;
     const T = r.month_index as number;
-    add(p.buckets[0], T - 1, r.program_id as string, Number(r.borrow_m1_prim_wr));
-    add(p.buckets[1], T - 1, r.program_id as string, Number(r.borrow_m1_alt_wr));
-    add(p.buckets[2], T - 1, r.program_id as string, Number(r.borrow_m1_tert_wr));
-    add(p.buckets[0], T - 2, r.program_id as string, Number(r.borrow_m2_prim_wr));
-    add(p.buckets[1], T - 2, r.program_id as string, Number(r.borrow_m2_alt_wr));
-    add(p.buckets[2], T - 2, r.program_id as string, Number(r.borrow_m2_tert_wr));
+    for (const ch of BORROW_CHANNELS) {
+      add(p.buckets[ch.pathIdx], T - ch.offset, r.program_id as string, Number(r[ch.col] ?? 0));
+    }
   }
   const allocatedTitles = new Map<string, string>();
   for (const [k, inner] of contrib) {

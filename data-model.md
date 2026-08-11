@@ -168,7 +168,7 @@ Both the master and scenarios live in this table.
 | `settings_margin_metric` | enum | `margin_fp` / `margin_wr` / `total_contribution` |
 | `settings_allocation_mode` | enum | `fill_what_you_can` / `all_or_nothing` |
 | `settings_scope` | enum | `active` / `active_pipeline`. Default `active_pipeline`. |
-| `settings_lookback_months` | int | Default 2. |
+| `settings_lookback_months` | int | Default 2. Settings offers 1–4; the engine implements four borrow offsets, one `borrow_m‹k›_*_wr` column each. |
 | `forked_at` | timestamptz null | When the scenario was created from parent. Null for master. |
 | `deleted_at` | timestamptz null | Soft delete. |
 | `created_at`, `updated_at` | timestamptz | |
@@ -363,6 +363,12 @@ Per-(program, month), the outputs of Rolling Calc.
 | `borrow_m2_prim_wr` | numeric(18,4) | |
 | `borrow_m2_alt_wr` | numeric(18,4) | |
 | `borrow_m2_tert_wr` | numeric(18,4) | |
+| `borrow_m3_prim_wr` | numeric(18,4) | |
+| `borrow_m3_alt_wr` | numeric(18,4) | |
+| `borrow_m3_tert_wr` | numeric(18,4) | |
+| `borrow_m4_prim_wr` | numeric(18,4) | |
+| `borrow_m4_alt_wr` | numeric(18,4) | |
+| `borrow_m4_tert_wr` | numeric(18,4) | |
 | `rolling_fp` | numeric(18,4) | |
 | `rolling_wr` | numeric(18,4) | |
 | `rolling_margin` | numeric(18,4) | |
@@ -486,7 +492,7 @@ Beyond primary keys:
 ### Performance target rationale
 
 < 2 seconds full re-run assumes:
-- 50 programs × 60 months × 6 borrow channels = 18,000 borrow decisions
+- 50 programs × 60 months × 12 borrow channels = 36,000 borrow decisions
 - Plus 3,000 own-month allocations
 - Plus rank calc + aggregations
 - On a single Postgres connection with reasonable indexes and a Python (or Node)

@@ -52,7 +52,7 @@ of the app explains itself.
 | **Locked** | A program flagged as guaranteed. Locked programs are served **first**, in sheet order, before any unlocked program competes for supply. |
 | **Priority / rank** | The order in which programs claim supply. Locked programs rank by their row order; unlocked programs rank by margin (most profitable first). |
 | **Own-month allocation** | Each month, demand is first filled from that same month's harvest. |
-| **Forward-borrowing** | If a month is short, later months' spare harvest can be pulled forward to cover it (across a 6-month window). This is how the pipeline is modelled. |
+| **Forward-borrowing** | If a month is short, spare harvest from *earlier* months can be carried forward to cover it — up to 4 months back, set by Settings → Lookback months. This is how the pipeline is modelled. |
 | **Unallocated** | Demand that could not be filled from any bucket in any eligible month — the shortfall. |
 | **Pipeline WR** | Harvest that has been committed forward to cover earlier demand — supply "in the pipeline." |
 | **Plan / Scenario** | A complete set of inputs + computed results. The **master plan** is your live baseline; **scenarios** are forks you can experiment in without touching the master. |

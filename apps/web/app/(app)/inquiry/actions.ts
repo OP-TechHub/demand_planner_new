@@ -28,15 +28,22 @@ export type InquiryMonth = {
 };
 
 /**
- * How far back the engine's borrow channels reach (rolling.ts CHANNELS: M-1 and
- * M-2). The plan's `settings_lookback_months` can narrow this, never widen it.
+ * How far back the engine's borrow channels reach (rolling.ts MAX_LOOKBACK: M-1
+ * through M-4). The plan's `settings_lookback_months` can narrow this, never
+ * widen it.
  */
-const MAX_LOOKBACK = 2;
+const MAX_LOOKBACK = 4;
 
 /**
  * The months whose spare capacity an inquiry can draw on: the inquiry months
- * themselves, plus each one's borrow sources (M-1, M-2). An inquiry for Jan can
- * be met from Nov and Dec harvest, exactly as the rolling calc does it (§5.4).
+ * themselves, plus each one's borrow sources (M-1 … M-4). An inquiry for Jan can
+ * be met from Sep–Dec harvest, exactly as the rolling calc does it (§5.4).
+ *
+ * The spare it draws on is what survived the last recompute — active programs
+ * and then pipeline orders, in rank order, have already taken their fill across
+ * the same four months. So an unmet pipeline order is served before this inquiry
+ * sees anything, which is the whole point of reading engine output rather than
+ * raw harvest here.
  */
 function sourceMonthsFor(monthsSel: number[]): number[] {
   const out = new Set<number>();
@@ -80,10 +87,10 @@ export type InquiryContext =
       months: InquiryMonth[];
       /**
        * Spare whole-round keyed `${bucket_id}:${month_index}`, covering the
-       * inquiry months AND their borrow sources (M-1, M-2).
+       * inquiry months AND their borrow sources (M-1 … M-4).
        */
       spare: Record<string, number>;
-      /** How many months back this plan lets the engine borrow (0–2). */
+      /** How many months back this plan lets the engine borrow (0–4). */
       lookbackMonths: number;
       otherActive: InquiryOtherProgram[];
     }
@@ -95,7 +102,7 @@ export type InquiryContext =
  * passes the resolved list): per month, the program's sourcing paths and the
  * currently-planned demand (so each month can be overridden), plus the spare
  * whole-round of every month those inquiries can reach — their own month and the
- * lookback sources M-1 and M-2. Months are NOT independent (two can compete for
+ * lookback sources M-1 … M-4. Months are NOT independent (two can compete for
  * the same earlier month's spare), so the client plans them from one shared pool.
  */
 export async function getInquiryContext(
@@ -234,10 +241,10 @@ export type NewInquiryData =
       computed: boolean;
       /**
        * Spare whole-round per chosen bucket per month, keyed `${bucketId}:${month}`
-       * — the inquiry months plus their borrow sources (M-1, M-2).
+       * — the inquiry months plus their borrow sources (M-1 … M-4).
        */
       spare: Record<string, number>;
-      /** How many months back this plan lets the engine borrow (0–2). */
+      /** How many months back this plan lets the engine borrow (0–4). */
       lookbackMonths: number;
       otherActive: InquiryOtherProgram[];
     }
@@ -268,7 +275,7 @@ export async function getNewInquiryData(
   ]);
   const computed = (anyResult ?? []).length > 0;
 
-  // Spare capacity for the inquiry months AND their borrow sources (M-1, M-2),
+  // Spare capacity for the inquiry months AND their borrow sources (M-1 … M-4),
   // so the client can offer earlier-month capacity the engine could draw on.
   const spare: Record<string, number> = {};
   if (buckets.length && monthsSel.length) {

@@ -26,7 +26,9 @@ export async function updateSettings(_prev: SettingsFormState, fd: FormData): Pr
   if (!MARGIN.includes(margin) || !ALLOC.includes(alloc) || !SCOPE.includes(scope)) {
     return { error: 'Invalid setting value.', ok: false };
   }
-  if (![1, 2, 3].includes(lookback)) return { error: 'Lookback must be 1, 2, or 3 months.', ok: false };
+  // Capped at the engine's MAX_LOOKBACK — anything beyond 4 has no borrow channel
+  // and no `rolling_results` column to land in, so it would silently do nothing.
+  if (![1, 2, 3, 4].includes(lookback)) return { error: 'Lookback must be between 1 and 4 months.', ok: false };
   if (!/^\d{4}-\d{2}$/.test(startMonth)) return { error: 'Invalid start month.', ok: false };
 
   const supabase = await createClient();
