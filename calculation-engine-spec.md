@@ -377,7 +377,8 @@ Once you review Sections 1-4 and answer the 5 open questions, I'll write Section
 Own-month allocation (Section 4) fulfils demand from the SAME month's harvest. When
 a program has demand at month M but insufficient own-month capacity, the Rolling
 Calc engine attempts to fulfil that demand by drawing from PRIOR months' unused
-capacity — a "forward-look" from M into M-1 and M-2.
+capacity — a "forward-look" from M into M-1 … M-4 (§5.2), truncated to the plan's
+`lookback_months` setting.
 
 This is the algorithm we spent the most time getting right. The subtlety is that
 multiple programs compete for the same limited prior-month capacity, and the order

@@ -135,3 +135,39 @@
     background-color: hsl(var(--muted-foreground) / 0.5);
   }
 }
+
+/*
+ * Printing an offer sheet. The app chrome (sidebar, top bar, filters) has no
+ * place on a document sent to a customer, so printing hides everything and
+ * reveals only the sheet — visibility rather than display, so the sheet keeps
+ * its layout instead of collapsing with its hidden ancestors.
+ */
+@media print {
+  body * {
+    visibility: hidden !important;
+  }
+  #offer-sheet,
+  #offer-sheet * {
+    visibility: visible !important;
+  }
+  #offer-sheet {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    color: #000;
+    background: #fff;
+  }
+  #offer-sheet table {
+    page-break-inside: auto;
+  }
+  #offer-sheet tr {
+    page-break-inside: avoid;
+  }
+  #offer-sheet thead {
+    display: table-header-group;
+  }
+  @page {
+    margin: 16mm;
+  }
+}
