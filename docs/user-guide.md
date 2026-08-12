@@ -214,8 +214,9 @@ last recompute, with a "last computed" timestamp.
 2. **Allocate own-month supply** — for each month, fill each program's demand
    from that month's harvest in the buckets on its recipe, best path first,
    converting WR→FP by yield, in priority order.
-3. **Borrow forward** — where a month is short, pull spare harvest from later
-   months (within a rolling window) to cover it. This models the supply pipeline.
+3. **Borrow forward** — where a month is short, carry spare harvest from *earlier*
+   months forward to cover it (up to 4 months back, per Settings → Lookback
+   months). This models the supply pipeline.
 4. **Aggregate** — total everything into the summaries: what was allocated, what
    stayed unallocated, the pipeline commitments, and the money.
 
