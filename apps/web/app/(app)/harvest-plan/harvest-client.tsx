@@ -134,15 +134,16 @@ export function HarvestClient({
           }
         />
       ) : (
-        <ScrollX className="rounded-lg border border-border">
+        <ScrollX className="max-h-[70vh] rounded-lg border border-border">
           <table className="w-max text-xs">
-            <thead className="bg-muted/50 text-muted-foreground">
+            {/* Sticky month row — see the note in components/output-grid.tsx. */}
+            <thead className="bg-muted text-muted-foreground">
               <tr>
-                <th className={cn(stickyCol, 'min-w-[10rem] bg-muted/50 px-3 py-2 text-left font-semibold')}>Bucket</th>
+                <th className={cn(stickyCol, 'sticky top-0 z-30 min-w-[10rem] border-b border-border bg-muted px-3 py-2 text-left font-semibold')}>Bucket</th>
                 {visibleMonths.map((mo) => (
-                  <th key={mo} className={cn('min-w-[4.5rem] px-2 py-2 text-right font-medium', yearStart(mo) && 'border-l border-border')}>{monthLabel(planStartDate, mo)}</th>
+                  <th key={mo} className={cn('sticky top-0 z-20 min-w-[4.5rem] border-b border-border bg-muted px-2 py-2 text-right font-medium', yearStart(mo) && 'border-l border-border')}>{monthLabel(planStartDate, mo)}</th>
                 ))}
-                <th className="min-w-[6rem] border-l bg-muted/50 px-3 py-2 text-right font-semibold">
+                <th className="sticky top-0 z-20 min-w-[6rem] border-b border-l border-border bg-muted px-3 py-2 text-right font-semibold">
                   {fullRange ? `${horizon}mo total` : 'Range total'}
                 </th>
               </tr>

@@ -1,25 +1,42 @@
 'use client';
 
-import { useActionState, useEffect, useState, useTransition } from 'react';
+import { useActionState, useEffect, useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import type { Bucket } from '@oceanpick/shared';
+import { monthLabel, type Bucket } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 import { saveBucket, setBucketArchived, type BucketFormState } from './actions';
 
-export type BucketRow = { bucket: Bucket; usage: number; capacity: number };
+/** `monthly` is harvest capacity per month (kg WR), length === horizon. */
+export type BucketRow = { bucket: Bucket; usage: number; monthly: number[] };
 
 export function BucketsClient({
   orgId,
   rows,
+  planStartDate,
+  horizon,
   canEdit,
 }: {
   orgId: string;
   rows: BucketRow[];
+  planStartDate: string;
+  horizon: number;
   canEdit: boolean;
 }) {
   const router = useRouter();
   const [modal, setModal] = useState<null | { bucket: Bucket | null }>(null);
   const [isPending, startTransition] = useTransition();
+
+  const months = useMemo(() => Array.from({ length: horizon }, (_, i) => i + 1), [horizon]);
+  const [fromMonth, setFromMonth] = useState(1);
+  const [toMonth, setToMonth] = useState(horizon);
+  const fullRange = fromMonth === 1 && toMonth === horizon;
+
+  // Keep the range coherent: dragging one end past the other pushes the other end.
+  const onFrom = (v: number) => { setFromMonth(v); if (v > toMonth) setToMonth(v); };
+  const onTo = (v: number) => { setToMonth(v); if (v < fromMonth) setFromMonth(v); };
+
+  const capacityOf = (r: BucketRow) =>
+    r.monthly.slice(fromMonth - 1, toMonth).reduce((s, v) => s + v, 0);
 
   const nextOrder = (Math.max(0, ...rows.map((r) => r.bucket.sort_order)) || 0) + 10;
 
@@ -41,6 +58,31 @@ export function BucketsClient({
         )}
       </div>
 
+      <div className="flex flex-wrap items-center gap-1.5 text-sm">
+        <span className="text-xs font-medium text-muted-foreground">Months</span>
+        <select value={fromMonth} onChange={(e) => onFrom(Number(e.target.value))} className={filterCls} aria-label="From month">
+          {months.map((mo) => <option key={mo} value={mo}>{monthLabel(planStartDate, mo)}</option>)}
+        </select>
+        <span className="text-xs text-muted-foreground">to</span>
+        <select value={toMonth} onChange={(e) => onTo(Number(e.target.value))} className={filterCls} aria-label="To month">
+          {months.map((mo) => <option key={mo} value={mo}>{monthLabel(planStartDate, mo)}</option>)}
+        </select>
+        {!fullRange && (
+          <>
+            <button
+              type="button"
+              onClick={() => { setFromMonth(1); setToMonth(horizon); }}
+              className="text-xs font-medium text-primary hover:underline"
+            >
+              Reset
+            </button>
+            <span className="text-xs text-muted-foreground">
+              Showing {toMonth - fromMonth + 1} of {horizon} months.
+            </span>
+          </>
+        )}
+      </div>
+
       <div className="overflow-x-auto rounded-lg border">
         <table className="w-full text-sm">
           <thead className="border-b bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
@@ -48,12 +90,16 @@ export function BucketsClient({
               <th className="px-3 py-2">Order</th>
               <th className="px-3 py-2">Name</th>
               <th className="px-3 py-2 text-right">Programs using</th>
-              <th className="px-3 py-2 text-right">60mo capacity (kg WR)</th>
+              <th className="px-3 py-2 text-right">
+                {fullRange
+                  ? `${horizon}mo capacity (kg WR)`
+                  : `${monthLabel(planStartDate, fromMonth)} – ${monthLabel(planStartDate, toMonth)} capacity (kg WR)`}
+              </th>
               {canEdit && <th className="px-3 py-2" />}
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ bucket: b, usage, capacity }) => (
+            {rows.map((r) => { const { bucket: b, usage } = r; return (
               <tr key={b.id} className={cn('border-b last:border-0 hover:bg-muted/30', b.is_archived && 'opacity-50')}>
                 <td className="px-3 py-2 tabular-nums text-muted-foreground">{b.sort_order}</td>
                 <td className="px-3 py-2 font-medium">
@@ -61,7 +107,7 @@ export function BucketsClient({
                   {b.is_archived && <span className="ml-2 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">archived</span>}
                 </td>
                 <td className="px-3 py-2 text-right tabular-nums">{usage}</td>
-                <td className="px-3 py-2 text-right tabular-nums">{capacity.toLocaleString()}</td>
+                <td className="px-3 py-2 text-right tabular-nums">{capacityOf(r).toLocaleString()}</td>
                 {canEdit && (
                   <td className="px-3 py-2">
                     <div className="flex justify-end gap-3">
@@ -77,7 +123,7 @@ export function BucketsClient({
                   </td>
                 )}
               </tr>
-            ))}
+            ); })}
           </tbody>
         </table>
         {rows.length === 0 && (
@@ -150,3 +196,4 @@ function BucketModal({
 }
 
 const inputCls = 'mt-1 w-full rounded-md border px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-primary';
+const filterCls = 'rounded-md border px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-primary';

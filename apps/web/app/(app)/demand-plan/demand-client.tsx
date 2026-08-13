@@ -228,18 +228,24 @@ export function DemandClient({
           }
         />
       ) : (
-        <ScrollX className="rounded-lg border border-border">
+        <ScrollX className="max-h-[70vh] rounded-lg border border-border">
           <table className="w-max text-xs">
-            <thead className="bg-muted/50 text-muted-foreground">
+            {/*
+              The month row stays put while you scroll the 60-wide grid. Sticky is
+              on the cells, not <thead>, and their background must be OPAQUE or
+              rows show through underneath. The two frozen columns sit at z-30 so
+              their header cells win over both the sticky row and the sticky column.
+            */}
+            <thead className="bg-muted text-muted-foreground">
               <tr>
-                <th className={cn(custCol, 'bg-muted/50 px-3 py-2 text-left font-semibold')}>
+                <th className={cn(custCol, 'sticky top-0 z-30 border-b border-border bg-muted px-3 py-2 text-left font-semibold')}>
                   Customer
                 </th>
-                <th className={cn(prodCol, 'bg-muted/50 px-3 py-2 text-left font-semibold')}>
+                <th className={cn(prodCol, 'sticky top-0 z-30 border-b border-border bg-muted px-3 py-2 text-left font-semibold')}>
                   Product
                 </th>
                 {visibleMonths.map((mo) => (
-                  <th key={mo} className={cn('min-w-[4.5rem] px-2 py-2 text-right font-medium', yearStart(mo) && 'border-l border-border')}>
+                  <th key={mo} className={cn('sticky top-0 z-20 min-w-[4.5rem] border-b border-border bg-muted px-2 py-2 text-right font-medium', yearStart(mo) && 'border-l border-border')}>
                     {monthLabel(planStartDate, mo)}
                   </th>
                 ))}

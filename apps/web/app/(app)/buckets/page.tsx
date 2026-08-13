@@ -22,7 +22,7 @@ export default async function BucketsPage() {
     supabase.from('buckets').select('*').order('sort_order'),
     supabase.from('programs').select('primary_bucket_id, secondary_bucket_id, tertiary_bucket_id').eq('plan_id', plan.id).is('deleted_at', null),
     // harvest_plan can exceed the 1000-row cap (buckets × 60), so page it.
-    fetchAllByPlan(supabase, 'harvest_plan', 'bucket_id, capacity_kg_wr', plan.id),
+    fetchAllByPlan(supabase, 'harvest_plan', 'bucket_id, month_index, capacity_kg_wr', plan.id),
     getProfile(),
   ]);
 
@@ -33,22 +33,32 @@ export default async function BucketsPage() {
       if (id) usage.set(id, (usage.get(id) ?? 0) + 1);
     }
   }
-  // 60-month harvest capacity per bucket.
-  const capacity = new Map<string, number>();
-  for (const h of (harvest ?? []) as Pick<HarvestCell, 'bucket_id' | 'capacity_kg_wr'>[]) {
-    capacity.set(h.bucket_id, (capacity.get(h.bucket_id) ?? 0) + h.capacity_kg_wr);
+  // Harvest capacity per bucket, kept PER MONTH so the client's range filter can
+  // re-total it without another round trip. Each cell is rounded before summing,
+  // exactly as the Harvest Plan grid does it, so a bucket's total here always
+  // matches that page's row total rather than drifting by the stored decimals.
+  const horizon = plan.horizon_months;
+  const monthly = new Map<string, number[]>();
+  for (const h of (harvest ?? []) as Pick<HarvestCell, 'bucket_id' | 'month_index' | 'capacity_kg_wr'>[]) {
+    const i = h.month_index - 1;
+    if (i < 0 || i >= horizon) continue;
+    let arr = monthly.get(h.bucket_id);
+    if (!arr) { arr = new Array<number>(horizon).fill(0); monthly.set(h.bucket_id, arr); }
+    arr[i] += Math.round(h.capacity_kg_wr);
   }
 
   const rows: BucketRow[] = ((buckets ?? []) as Bucket[]).map((b) => ({
     bucket: b,
     usage: usage.get(b.id) ?? 0,
-    capacity: capacity.get(b.id) ?? 0,
+    monthly: monthly.get(b.id) ?? new Array<number>(horizon).fill(0),
   }));
 
   return (
     <BucketsClient
       orgId={plan.org_id}
       rows={rows}
+      planStartDate={plan.plan_start_date}
+      horizon={horizon}
       canEdit={canEditSection((profile?.role ?? 'viewer') as UserRole, profile?.edit_sections, 'buckets')}
     />
   );
