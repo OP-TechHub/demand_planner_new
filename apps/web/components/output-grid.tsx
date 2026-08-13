@@ -111,16 +111,22 @@ export function OutputGrid({
         )}
       </div>
 
-      <ScrollX className="rounded-lg border border-border">
+      <ScrollX className="max-h-[70vh] rounded-lg border border-border">
         <table className="w-max text-xs">
-          <thead className="bg-muted/50 text-muted-foreground">
+          {/*
+            The month row stays put while you scroll. Sticky goes on the cells,
+            not <thead>, and their background must be OPAQUE or rows show through
+            underneath. The frozen first column's header sits at z-30 so it wins
+            over both the sticky row and the sticky column.
+          */}
+          <thead className="bg-muted text-muted-foreground">
             <tr>
-              <th className={cn(stickyCol, 'min-w-[15rem] max-w-[15rem] bg-muted/50 px-3 py-2 text-left font-semibold')}>{firstColLabel}</th>
+              <th className={cn(stickyCol, 'sticky top-0 z-30 min-w-[15rem] max-w-[15rem] border-b border-border bg-muted px-3 py-2 text-left font-semibold')}>{firstColLabel}</th>
               {visibleMonths.map((mo) => (
-                <th key={mo} className={cn('min-w-[4.5rem] px-2 py-2 text-right font-medium', yearStart(mo) && 'border-l border-border')}>{monthLabel(planStartDate, mo)}</th>
+                <th key={mo} className={cn('sticky top-0 z-20 min-w-[4.5rem] border-b border-border bg-muted px-2 py-2 text-right font-medium', yearStart(mo) && 'border-l border-border')}>{monthLabel(planStartDate, mo)}</th>
               ))}
               {!hideTotals && (
-                <th className="min-w-[6rem] border-l bg-muted/50 px-3 py-2 text-right font-semibold">
+                <th className="sticky top-0 z-20 min-w-[6rem] border-b border-l border-border bg-muted px-3 py-2 text-right font-semibold">
                   {fullRange ? rightLabel : 'Range total'}
                 </th>
               )}

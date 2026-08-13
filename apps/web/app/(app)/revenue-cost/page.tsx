@@ -71,7 +71,7 @@ export default async function RevenueCostPage() {
       <StalePlanNotice planId={plan.id} lastComputedAt={plan.last_computed_at} />
       <p className="text-xs text-muted-foreground">Uses flat price/cost (time-varying overrides deferred), so dollar figures differ slightly for a few programs. Volumes are exact. Filter by status to see active or pipeline (inquiry) programs only. On <b>Cost</b>, the dropdown splits the total into its components — barra, packing, processing, storage, freight and other — which sum back to the total.</p>
       {order.length === 0 ? <NotComputed /> : (
-        <MetricGrid planStartDate={plan.plan_start_date} horizon={m} metrics={metrics} filenameBase="revenue-cost" statusFilter />
+        <MetricGrid planStartDate={plan.plan_start_date} horizon={m} metrics={metrics} filenameBase="revenue-cost" statusFilter rowFilter />
       )}
     </div>
   );
