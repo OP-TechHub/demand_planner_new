@@ -1,9 +1,10 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Download, Upload, Boxes } from 'lucide-react';
+import { Download, Upload, Boxes, Save, Factory } from 'lucide-react';
+import { toast } from '@/components/ui/toast';
 import { monthLabel, type Bucket, type HarvestCell } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 import { toCsv, downloadCsv } from '@/lib/csv';
@@ -12,7 +13,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { ScrollX } from '@/components/ui/scroll-x';
 import { WideGridImport } from '@/components/wide-grid-import';
 import { HarvestEditor } from './harvest-editor';
-import { importHarvest } from './actions';
+import { importHarvest, saveHarvestRequest } from './actions';
 
 export function HarvestClient({
   planId,
@@ -21,6 +22,8 @@ export function HarvestClient({
   buckets,
   harvestRows,
   canEdit,
+  request,
+  canEditRequest,
 }: {
   planId: string;
   planStartDate: string;
@@ -28,6 +31,9 @@ export function HarvestClient({
   buckets: Bucket[];
   harvestRows: HarvestCell[];
   canEdit: boolean;
+  /** Processing plant's requested kg WR, keyed by month index. */
+  request: Record<number, number>;
+  canEditRequest: boolean;
 }) {
   const router = useRouter();
   const [editing, setEditing] = useState<Bucket | null>(null);
@@ -50,6 +56,31 @@ export function HarvestClient({
   const yearStart = (mo: number) => mo > 1 && (mo - 1) % 12 === 0;
   const stickyCol =
     'sticky left-0 z-10 transition-shadow group-data-[scrolled=true]/scrollx:shadow-[6px_0_8px_-6px_rgba(0,0,0,0.18)]';
+
+  // Request plan: local edits until saved. Blank means nothing requested.
+  const initialReq = useMemo(
+    () => Object.fromEntries(Object.entries(request).map(([m, v]) => [m, String(Math.round(v))])) as Record<string, string>,
+    [request]
+  );
+  const [req, setReq] = useState<Record<string, string>>(initialReq);
+  const [savingReq, startSaveReq] = useTransition();
+  const reqDirty = useMemo(() => {
+    const keys = new Set([...Object.keys(initialReq), ...Object.keys(req)]);
+    for (const k of keys) if ((initialReq[k] ?? '') !== (req[k] ?? '')) return true;
+    return false;
+  }, [initialReq, req]);
+  const reqValue = (mo: number) => Number(req[String(mo)] ?? '') || 0;
+
+  function saveRequest() {
+    // Send every month in the horizon so cleared cells are removed, not just
+    // left behind at their old value.
+    const entries = months.map((mo) => ({ month_index: mo, quantity_kg_wr: reqValue(mo) }));
+    startSaveReq(async () => {
+      const res = await saveHarvestRequest(planId, entries);
+      if (res.error) toast.error(res.error);
+      else { toast.success('Request plan saved'); router.refresh(); }
+    });
+  }
 
   const capacity = useMemo(() => {
     const m = new Map<string, number>();
@@ -180,6 +211,81 @@ export function HarvestClient({
           </table>
         </ScrollX>
       )}
+
+      {/* Harvest Plan — Request Plan: the processing plant's monthly requirement.
+          Same month columns as the grid above, so the range filter lines them up. */}
+      <section className="space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="flex items-center gap-1.5 text-lg font-semibold">
+              <Factory className="h-4 w-4 text-muted-foreground" /> Harvest Plan — Request Plan
+            </h2>
+            <p className="text-xs text-muted-foreground">
+              Whole round the <b>processing plant</b> is requesting each month (kg WR). Maintained by the plant on its
+              own permission, and not used by the calc engine — it sits alongside capacity for comparison.
+            </p>
+          </div>
+          {canEditRequest && (
+            <Button size="sm" onClick={saveRequest} disabled={savingReq || !reqDirty}>
+              <Save className="h-4 w-4" /> {savingReq ? 'Saving…' : 'Save request'}
+            </Button>
+          )}
+        </div>
+
+        <ScrollX className="rounded-lg border border-border">
+          <table className="w-max text-xs">
+            <thead className="bg-muted text-muted-foreground">
+              <tr>
+                <th className={cn(stickyCol, 'sticky top-0 z-30 min-w-[10rem] border-b border-border bg-muted px-3 py-2 text-left font-semibold')}>
+                  Month
+                </th>
+                {visibleMonths.map((mo) => (
+                  <th key={mo} className={cn('sticky top-0 z-20 min-w-[4.5rem] border-b border-border bg-muted px-2 py-2 text-right font-medium', yearStart(mo) && 'border-l border-border')}>
+                    {monthLabel(planStartDate, mo)}
+                  </th>
+                ))}
+                <th className="sticky top-0 z-20 min-w-[6rem] border-b border-l border-border bg-muted px-3 py-2 text-right font-semibold">
+                  {fullRange ? `${horizon}mo total` : 'Range total'}
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="border-t">
+                <td className={cn(stickyCol, 'min-w-[10rem] border-r bg-card px-3 py-1.5 font-medium')}>Quantity (kg WR)</td>
+                {visibleMonths.map((mo) => (
+                  <td key={mo} className={cn('px-1 py-1 text-right tabular-nums', yearStart(mo) && 'border-l border-border/60')}>
+                    {canEditRequest ? (
+                      <input
+                        type="number"
+                        min={0}
+                        step="1"
+                        value={req[String(mo)] ?? ''}
+                        onChange={(e) => setReq((prev) => ({ ...prev, [String(mo)]: e.target.value }))}
+                        placeholder="0"
+                        aria-label={`Requested quantity for ${monthLabel(planStartDate, mo)}`}
+                        className="w-[4rem] rounded-md border px-1.5 py-0.5 text-right text-xs tabular-nums outline-none focus:ring-2 focus:ring-primary"
+                      />
+                    ) : (
+                      <span className={cn(reqValue(mo) === 0 && 'text-muted-foreground/40')}>
+                        {reqValue(mo).toLocaleString()}
+                      </span>
+                    )}
+                  </td>
+                ))}
+                <td className="border-l px-3 py-1.5 text-right font-semibold tabular-nums">
+                  {visibleMonths.reduce((s, mo) => s + reqValue(mo), 0).toLocaleString()}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </ScrollX>
+
+        {!canEditRequest && (
+          <p className="text-xs text-muted-foreground">
+            Read-only — editing this needs the <b>Harvest Request Plan</b> permission on this plan (Admin → Plans → Access).
+          </p>
+        )}
+      </section>
 
       <p className="text-xs text-muted-foreground">Utilization coloring arrives with the calc engine (Phase 2).</p>
 

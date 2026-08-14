@@ -98,6 +98,84 @@ export async function saveHarvestCapacity(
 }
 
 /**
+ * Save the processing plant's requested whole round per month.
+ *
+ * Sparse like the harvest plan itself: a zero or cleared month is stored as a
+ * delete, so a missing row means "nothing requested". RLS enforces the separate
+ * 'harvest_request' grant — this deliberately does NOT accept the harvest_plan
+ * permission. Not an engine input, so it never marks the plan stale.
+ */
+export async function saveHarvestRequest(
+  planId: string,
+  entries: { month_index: number; quantity_kg_wr: number }[]
+): Promise<SaveResult> {
+  if (!planId) return { error: 'Missing plan.' };
+
+  for (const e of entries) {
+    if (!Number.isInteger(e.month_index) || e.month_index < 1 || e.month_index > 60) {
+      return { error: `Invalid month ${e.month_index}.` };
+    }
+    if (!Number.isFinite(e.quantity_kg_wr) || e.quantity_kg_wr < 0) {
+      return { error: `Quantity for month ${e.month_index} must be zero or greater.` };
+    }
+  }
+
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: 'Your session expired. Sign in again.' };
+
+  // Whole kg WR, matching how harvest capacity is kept.
+  const rounded = entries.map((e) => ({ month_index: e.month_index, quantity_kg_wr: Math.round(e.quantity_kg_wr) }));
+  const upserts = rounded.filter((e) => e.quantity_kg_wr > 0);
+  const deletes = rounded.filter((e) => e.quantity_kg_wr === 0).map((e) => e.month_index);
+
+  const { data: existingRows } = await supabase
+    .from('harvest_request')
+    .select('month_index, quantity_kg_wr')
+    .eq('plan_id', planId);
+  const existing = new Map<number, number>(
+    (existingRows ?? []).map((r: { month_index: number; quantity_kg_wr: number }) => [r.month_index, Number(r.quantity_kg_wr)])
+  );
+
+  if (upserts.length) {
+    const { error } = await supabase.from('harvest_request').upsert(
+      upserts.map((e) => ({
+        plan_id: planId, month_index: e.month_index, quantity_kg_wr: e.quantity_kg_wr,
+        created_by: user.id, updated_by: user.id,
+      })),
+      { onConflict: 'plan_id,month_index' }
+    );
+    if (error) return { error: requestPermError(error.message) };
+  }
+
+  if (deletes.length) {
+    const { error } = await supabase
+      .from('harvest_request').delete().eq('plan_id', planId).in('month_index', deletes);
+    if (error) return { error: requestPermError(error.message) };
+  }
+
+  const edits: { m: number; old: number; new: number }[] = [];
+  for (const e of rounded) {
+    const old = existing.get(e.month_index) ?? 0;
+    if (old !== e.quantity_kg_wr) edits.push({ m: e.month_index, old, new: e.quantity_kg_wr });
+  }
+  edits.sort((a, b) => a.m - b.m);
+  const CAP = 40;
+  await logAudit(supabase, {
+    planId, entityType: 'harvest_request', entityId: planId, action: 'update',
+    changes: { set: upserts.length, cleared: deletes.length, edits: edits.slice(0, CAP), more: Math.max(0, edits.length - CAP) },
+  });
+  revalidatePath('/harvest-plan');
+  return { error: null };
+}
+
+function requestPermError(message: string): string {
+  return /row-level security|violates row-level/i.test(message)
+    ? 'Can’t edit the request plan — it needs the Harvest Request Plan permission on this plan, and the plan must be unlocked.'
+    : message;
+}
+
+/**
  * Bulk import harvest capacity from a wide CSV (bucket × M1..M60). Keys resolve
  * to bucket ids; non-blank cells upsert into harvest_plan. Unknown bucket names
  * are skipped and reported.

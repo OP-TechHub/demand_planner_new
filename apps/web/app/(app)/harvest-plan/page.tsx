@@ -19,18 +19,24 @@ export default async function HarvestPlanPage() {
 
   const supabase = await createClient();
   // harvest_plan can exceed PostgREST's 1000-row cap (buckets × 60), so page it.
-  const [{ data: buckets }, rows, profile, grants] = await Promise.all([
+  const [{ data: buckets }, rows, { data: requestRows }, profile, grants] = await Promise.all([
     supabase.from('buckets').select('*').eq('is_archived', false).order('sort_order'),
     fetchAllByPlan(supabase, 'harvest_plan', '*', plan.id),
+    supabase.from('harvest_request').select('month_index, quantity_kg_wr').eq('plan_id', plan.id),
     getProfile(),
     getMyPlanGrants(plan.id),
   ]);
 
-  const canEdit = canEditPlanSection(
-    plan,
-    { id: profile?.id ?? '', role: (profile?.role ?? 'viewer') as UserRole },
-    grants.has('harvest_plan')
-  );
+  const me = { id: profile?.id ?? '', role: (profile?.role ?? 'viewer') as UserRole };
+  const canEdit = canEditPlanSection(plan, me, grants.has('harvest_plan'));
+  // The request plan is the processing plant's, on its own grant — holding
+  // harvest_plan does not confer it.
+  const canEditRequest = canEditPlanSection(plan, me, grants.has('harvest_request'));
+
+  const request: Record<number, number> = {};
+  for (const r of (requestRows ?? []) as { month_index: number; quantity_kg_wr: number }[]) {
+    request[r.month_index] = Number(r.quantity_kg_wr);
+  }
 
   return (
     <HarvestClient
@@ -40,6 +46,8 @@ export default async function HarvestPlanPage() {
       buckets={(buckets ?? []) as Bucket[]}
       harvestRows={rows as HarvestCell[]}
       canEdit={canEdit}
+      request={request}
+      canEditRequest={canEditRequest}
     />
   );
 }

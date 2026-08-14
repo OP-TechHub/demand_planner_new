@@ -156,7 +156,7 @@ export const can = {
  * Sections whose edit access can be granted per user. Admins always have all;
  * everyone else edits only the sections they've been granted (empty = view-only).
  */
-export const EDITABLE_SECTIONS = ['programs', 'demand_plan', 'harvest_plan', 'buckets', 'inquiry'] as const;
+export const EDITABLE_SECTIONS = ['programs', 'demand_plan', 'harvest_plan', 'buckets', 'inquiry', 'harvest_request'] as const;
 export type EditableSection = (typeof EDITABLE_SECTIONS)[number];
 
 /**
@@ -164,8 +164,12 @@ export type EditableSection = (typeof EDITABLE_SECTIONS)[number];
  * 'buckets' is excluded — buckets are org-wide (no plan_id), so their grant
  * stays global via canEditSection / users.edit_sections. 'inquiry' isn't a
  * table — it's the right to save inquiries into the plan's pipeline.
+ *
+ * 'harvest_request' is held by the processing plant and is intentionally
+ * separate from 'harvest_plan': stating a monthly requirement and editing the
+ * harvest capacity are different jobs, usually different people.
  */
-export const PLAN_EDITABLE_SECTIONS = ['programs', 'demand_plan', 'harvest_plan', 'inquiry'] as const;
+export const PLAN_EDITABLE_SECTIONS = ['programs', 'demand_plan', 'harvest_plan', 'inquiry', 'harvest_request'] as const;
 export type PlanEditableSection = (typeof PLAN_EDITABLE_SECTIONS)[number];
 
 export const SECTION_LABEL: Record<EditableSection, string> = {
@@ -174,6 +178,7 @@ export const SECTION_LABEL: Record<EditableSection, string> = {
   harvest_plan: 'Harvest Plan',
   buckets: 'Buckets',
   inquiry: 'New Inquiry',
+  harvest_request: 'Harvest Request Plan',
 };
 
 /** Can this user edit a given section? Admin ⇒ everything; others ⇒ granted only. */
