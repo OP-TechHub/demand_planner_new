@@ -39,9 +39,9 @@ export default async function HomePage() {
     // Program status + customer, for the active/pipeline split and the
     // shortfall-by-customer chart.
     const { data: progs } = await supabase
-      .from('programs').select('id, status, customer, primary_yield, max_monthly_demand_fp')
+      .from('programs').select('id, item_code, status, customer, primary_yield, max_monthly_demand_fp')
       .eq('plan_id', plan.id).is('deleted_at', null);
-    const progList = (progs ?? []) as { id: string; status: string; customer: string; primary_yield: number; max_monthly_demand_fp: number }[];
+    const progList = (progs ?? []) as { id: string; item_code: string; status: string; customer: string; primary_yield: number; max_monthly_demand_fp: number }[];
     const statusById = new Map(progList.map((p) => [p.id, p.status]));
     const customerById = new Map(progList.map((p) => [p.id, p.customer]));
 
@@ -73,7 +73,35 @@ export default async function HomePage() {
         pd.set(r.program_id, (pd.get(r.program_id) ?? 0) + r.demand_fp);
         pf.set(r.program_id, (pf.get(r.program_id) ?? 0) + r.rolling_fp);
       }
-      monthly = dem.map((d, i) => ({ demand: d, fulfilled: ful[i] ?? 0, wrUsed: wr[i] ?? 0, revenue: rev[i] ?? 0, cost: cst[i] ?? 0, activeDemand: actDem[i] ?? 0, pipelineDemand: pipeDem[i] ?? 0 }));
+      // Secondary-product revenue, on the same basis as the Secondary products
+      // page: quantity = feedstock WR × yield, value = quantity × price. Group 1
+      // reads one product's whole round; group 2 reads the plan's total.
+      const { data: secDefs } = await supabase
+        .from('secondary_products')
+        .select('basis, source_item_code, yield_pct, price_per_kg, is_archived');
+      const codeById = new Map(progList.map((p) => [p.id, p.item_code]));
+      const feedByCode = new Map<string, number[]>();
+      for (const r of rr) {
+        const code = codeById.get(r.program_id);
+        const i = r.month_index - 1;
+        if (!code || i < 0 || i >= months) continue;
+        let arr = feedByCode.get(code);
+        if (!arr) { arr = new Array<number>(months).fill(0); feedByCode.set(code, arr); }
+        arr[i] += r.rolling_wr;
+      }
+      const secRev = new Array<number>(months).fill(0);
+      for (const d of (secDefs ?? []) as {
+        basis: string; source_item_code: string | null; yield_pct: number; price_per_kg: number; is_archived: boolean;
+      }[]) {
+        if (d.is_archived) continue;
+        const feed = d.basis === 'total_wr' ? wr : feedByCode.get(d.source_item_code ?? '');
+        if (!feed) continue;
+        const rate = Number(d.yield_pct) * Number(d.price_per_kg);
+        if (!(rate > 0)) continue;
+        for (let i = 0; i < months; i++) secRev[i] += (feed[i] ?? 0) * rate;
+      }
+
+      monthly = dem.map((d, i) => ({ demand: d, fulfilled: ful[i] ?? 0, wrUsed: wr[i] ?? 0, revenue: rev[i] ?? 0, secondaryRevenue: secRev[i] ?? 0, cost: cst[i] ?? 0, activeDemand: actDem[i] ?? 0, pipelineDemand: pipeDem[i] ?? 0 }));
       shortfall = [...shortByCust.entries()].map(([customer, m]) => ({ customer, months: m }));
       let under = 0;
       for (const [pid, d] of pd) if (d > 0 && (pf.get(pid) ?? 0) / d < 0.5) under++;

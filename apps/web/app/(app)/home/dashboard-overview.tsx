@@ -9,7 +9,7 @@ import { Card } from '@/components/ui/card';
 import { MonthlyLineChart } from '@/components/charts/monthly-line-chart';
 
 /** One month of already-aggregated dashboard figures (across all programs). */
-export type MonthPoint = { demand: number; fulfilled: number; wrUsed: number; revenue: number; cost: number; activeDemand: number; pipelineDemand: number };
+export type MonthPoint = { demand: number; fulfilled: number; wrUsed: number; revenue: number; secondaryRevenue: number; cost: number; activeDemand: number; pipelineDemand: number };
 /** Per-customer unfulfilled FP, one entry per month — ranked client-side within the range. */
 export type ShortfallRow = { customer: string; months: number[] };
 
@@ -52,10 +52,18 @@ export function DashboardOverview({
     const demand = slice.reduce((s, m) => s + m.demand, 0);
     const fulfilled = slice.reduce((s, m) => s + m.fulfilled, 0);
     const wrUsed = slice.reduce((s, m) => s + m.wrUsed, 0);
-    const revenue = slice.reduce((s, m) => s + m.revenue, 0);
+    const primary = slice.reduce((s, m) => s + m.revenue, 0);
+    const secondary = slice.reduce((s, m) => s + m.secondaryRevenue, 0);
     const cost = slice.reduce((s, m) => s + m.cost, 0);
+    // By-products carry no extra cost — the fish they come off is already costed
+    // to the primary product — so secondary revenue drops straight into margin.
+    const revenue = primary + secondary;
     const margin = revenue - cost;
-    return { demand, fulfilled, wrUsed, revenue, margin, fulPct: demand > 0 ? fulfilled / demand : 0, gp: revenue > 0 ? margin / revenue : 0 };
+    return {
+      demand, fulfilled, wrUsed, revenue, primary, secondary, margin,
+      fulPct: demand > 0 ? fulfilled / demand : 0,
+      gp: revenue > 0 ? margin / revenue : 0,
+    };
   }, [slice]);
 
   const chart = useMemo(
@@ -63,8 +71,14 @@ export function DashboardOverview({
     [slice, planStartDate, from]
   );
   // Revenue vs. margin over the same range ($ axis).
+  // Revenue here matches the KPI above — primary plus secondary products.
   const finChart = useMemo(
-    () => slice.map((m, i) => ({ label: monthLabel(planStartDate, from + i), revenue: m.revenue, margin: m.revenue - m.cost })),
+    () =>
+      slice.map((m, i) => ({
+        label: monthLabel(planStartDate, from + i),
+        revenue: m.revenue + m.secondaryRevenue,
+        margin: m.revenue + m.secondaryRevenue - m.cost,
+      })),
     [slice, planStartDate, from]
   );
   // Active vs. pipeline demand over the range, for the pie.
@@ -119,8 +133,24 @@ export function DashboardOverview({
           foot={`${kg(t.wrUsed)} kg WR used to fulfil`}
         />
         <Stat icon={Target} tone="accent" label="Fulfilled" value={`${(t.fulPct * 100).toFixed(0)}%`} sub={`${kg(t.fulfilled)} kg FP`} />
-        <Stat icon={DollarSign} tone="success" label="Revenue" value={usd(t.revenue)} sub="allocated" />
-        <Stat icon={TrendingUp} tone="primary" label="Margin" value={usd(t.margin)} sub={`GP ${(t.gp * 100).toFixed(1)}%`} />
+        <Stat
+          icon={DollarSign}
+          tone="success"
+          label="Revenue"
+          value={usd(t.revenue)}
+          sub="allocated"
+          foot={t.secondary > 0 ? `incl. ${usd(t.secondary)} secondary products` : undefined}
+        />
+        <Stat
+          icon={TrendingUp}
+          tone="primary"
+          label="Margin"
+          value={usd(t.margin)}
+          sub={`GP ${(t.gp * 100).toFixed(1)}%`}
+          // By-products carry no cost of their own, so every dollar they earn is
+          // margin — the contribution equals the secondary revenue exactly.
+          foot={t.secondary > 0 ? `incl. ${usd(t.secondary)} from by-products` : undefined}
+        />
       </div>
 
       {chart.length > 0 && (
