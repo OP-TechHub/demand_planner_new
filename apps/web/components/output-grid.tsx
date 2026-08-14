@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { BarChart3 } from 'lucide-react';
 import { monthLabel } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
@@ -47,6 +47,8 @@ export function OutputGrid({
   showColumnTotals = true,
   hideTotals = false,
   firstColLabel = 'Program',
+  extraCols,
+  onRangeChange,
   cellTitle,
   cellBg,
 }: {
@@ -59,6 +61,18 @@ export function OutputGrid({
   showColumnTotals?: boolean;
   hideTotals?: boolean;
   firstColLabel?: string;
+  /**
+   * Extra descriptive columns between the frozen label and the months, filled
+   * from each row's `extra` array (positional). Deliberately NOT frozen — the
+   * label column is what you need while scrolling right, and pinning several
+   * more would eat the width the months need.
+   */
+  extraCols?: { label: string; align?: 'left' | 'right'; width?: string }[];
+  /**
+   * Reports the visible month range, so a page's own headline figures can total
+   * the same window the grid is showing instead of the whole horizon.
+   */
+  onRangeChange?: (fromMonth: number, toMonth: number) => void;
   /** Optional per-cell hover text, keyed `${rowKey}:${month}` (e.g. an inquiry breakdown). */
   cellTitle?: Map<string, string>;
   /** Optional per-cell CSS `background` (e.g. a fulfilment gradient), keyed `${rowKey}:${month}`. */
@@ -66,6 +80,12 @@ export function OutputGrid({
 }) {
   const [fromMonth, setFromMonth] = useState(1);
   const [toMonth, setToMonth] = useState(horizon);
+
+  // Held in a ref so an inline callback from the parent can't re-fire this on
+  // every render.
+  const onRangeRef = useRef(onRangeChange);
+  onRangeRef.current = onRangeChange;
+  useEffect(() => { onRangeRef.current?.(fromMonth, toMonth); }, [fromMonth, toMonth]);
 
   const months = Array.from({ length: horizon }, (_, i) => i + 1);
   const visibleMonths = months.filter((m) => m >= fromMonth && m <= toMonth);
@@ -122,6 +142,18 @@ export function OutputGrid({
           <thead className="bg-muted text-muted-foreground">
             <tr>
               <th className={cn(stickyCol, 'sticky top-0 z-30 min-w-[15rem] max-w-[15rem] border-b border-border bg-muted px-3 py-2 text-left font-semibold')}>{firstColLabel}</th>
+              {extraCols?.map((c) => (
+                <th
+                  key={c.label}
+                  className={cn(
+                    'sticky top-0 z-20 whitespace-nowrap border-b border-r border-border bg-muted px-3 py-2 font-semibold',
+                    c.align === 'right' ? 'text-right' : 'text-left',
+                    c.width
+                  )}
+                >
+                  {c.label}
+                </th>
+              ))}
               {visibleMonths.map((mo) => (
                 <th key={mo} className={cn('sticky top-0 z-20 min-w-[4.5rem] border-b border-border bg-muted px-2 py-2 text-right font-medium', yearStart(mo) && 'border-l border-border')}>{monthLabel(planStartDate, mo)}</th>
               ))}
@@ -139,6 +171,17 @@ export function OutputGrid({
                   <span className="font-medium">{r.label}</span>
                   {r.sublabel && <span className="ml-1 text-muted-foreground">{r.sublabel}</span>}
                 </td>
+                {extraCols?.map((c, i) => (
+                  <td
+                    key={c.label}
+                    className={cn(
+                      'whitespace-nowrap border-r px-3 py-1.5 text-muted-foreground',
+                      c.align === 'right' ? 'text-right tabular-nums' : 'text-left'
+                    )}
+                  >
+                    {r.extra?.[i] ?? ''}
+                  </td>
+                ))}
                 {visibleMonths.map((mo) => {
                   const key = `${r.key}:${mo}`;
                   const tip = cellTitle?.get(key);
@@ -160,6 +203,7 @@ export function OutputGrid({
             {!hideTotals && showColumnTotals && rows.length > 0 && (
               <tr className="border-t-2 bg-muted/40 font-semibold">
                 <td className={cn(stickyCol, 'bg-muted/40 px-3 py-1.5')}>TOTAL</td>
+                {extraCols?.map((c) => <td key={c.label} className="border-r px-3 py-1.5" />)}
                 {visibleMonths.map((mo) => (
                   <td key={mo} className={cn('px-2 py-1.5 text-right tabular-nums', yearStart(mo) && 'border-l border-border/60')}>{fmt(colTotal(mo))}</td>
                 ))}

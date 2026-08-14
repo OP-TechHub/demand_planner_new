@@ -6,6 +6,11 @@ export interface GridRow {
   sublabel?: string;
   values: (number | null)[]; // length === horizon
   group?: string; // optional grouping (e.g. program status) for client-side filtering
+  /**
+   * Pre-formatted values for the grid's optional extra descriptive columns
+   * (see OutputGrid's `extraCols`). Positional — one entry per declared column.
+   */
+  extra?: string[];
 }
 
 /**
@@ -20,17 +25,21 @@ export function gridCsvRows(
   planStartDate: string,
   horizon: number,
   rows: GridRow[],
-  includeTotal = true
+  includeTotal = true,
+  /** Headers for the grid's extra descriptive columns, in the same order as `row.extra`. */
+  extraCols: string[] = []
 ): (string | number | null)[][] {
   const header = [
     firstCol,
+    ...extraCols,
     ...Array.from({ length: horizon }, (_, i) => monthLabel(planStartDate, i + 1)),
     ...(includeTotal ? ['Total'] : []),
   ];
   const body = rows.map((r) => {
     const label = r.sublabel ? `${r.label} — ${r.sublabel}` : r.label;
+    const extra = extraCols.map((_, i) => r.extra?.[i] ?? '');
     const total = r.values.reduce((s: number, v) => s + (v ?? 0), 0);
-    return [label, ...r.values, ...(includeTotal ? [total] : [])];
+    return [label, ...extra, ...r.values, ...(includeTotal ? [total] : [])];
   });
   return [header, ...body];
 }

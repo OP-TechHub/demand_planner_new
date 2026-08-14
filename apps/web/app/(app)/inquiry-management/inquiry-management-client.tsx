@@ -1,7 +1,8 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Info, Printer } from 'lucide-react';
+import { monthLabel } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { MetricGrid, type Metric } from '@/components/metric-grid';
@@ -104,12 +105,25 @@ export function InquiryManagementClient({
     [sources, unallocated, pipeline, months, bucketName]
   );
 
-  // Horizon-wide headline. The grid below carries its own month filter; these
-  // deliberately cover the whole plan, which is what an inquiry is sized against.
+  // The grid owns the month filter, so it reports its visible window back here
+  // and the headline totals cover exactly the period on screen.
+  const [range, setRange] = useState({ from: 1, to: horizon });
+  const onRangeChange = useCallback(
+    (from: number, to: number) =>
+      setRange((prev) => (prev.from === from && prev.to === to ? prev : { from, to })),
+    []
+  );
+  const fullRange = range.from === 1 && range.to === horizon;
+  const rangeText = `${monthLabel(planStartDate, range.from)} – ${monthLabel(planStartDate, range.to)}`;
+  const rangeMonths = useMemo(
+    () => months.filter((m) => m >= range.from && m <= range.to),
+    [months, range]
+  );
+
   const totals = useMemo(() => {
     let unalloc = 0, pipe = 0, unallocWr = 0, pipeWr = 0;
     for (const s of sources) {
-      for (const m of months) {
+      for (const m of rangeMonths) {
         const u = wrOf(unallocated, s.bucket_id, m);
         const p = wrOf(pipeline, s.bucket_id, m);
         unallocWr += u; pipeWr += p;
@@ -117,7 +131,7 @@ export function InquiryManagementClient({
       }
     }
     return { unalloc, pipe, total: unalloc + pipe, unallocWr, pipeWr, totalWr: unallocWr + pipeWr };
-  }, [sources, unallocated, pipeline, months]);
+  }, [sources, unallocated, pipeline, rangeMonths]);
 
   // Finished goods for the printable sheet, at the chosen basis — summed across
   // the size ranges, since the customer offer is a single figure per month.
@@ -174,7 +188,7 @@ export function InquiryManagementClient({
             <Stat
               label="Most we can provide"
               value={kg(totals.total)}
-              sub={`FG · from ${kg(totals.totalWr)} WR`}
+              sub={`FG · from ${kg(totals.totalWr)} WR${fullRange ? '' : ` · ${rangeText}`}`}
               tone="good"
             />
             <Stat
@@ -209,13 +223,14 @@ export function InquiryManagementClient({
             metrics={metrics}
             firstColLabel="Size range"
             filenameBase={`otb-${customer.replace(/\W+/g, '-').toLowerCase()}`}
+            onRangeChange={onRangeChange}
           />
 
           <OfferSheet
             customer={customer}
             productLabel={`${program.item_description} (${program.item_code})`}
             planStartDate={planStartDate}
-            months={months}
+            months={rangeMonths}
             fgByMonth={offerFg}
             basis={basis}
             reference={`${customer.replace(/\W+/g, '').slice(0, 6).toUpperCase()}-${program.item_code}`}

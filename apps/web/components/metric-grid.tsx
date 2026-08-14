@@ -46,6 +46,8 @@ export function MetricGrid({
   filenameBase = 'export',
   statusFilter = false,
   rowFilter = false,
+  extraCols,
+  onRangeChange,
 }: {
   planStartDate: string;
   horizon: number;
@@ -56,6 +58,10 @@ export function MetricGrid({
   statusFilter?: boolean;
   /** When true, show a search box and a single-row picker over the grid's rows. */
   rowFilter?: boolean;
+  /** Extra descriptive columns, filled from each row's `extra` array. */
+  extraCols?: { label: string; align?: 'left' | 'right'; width?: string }[];
+  /** Reports the grid's visible month range, for page-level totals. */
+  onRangeChange?: (fromMonth: number, toMonth: number) => void;
 }) {
   const [sel, setSel] = useState(metrics[0]?.key);
   const [status, setStatus] = useState<StatusFilter>('combined');
@@ -133,7 +139,7 @@ export function MetricGrid({
           size="sm"
           onClick={() => downloadCsv(
             `${filenameBase}-${m.key}${activePart ? `-${activePart.key}` : ''}${statusFilter && status !== 'combined' ? `-${status}` : ''}.csv`,
-            toCsv(gridCsvRows(firstColLabel, planStartDate, horizon, rows))
+            toCsv(gridCsvRows(firstColLabel, planStartDate, horizon, rows, true, extraCols?.map((c) => c.label) ?? []))
           )}
         >
           <Download />
@@ -145,7 +151,7 @@ export function MetricGrid({
           No {firstColLabel.toLowerCase()}s in this view.
         </p>
       ) : (
-        <OutputGrid planStartDate={planStartDate} horizon={horizon} rows={rows} format={m.format} firstColLabel={firstColLabel} />
+        <OutputGrid planStartDate={planStartDate} horizon={horizon} rows={rows} format={m.format} firstColLabel={firstColLabel} extraCols={extraCols} onRangeChange={onRangeChange} />
       )}
     </div>
   );
