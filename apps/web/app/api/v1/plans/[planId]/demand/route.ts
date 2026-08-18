@@ -1,5 +1,6 @@
 import { authenticateApiRequest, jsonError, jsonOk } from '@/lib/api-auth';
 import { createServiceClient } from '@/lib/supabase/service';
+import { fetchAllPaged } from '@/lib/fetch-all';
 import { loadOrgPlan, planMeta, monthCol } from '@/lib/api-plan';
 
 export const runtime = 'nodejs';
@@ -44,12 +45,22 @@ export async function GET(req: Request, { params }: { params: Promise<{ planId: 
   const ids = programs.map((p) => p.id);
   const overrides = new Map<string, number>();
   if (ids.length) {
-    const { data: rows } = await svc
-      .from('demand_plan')
-      .select('program_id, month_index, demand_fp')
-      .eq('plan_id', plan.id)
-      .in('program_id', ids);
-    for (const r of (rows ?? []) as { program_id: string; month_index: number; demand_fp: number }[]) {
+    // Paged: programs × months can exceed PostgREST's 1000-row cap, and a truncated
+    // page here is invisible — the missing overrides would silently fall back to
+    // the baseline below and the response would look plausible but be wrong.
+    // Also narrowed to the requested months, which is all the response uses.
+    const rows = await fetchAllPaged(
+      (f, t) => svc
+        .from('demand_plan')
+        .select('program_id, month_index, demand_fp')
+        .eq('plan_id', plan.id)
+        .in('program_id', ids)
+        .gte('month_index', lo)
+        .lte('month_index', hi)
+        .range(f, t),
+      'demand_plan'
+    );
+    for (const r of rows as { program_id: string; month_index: number; demand_fp: number }[]) {
       overrides.set(`${r.program_id}:${r.month_index}`, Number(r.demand_fp));
     }
   }

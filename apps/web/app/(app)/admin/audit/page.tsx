@@ -100,10 +100,25 @@ export default async function AuditPage() {
     );
   }
 
-  const [{ data: entries }, { data: users }, { data: programs }, { data: buckets }, { data: plans }] = await Promise.all([
-    supabase.from('audit_log').select('*').order('at', { ascending: false }).limit(200),
+  const { data: entries } = await supabase
+    .from('audit_log').select('*').order('at', { ascending: false }).limit(200);
+
+  // Resolve names only for the rows these 200 entries actually reference.
+  // Selecting every program across every plan (master + all scenarios) would
+  // blow past PostgREST's 1000-row cap and silently leave later entries
+  // labelled with raw UUIDs.
+  const progIds = [...new Set(
+    (entries ?? [])
+      .filter((e: any) => e.entity_type === 'programs' || e.entity_type === 'demand_plan')
+      .map((e: any) => e.entity_id as string)
+      .filter(Boolean)
+  )];
+
+  const [{ data: users }, { data: programs }, { data: buckets }, { data: plans }] = await Promise.all([
     supabase.from('users').select('id, full_name, email'),
-    supabase.from('programs').select('id, item_code, item_description'),
+    progIds.length
+      ? supabase.from('programs').select('id, item_code, item_description').in('id', progIds)
+      : Promise.resolve({ data: [] as any[] }),
     supabase.from('buckets').select('id, name'),
     supabase.from('plans').select('id, name, type'),
   ]);

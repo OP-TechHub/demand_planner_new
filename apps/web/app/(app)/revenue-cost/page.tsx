@@ -15,7 +15,7 @@ export default async function RevenueCostPage() {
 
   const [order, rr, { data: progs }] = await Promise.all([
     programOrder(supabase, plan.id),
-    fetchAllByPlan(supabase, 'rolling_results', 'program_id, month_index, rolling_fp, revenue, cost, rolling_margin', plan.id),
+    fetchAllByPlan(supabase, 'rolling_results', 'program_id, month_index, rolling_fp, revenue, cost, rolling_margin, rolling_margin_per_path', plan.id),
     supabase.from('programs')
       .select('id, status, primary_yield, barra_cost_wr, packing_cost_fp, processing_cost_fp, storage_cost_fp, freight_cost_fp, other_costs_fp')
       .eq('plan_id', plan.id).is('deleted_at', null),
@@ -63,13 +63,35 @@ export default async function RevenueCostPage() {
     { key: 'revenue', label: 'Revenue', format: 'usd', rows: tag(gridRowsFor(order, rr, m, 'revenue')) },
     { key: 'cost', label: 'Cost', format: 'usd', rows: tag(gridRowsFor(order, rr, m, 'cost')), breakdown: costBreakdown },
     { key: 'margin', label: 'Margin', format: 'usd', rows: tag(gridRowsFor(order, rr, m, 'rolling_margin')) },
+    // Same volume, costed at the path that actually supplied each kilo (spec §5.5)
+    // rather than the primary path throughout. Excel does the latter, so `Margin`
+    // stays the parity figure and this sits beside it.
+    { key: 'margin_path', label: 'Margin (per-path)', format: 'usd', rows: tag(gridRowsFor(order, rr, m, 'rolling_margin_per_path')) },
   ];
+
+  // The column only has values after a recompute; existing rows default to 0.
+  const perPathReady = (rr as { rolling_margin: number; rolling_margin_per_path: number }[])
+    .some((r) => Number(r.rolling_margin_per_path) !== 0);
+  const hasMargin = (rr as { rolling_margin: number }[]).some((r) => Number(r.rolling_margin) !== 0);
 
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-semibold tracking-tight">Revenue &amp; Cost</h1>
       <StalePlanNotice planId={plan.id} lastComputedAt={plan.last_computed_at} />
-      <p className="text-xs text-muted-foreground">Uses flat price/cost (time-varying overrides deferred), so dollar figures differ slightly for a few programs. Volumes are exact. Filter by status to see active or pipeline (inquiry) programs only. On <b>Cost</b>, the dropdown splits the total into its components — barra, packing, processing, storage, freight and other — which sum back to the total.</p>
+      <p className="text-xs text-muted-foreground">
+        Revenue, cost and margin reproduce the V30 workbook to the dollar (parity-tested to ±$1). Cost charges every kilo
+        at the program&apos;s <b>primary-path</b> rate, exactly as Excel does; <b>Margin (per-path)</b> re-costs each kilo at
+        the path that actually supplied it, which on the V30 baseline shifts the plan total by about 0.1% and individual
+        programs by more. Filter by status to see active or pipeline (inquiry) programs only. On <b>Cost</b>, the dropdown
+        splits the total into its components — barra, packing, processing, storage, freight and other — which sum back to
+        the total.
+      </p>
+      {hasMargin && !perPathReady && (
+        <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+          <b>Margin (per-path)</b> reads zero until the next Recalculate — it&apos;s a new figure and existing results
+          predate it.
+        </p>
+      )}
       {order.length === 0 ? <NotComputed /> : (
         <MetricGrid planStartDate={plan.plan_start_date} horizon={m} metrics={metrics} filenameBase="revenue-cost" statusFilter rowFilter />
       )}

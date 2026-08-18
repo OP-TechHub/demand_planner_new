@@ -26,6 +26,18 @@ export function ProgramPanel({
   const [secondary, setSecondary] = useState<string>(program?.secondary_bucket_id ?? '');
   const [tertiary, setTertiary] = useState<string>(program?.tertiary_bucket_id ?? '');
 
+  /**
+   * Archiving a bucket takes it out of the selection lists — but a program that
+   * ALREADY points at one has to keep showing it, or the select would fall back
+   * to another option and saving would silently re-source the program.
+   */
+  const bucketOptions = (selected: string) =>
+    buckets
+      .filter((b) => !b.is_archived || b.id === selected)
+      .map((b) => (
+        <option key={b.id} value={b.id}>{b.name}{b.is_archived ? ' (archived)' : ''}</option>
+      ));
+
   const editing = Boolean(program);
 
   useEffect(() => {
@@ -91,9 +103,7 @@ export function ProgramPanel({
               <Field label="Primary bucket">
                 <select name="primary_bucket_id" defaultValue={program?.primary_bucket_id ?? ''} className={inputCls}>
                   <option value="">— Select —</option>
-                  {buckets.map((b) => (
-                    <option key={b.id} value={b.id}>{b.name}</option>
-                  ))}
+                  {bucketOptions(program?.primary_bucket_id ?? '')}
                 </select>
               </Field>
               <Field label="Primary yield">
@@ -104,9 +114,7 @@ export function ProgramPanel({
               <Field label="Secondary bucket">
                 <select name="secondary_bucket_id" value={secondary} onChange={(e) => setSecondary(e.target.value)} className={inputCls}>
                   <option value="">— None —</option>
-                  {buckets.map((b) => (
-                    <option key={b.id} value={b.id}>{b.name}</option>
-                  ))}
+                  {bucketOptions(secondary)}
                 </select>
               </Field>
               <Field label="Secondary yield">
@@ -117,9 +125,7 @@ export function ProgramPanel({
               <Field label="Tertiary bucket">
                 <select name="tertiary_bucket_id" value={tertiary} onChange={(e) => setTertiary(e.target.value)} className={inputCls}>
                   <option value="">— None —</option>
-                  {buckets.map((b) => (
-                    <option key={b.id} value={b.id}>{b.name}</option>
-                  ))}
+                  {bucketOptions(tertiary)}
                 </select>
               </Field>
               <Field label="Tertiary yield">

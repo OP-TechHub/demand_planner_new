@@ -1,5 +1,6 @@
 import { authenticateApiRequest, jsonError, jsonOk } from '@/lib/api-auth';
 import { createServiceClient } from '@/lib/supabase/service';
+import { fetchAllPaged } from '@/lib/fetch-all';
 import { loadOrgPlan, planMeta, monthCol } from '@/lib/api-plan';
 
 export const runtime = 'nodejs';
@@ -44,15 +45,22 @@ export async function GET(req: Request, { params }: { params: Promise<{ planId: 
 
   const rowsByCode = new Map<string, ResultMonth[]>();
   if (ids.length) {
-    const { data: results } = await svc
-      .from('rolling_results')
-      .select('program_id, month_index, demand_fp, rolling_fp, rolling_wr, fulfilment_pct, unfulfilled_wr, revenue, cost')
-      .eq('plan_id', plan.id)
-      .in('program_id', ids)
-      .gte('month_index', lo)
-      .lte('month_index', hi)
-      .order('month_index');
-    for (const r of (results ?? []) as RawResult[]) {
+    // Paged: programs × months exceeds PostgREST's 1000-row cap on any sizeable
+    // plan, and a truncated page returns no error — months would just go missing
+    // from the response.
+    const results = await fetchAllPaged(
+      (f, t) => svc
+        .from('rolling_results')
+        .select('program_id, month_index, demand_fp, rolling_fp, rolling_wr, fulfilment_pct, unfulfilled_wr, revenue, cost')
+        .eq('plan_id', plan.id)
+        .in('program_id', ids)
+        .gte('month_index', lo)
+        .lte('month_index', hi)
+        .order('month_index')
+        .range(f, t),
+      'rolling_results'
+    );
+    for (const r of results as RawResult[]) {
       const code = codeById.get(r.program_id);
       if (!code) continue;
       const list = rowsByCode.get(code) ?? [];

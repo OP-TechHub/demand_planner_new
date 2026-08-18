@@ -1,6 +1,7 @@
 import { monthIndexOfDate, monthLabel } from '@oceanpick/shared';
 import { authenticateApiRequest, jsonError, jsonOk } from '@/lib/api-auth';
 import { createServiceClient } from '@/lib/supabase/service';
+import { fetchAllPaged } from '@/lib/fetch-all';
 import { loadOrgPlan, planMeta } from '@/lib/api-plan';
 
 export const runtime = 'nodejs';
@@ -66,14 +67,25 @@ export async function POST(req: Request) {
   const overrides = new Map<string, number>(); // `${progId}:${month}` -> demand_fp
   const results = new Map<string, RawResult>(); // `${progId}:${month}` -> result
   if (ids.length) {
-    const [{ data: ov }, { data: rs }] = await Promise.all([
-      svc.from('demand_plan').select('program_id, month_index, demand_fp').eq('plan_id', plan.id).in('program_id', ids),
-      svc.from('rolling_results').select('program_id, month_index, rolling_fp, fulfilment_pct, unfulfilled_wr').eq('plan_id', plan.id).in('program_id', ids),
+    // Paged: ids × 60 months passes 1000 rows once a caller asks about ~17 item
+    // codes, and a truncated page returns no error — the match would quietly
+    // report baseline demand and missing availability.
+    const [ov, rs] = await Promise.all([
+      fetchAllPaged(
+        (f, t) => svc.from('demand_plan').select('program_id, month_index, demand_fp')
+          .eq('plan_id', plan.id).in('program_id', ids).range(f, t),
+        'demand_plan'
+      ),
+      fetchAllPaged(
+        (f, t) => svc.from('rolling_results').select('program_id, month_index, rolling_fp, fulfilment_pct, unfulfilled_wr')
+          .eq('plan_id', plan.id).in('program_id', ids).range(f, t),
+        'rolling_results'
+      ),
     ]);
-    for (const r of (ov ?? []) as { program_id: string; month_index: number; demand_fp: number }[]) {
+    for (const r of ov as { program_id: string; month_index: number; demand_fp: number }[]) {
       overrides.set(`${r.program_id}:${r.month_index}`, Number(r.demand_fp));
     }
-    for (const r of (rs ?? []) as RawResult[]) {
+    for (const r of rs as RawResult[]) {
       results.set(`${r.program_id}:${r.month_index}`, r);
     }
   }
