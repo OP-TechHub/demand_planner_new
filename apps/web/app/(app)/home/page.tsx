@@ -15,7 +15,8 @@ export default async function HomePage() {
   // The plan selected in the top bar, defaulting to the org's live plan.
   const plan = await getActivePlan();
   const [{ count: bucketCount }, { count: userCount }, { data: summary }] = await Promise.all([
-    supabase.from('buckets').select('*', { count: 'exact', head: true }),
+    // Live buckets only — archived ones aren't part of the plan's supply.
+    supabase.from('buckets').select('*', { count: 'exact', head: true }).eq('is_archived', false),
     supabase.from('users').select('*', { count: 'exact', head: true }),
     plan
       ? supabase.from('plan_summary').select('*').eq('plan_id', plan.id).eq('period', 'total_60mo').maybeSingle()

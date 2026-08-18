@@ -144,6 +144,17 @@ export async function createScenario(
     if (error) return fail(`cloning harvest: ${error.message}`);
   }
 
+  // The processing plant's request plan travels with the plan, same as capacity.
+  const { data: srcReq } = await supabase
+    .from('harvest_request').select('month_index, quantity_kg_wr').eq('plan_id', source.id);
+  const reqRows = (srcReq ?? [])
+    .filter((r: any) => r.month_index <= horizon)
+    .map((r: any) => ({ plan_id: sid, month_index: r.month_index, quantity_kg_wr: r.quantity_kg_wr, created_by: user.id, updated_by: user.id }));
+  if (reqRows.length) {
+    const { error } = await supabase.from('harvest_request').insert(reqRows);
+    if (error) return fail(`cloning request plan: ${error.message}`);
+  }
+
   setActiveCookie(await cookies(), sid);
   revalidatePath('/', 'layout');
   return { error: null, scenarioId: sid };
@@ -231,6 +242,17 @@ export async function createPlan(input: {
       const { error } = await supabase.from('harvest_plan').insert(harvestRows.slice(i, i + 800));
       if (error) return fail(`copying harvest: ${error.message}`);
     }
+
+    // The processing plant's request plan travels with the plan, same as capacity.
+    const { data: srcReq } = await supabase
+      .from('harvest_request').select('month_index, quantity_kg_wr').eq('plan_id', master.id);
+    const reqRows = (srcReq ?? [])
+      .filter((r: any) => r.month_index <= horizon)
+      .map((r: any) => ({ plan_id: pid, month_index: r.month_index, quantity_kg_wr: r.quantity_kg_wr, created_by: user.id, updated_by: user.id }));
+    if (reqRows.length) {
+      const { error } = await supabase.from('harvest_request').insert(reqRows);
+      if (error) return fail(`copying request plan: ${error.message}`);
+    }
   }
 
   setActiveCookie(await cookies(), pid);
@@ -299,6 +321,17 @@ async function snapshotPlan(svc: any, plan: any, userId: string, name: string, d
   for (let i = 0; i < harvestRows.length; i += 800) {
     const { error } = await svc.from('harvest_plan').insert(harvestRows.slice(i, i + 800));
     if (error) throw new Error(`snapshot harvest: ${error.message}`);
+  }
+
+  // The processing plant's request plan is part of the plan, so it's part of the snapshot.
+  const { data: srcReq } = await svc
+    .from('harvest_request').select('month_index, quantity_kg_wr').eq('plan_id', plan.id);
+  const reqRows = (srcReq ?? []).map((r: any) => ({
+    plan_id: aid, month_index: r.month_index, quantity_kg_wr: r.quantity_kg_wr, created_by: userId, updated_by: userId,
+  }));
+  if (reqRows.length) {
+    const { error } = await svc.from('harvest_request').insert(reqRows);
+    if (error) throw new Error(`snapshot request plan: ${error.message}`);
   }
 
   return aid;
