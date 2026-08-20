@@ -155,6 +155,29 @@ export async function createScenario(
     if (error) return fail(`cloning request plan: ${error.message}`);
   }
 
+  // POs travel with the plan: without them the clone's demand would be right on
+  // day one but drift the moment a PO there was edited. The baseline stash comes
+  // too, so deleting a PO in the clone restores the same figure it would have.
+  const poLines = await fetchAllByPlan(supabase, 'po_updates', 'program_id, month_index, quantity_fp, po_ref, received_on, notes', source.id);
+  const poRows = poLines
+    .filter((r: any) => r.month_index <= horizon)
+    .map((r: any) => ({ plan_id: sid, program_id: newIdByCode.get(codeByOldId.get(r.program_id)), month_index: r.month_index, quantity_fp: r.quantity_fp, po_ref: r.po_ref, received_on: r.received_on, notes: r.notes, created_by: user.id, updated_by: user.id }))
+    .filter((r) => r.program_id);
+  for (let i = 0; i < poRows.length; i += 800) {
+    const { error } = await supabase.from('po_updates').insert(poRows.slice(i, i + 800));
+    if (error) return fail(`cloning POs: ${error.message}`);
+  }
+
+  const poBase = await fetchAllByPlan(supabase, 'po_demand_baseline', 'program_id, month_index, prev_demand_fp', source.id);
+  const poBaseRows = poBase
+    .filter((r: any) => r.month_index <= horizon)
+    .map((r: any) => ({ plan_id: sid, program_id: newIdByCode.get(codeByOldId.get(r.program_id)), month_index: r.month_index, prev_demand_fp: r.prev_demand_fp }))
+    .filter((r) => r.program_id);
+  for (let i = 0; i < poBaseRows.length; i += 800) {
+    const { error } = await supabase.from('po_demand_baseline').insert(poBaseRows.slice(i, i + 800));
+    if (error) return fail(`cloning PO baselines: ${error.message}`);
+  }
+
   setActiveCookie(await cookies(), sid);
   revalidatePath('/', 'layout');
   return { error: null, scenarioId: sid };
@@ -253,6 +276,30 @@ export async function createPlan(input: {
       const { error } = await supabase.from('harvest_request').insert(reqRows);
       if (error) return fail(`copying request plan: ${error.message}`);
     }
+
+    // POs travel with the plan: without them the clone's demand would be right on
+    // day one but drift the moment a PO there was edited. The baseline stash comes
+    // too, so deleting a PO in the clone restores the same figure it would have.
+    const poLines = await fetchAllByPlan(supabase, 'po_updates', 'program_id, month_index, quantity_fp, po_ref, received_on, notes', master.id);
+    const poRows = poLines
+      .filter((r: any) => idSet.has(r.program_id) && r.month_index <= horizon)
+      .map((r: any) => ({ plan_id: pid, program_id: newIdByCode.get(codeByOldId.get(r.program_id)), month_index: r.month_index, quantity_fp: r.quantity_fp, po_ref: r.po_ref, received_on: r.received_on, notes: r.notes, created_by: user.id, updated_by: user.id }))
+      .filter((r) => r.program_id);
+    for (let i = 0; i < poRows.length; i += 800) {
+      const { error } = await supabase.from('po_updates').insert(poRows.slice(i, i + 800));
+      if (error) return fail(`copying POs: ${error.message}`);
+    }
+
+    const poBase = await fetchAllByPlan(supabase, 'po_demand_baseline', 'program_id, month_index, prev_demand_fp', master.id);
+    const poBaseRows = poBase
+      .filter((r: any) => idSet.has(r.program_id) && r.month_index <= horizon)
+      .map((r: any) => ({ plan_id: pid, program_id: newIdByCode.get(codeByOldId.get(r.program_id)), month_index: r.month_index, prev_demand_fp: r.prev_demand_fp }))
+      .filter((r) => r.program_id);
+    for (let i = 0; i < poBaseRows.length; i += 800) {
+      const { error } = await supabase.from('po_demand_baseline').insert(poBaseRows.slice(i, i + 800));
+      if (error) return fail(`copying PO baselines: ${error.message}`);
+    }
+
   }
 
   setActiveCookie(await cookies(), pid);

@@ -45,11 +45,17 @@ export default async function HomePage() {
     const progList = (progs ?? []) as { id: string; item_code: string; status: string; customer: string; primary_yield: number; max_monthly_demand_fp: number }[];
     const statusById = new Map(progList.map((p) => [p.id, p.status]));
     const customerById = new Map(progList.map((p) => [p.id, p.customer]));
+    const yieldById = new Map(progList.map((p) => [p.id, Number(p.primary_yield)]));
 
     if (summary) {
       const rr = await fetchAllByPlan(supabase, 'rolling_results', 'program_id, month_index, demand_fp, rolling_fp, rolling_wr, revenue, cost', plan.id);
       const dem = new Array<number>(months).fill(0), ful = new Array<number>(months).fill(0);
+      // wr = whole round actually consumed (rolling_wr). wrNeeded = the whole round
+      // the full demand book would take, demand_fp / primary_yield per spec §2.2
+      // (Excel col AH) — a demand-side figure, so it stands at primary yield
+      // throughout rather than at the paths the engine happened to use.
       const wr = new Array<number>(months).fill(0);
+      const wrNeed = new Array<number>(months).fill(0);
       const rev = new Array<number>(months).fill(0), cst = new Array<number>(months).fill(0);
       const actDem = new Array<number>(months).fill(0), pipeDem = new Array<number>(months).fill(0);
       const pd = new Map<string, number>(), pf = new Map<string, number>();
@@ -60,6 +66,8 @@ export default async function HomePage() {
         const i = r.month_index - 1;
         if (i >= 0 && i < months) {
           dem[i] += r.demand_fp; ful[i] += r.rolling_fp; wr[i] += r.rolling_wr; rev[i] += r.revenue; cst[i] += r.cost;
+          const y = yieldById.get(r.program_id) ?? 0;
+          if (y > 0) wrNeed[i] += r.demand_fp / y;
           const st = statusById.get(r.program_id);
           if (st === 'active') actDem[i] += r.demand_fp;
           else if (st === 'pipeline') pipeDem[i] += r.demand_fp;
@@ -102,7 +110,7 @@ export default async function HomePage() {
         for (let i = 0; i < months; i++) secRev[i] += (feed[i] ?? 0) * rate;
       }
 
-      monthly = dem.map((d, i) => ({ demand: d, fulfilled: ful[i] ?? 0, wrUsed: wr[i] ?? 0, revenue: rev[i] ?? 0, secondaryRevenue: secRev[i] ?? 0, cost: cst[i] ?? 0, activeDemand: actDem[i] ?? 0, pipelineDemand: pipeDem[i] ?? 0 }));
+      monthly = dem.map((d, i) => ({ demand: d, fulfilled: ful[i] ?? 0, wrUsed: wr[i] ?? 0, wrNeeded: wrNeed[i] ?? 0, revenue: rev[i] ?? 0, secondaryRevenue: secRev[i] ?? 0, cost: cst[i] ?? 0, activeDemand: actDem[i] ?? 0, pipelineDemand: pipeDem[i] ?? 0 }));
       shortfall = [...shortByCust.entries()].map(([customer, m]) => ({ customer, months: m }));
       let under = 0;
       for (const [pid, d] of pd) if (d > 0 && (pf.get(pid) ?? 0) / d < 0.5) under++;

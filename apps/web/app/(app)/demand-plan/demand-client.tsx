@@ -122,6 +122,11 @@ export function DemandClient({
     () => visibleMonths.map((mo) => visible.filter((p) => p.status !== 'inactive').reduce((s, p) => s + effective(p, mo), 0)),
     [visibleMonths, visible, overrides] // eslint-disable-line react-hooks/exhaustive-deps
   );
+  // Per-program total, over the VISIBLE months — so it always adds up to the
+  // cells beside it rather than to a 60-month figure the grid isn't showing.
+  const rowTotal = (p: Program) => visibleMonths.reduce((s, mo) => s + effective(p, mo), 0);
+  const grandTotal = totals.reduce((s, t) => s + t, 0);
+
   const totalLabel =
     statusView === 'active' ? 'TOTAL (Active)'
     : statusView === 'pipeline' ? 'TOTAL (Pipeline)'
@@ -208,7 +213,7 @@ export function DemandClient({
 
         <span className="text-xs text-muted-foreground">
           {!fullRange && <>Showing {visibleMonths.length} of {horizon} months. </>}
-          Effective demand (override where set, else program baseline).
+          Effective demand (override where set, else program baseline); the right-hand total covers the months shown.
           {canEdit ? ' Click a program to edit its timeline.' : ''}
         </span>
       </div>
@@ -249,6 +254,9 @@ export function DemandClient({
                     {monthLabel(planStartDate, mo)}
                   </th>
                 ))}
+                <th className="sticky top-0 z-20 min-w-[6.5rem] border-b border-l border-border bg-muted px-3 py-2 text-right font-semibold">
+                  {fullRange ? `${horizon}mo total` : 'Range total'}
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -296,6 +304,9 @@ export function DemandClient({
                       </td>
                     );
                   })}
+                  <td className="border-l px-3 py-1.5 text-right font-semibold tabular-nums">
+                    {Math.round(rowTotal(p)).toLocaleString()}
+                  </td>
                 </tr>
               ))}
               <tr className="border-t-2 bg-muted/40 font-semibold">
@@ -303,6 +314,7 @@ export function DemandClient({
                 {totals.map((t, i) => (
                   <td key={visibleMonths[i]} className={cn('px-2 py-1.5 text-right tabular-nums', yearStart(visibleMonths[i]) && 'border-l border-border/60')}>{t.toLocaleString()}</td>
                 ))}
+                <td className="border-l px-3 py-1.5 text-right tabular-nums">{Math.round(grandTotal).toLocaleString()}</td>
               </tr>
             </tbody>
           </table>
