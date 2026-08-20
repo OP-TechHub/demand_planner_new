@@ -9,7 +9,7 @@ import { Card } from '@/components/ui/card';
 import { MonthlyLineChart } from '@/components/charts/monthly-line-chart';
 
 /** One month of already-aggregated dashboard figures (across all programs). */
-export type MonthPoint = { demand: number; fulfilled: number; wrUsed: number; revenue: number; secondaryRevenue: number; cost: number; activeDemand: number; pipelineDemand: number };
+export type MonthPoint = { demand: number; fulfilled: number; wrUsed: number; wrNeeded: number; revenue: number; secondaryRevenue: number; cost: number; activeDemand: number; pipelineDemand: number };
 /** Per-customer unfulfilled FP, one entry per month — ranked client-side within the range. */
 export type ShortfallRow = { customer: string; months: number[] };
 
@@ -52,6 +52,7 @@ export function DashboardOverview({
     const demand = slice.reduce((s, m) => s + m.demand, 0);
     const fulfilled = slice.reduce((s, m) => s + m.fulfilled, 0);
     const wrUsed = slice.reduce((s, m) => s + m.wrUsed, 0);
+    const wrNeeded = slice.reduce((s, m) => s + m.wrNeeded, 0);
     const primary = slice.reduce((s, m) => s + m.revenue, 0);
     const secondary = slice.reduce((s, m) => s + m.secondaryRevenue, 0);
     const cost = slice.reduce((s, m) => s + m.cost, 0);
@@ -60,7 +61,7 @@ export function DashboardOverview({
     const revenue = primary + secondary;
     const margin = revenue - cost;
     return {
-      demand, fulfilled, wrUsed, revenue, primary, secondary, margin,
+      demand, fulfilled, wrUsed, wrNeeded, revenue, primary, secondary, margin,
       fulPct: demand > 0 ? fulfilled / demand : 0,
       gp: revenue > 0 ? margin / revenue : 0,
     };
@@ -130,16 +131,28 @@ export function DashboardOverview({
           label="Total Demand"
           value={`${kg(t.demand)} kg`}
           sub={`${full ? `${horizon} months` : rangeText}, FP`}
+          foot={`${kg(t.wrNeeded)} kg WR needed to fulfil it`}
+        />
+        {/*
+          The whole round consumed is `rolling_wr` — what the engine actually
+          allocated to produce the FP above it, not what the demand book would
+          have needed. It belongs to Fulfilled, not Total Demand.
+        */}
+        <Stat
+          icon={Target}
+          tone="accent"
+          label="Fulfilled"
+          value={`${(t.fulPct * 100).toFixed(0)}%`}
+          sub={`${kg(t.fulfilled)} kg FP`}
           foot={`${kg(t.wrUsed)} kg WR used to fulfil`}
         />
-        <Stat icon={Target} tone="accent" label="Fulfilled" value={`${(t.fulPct * 100).toFixed(0)}%`} sub={`${kg(t.fulfilled)} kg FP`} />
         <Stat
           icon={DollarSign}
           tone="success"
           label="Revenue"
           value={usd(t.revenue)}
           sub="allocated"
-          foot={t.secondary > 0 ? `incl. ${usd(t.secondary)} secondary products` : undefined}
+          foot={t.secondary > 0 ? `incl. ${usd(t.secondary)} from secondary products` : undefined}
         />
         <Stat
           icon={TrendingUp}
@@ -147,9 +160,9 @@ export function DashboardOverview({
           label="Margin"
           value={usd(t.margin)}
           sub={`GP ${(t.gp * 100).toFixed(1)}%`}
-          // By-products carry no cost of their own, so every dollar they earn is
-          // margin — the contribution equals the secondary revenue exactly.
-          foot={t.secondary > 0 ? `incl. ${usd(t.secondary)} from by-products` : undefined}
+          // Secondary products carry no cost of their own, so every dollar they
+          // earn is margin — the contribution equals the secondary revenue exactly.
+          foot={t.secondary > 0 ? `incl. ${usd(t.secondary)} from secondary products` : undefined}
         />
       </div>
 
