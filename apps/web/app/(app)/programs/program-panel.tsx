@@ -79,9 +79,20 @@ export function ProgramPanel({
               </label>
             </div>
 
-            <Field label="Item code">
-              <input name="item_code" defaultValue={program?.item_code ?? ''} className={inputCls} />
-            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Item code">
+                <input name="item_code" defaultValue={program?.item_code ?? ''} className={inputCls} />
+              </Field>
+              {/* The ERP's number for the same product — reference only, so it may be blank. */}
+              <Field label="Export code (optional)">
+                <input
+                  name="export_code"
+                  defaultValue={program?.export_code ?? ''}
+                  placeholder="e.g. EXPORT006"
+                  className={inputCls}
+                />
+              </Field>
+            </div>
             <Field label="Description">
               <input name="item_description" defaultValue={program?.item_description ?? ''} className={inputCls} />
             </Field>

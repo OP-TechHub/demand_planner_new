@@ -33,7 +33,7 @@ export default async function PoUpdatePage() {
   const [{ data: progs }, lines, demand, profile, grants] = await Promise.all([
     supabase
       .from('programs')
-      .select('id, item_code, item_description, customer, status, max_monthly_demand_fp')
+      .select('id, item_code, export_code, item_description, customer, status, max_monthly_demand_fp')
       .eq('plan_id', plan.id).is('deleted_at', null).order('sort_order'),
     // One row per program-month, so a year of POs across many programs can pass
     // PostgREST's 1000-row cap — page through it like the other month grids.
@@ -55,7 +55,7 @@ export default async function PoUpdatePage() {
   );
 
   const programs = ((progs ?? []) as ProgramRow[]).map((p) => ({
-    id: p.id, item_code: p.item_code, item_description: p.item_description,
+    id: p.id, item_code: p.item_code, export_code: p.export_code, item_description: p.item_description,
     customer: p.customer, status: p.status,
     max_monthly_demand_fp: Number(p.max_monthly_demand_fp),
   }));

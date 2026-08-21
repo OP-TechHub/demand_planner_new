@@ -238,3 +238,100 @@ export async function deletePo(planId: string, programId: string, poRef: string)
   refresh();
   return { error: null };
 }
+
+/** One line of an uploaded PO file: a single month of a single PO. */
+export type PoImportRow = {
+  /** Either the program's item_code or its export_code — both resolve. */
+  item_code: string;
+  po_ref: string;
+  month: number;
+  quantity_fp: number;
+  received_on: string | null;
+  notes: string | null;
+};
+export type PoImportResult = { error: string | null; count: number; pos: number; unknown: string[] };
+
+/**
+ * Bulk-import received POs from a CSV, one row per PO-month.
+ *
+ * MERGES rather than replaces: a line matching an existing (program, month, PO
+ * number) is updated, everything else is added, and POs absent from the file are
+ * left alone. A file is a delivery of news, not a new world — replacing would
+ * make one forgotten row silently delete real orders.
+ *
+ * Demand is re-derived once per program at the end, over the union of the months
+ * the file touched, so a 500-line file costs a handful of queries per program
+ * rather than per row.
+ */
+export async function importPos(planId: string, rows: PoImportRow[]): Promise<PoImportResult> {
+  if (!planId) return { error: 'Missing plan.', count: 0, pos: 0, unknown: [] };
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: 'Your session expired. Sign in again.', count: 0, pos: 0, unknown: [] };
+
+  const { data: plan } = await supabase.from('plans').select('horizon_months').eq('id', planId).maybeSingle();
+  const horizon = Number(plan?.horizon_months ?? 0);
+  if (!horizon) return { error: 'Plan not found.', count: 0, pos: 0, unknown: [] };
+
+  // A PO file out of the ERP is keyed by its export number, not the workbook SKU,
+  // so both resolve. item_code wins on a clash — it is the plan-unique key, while
+  // export_code is reference data that may legitimately repeat.
+  const { data: progs } = await supabase
+    .from('programs').select('id, item_code, export_code')
+    .eq('plan_id', planId).is('deleted_at', null);
+  const idByCode = new Map<string, string>();
+  for (const p of (progs ?? []) as { id: string; item_code: string; export_code: string | null }[]) {
+    if (p.export_code && !idByCode.has(p.export_code)) idByCode.set(p.export_code, p.id);
+  }
+  for (const p of (progs ?? []) as { id: string; item_code: string }[]) idByCode.set(p.item_code, p.id);
+
+  const upserts: Record<string, unknown>[] = [];
+  const monthsByProgram = new Map<string, number[]>();
+  const unknown = new Set<string>();
+  const poKeys = new Set<string>();
+
+  for (const r of rows) {
+    const pid = idByCode.get(r.item_code);
+    if (!pid) { unknown.add(r.item_code); continue; }
+    const ref = r.po_ref.trim();
+    if (!ref) continue;
+    if (!Number.isInteger(r.month) || r.month < 1 || r.month > horizon) continue;
+    if (!Number.isFinite(r.quantity_fp) || r.quantity_fp < 0) continue;
+
+    upserts.push({
+      plan_id: planId, program_id: pid, month_index: r.month,
+      quantity_fp: r.quantity_fp, po_ref: ref,
+      received_on: r.received_on || null, notes: r.notes || null,
+      created_by: user.id, updated_by: user.id,
+    });
+    const list = monthsByProgram.get(pid);
+    if (list) list.push(r.month); else monthsByProgram.set(pid, [r.month]);
+    poKeys.add(`${pid} ${ref}`);
+  }
+
+  if (upserts.length === 0) {
+    return {
+      error: unknown.size ? 'Nothing to import — none of the item codes in the file are in this plan.' : 'Nothing to import.',
+      count: 0, pos: 0, unknown: [...unknown],
+    };
+  }
+
+  for (let i = 0; i < upserts.length; i += 500) {
+    const { error } = await supabase
+      .from('po_updates')
+      .upsert(upserts.slice(i, i + 500), { onConflict: 'program_id,month_index,po_ref' });
+    if (error) return { error: permError(error.message), count: 0, pos: 0, unknown: [...unknown] };
+  }
+
+  for (const [pid, months] of monthsByProgram) {
+    const syncErr = await syncDemand(supabase, planId, pid, months, user.id);
+    if (syncErr) return { error: syncErr, count: upserts.length, pos: poKeys.size, unknown: [...unknown] };
+  }
+
+  await logAudit(supabase, {
+    planId, entityType: 'po_updates', entityId: planId, action: 'update',
+    changes: { imported_lines: upserts.length, imported_pos: poKeys.size, unknown_item_codes: unknown.size },
+  });
+  refresh();
+  return { error: null, count: upserts.length, pos: poKeys.size, unknown: [...unknown] };
+}

@@ -90,6 +90,8 @@ export interface Program {
   plan_id: string;
   status: ProgramStatus;
   item_code: string;
+  /** ERP export item number (EXPORT006…). Reference only — item_code stays the key. */
+  export_code: string | null;
   item_description: string;
   customer: string;
   max_monthly_demand_fp: number;
