@@ -86,6 +86,7 @@ export async function saveProgram(
     plan_id: planId,
     status: String(fd.get('status') ?? 'active'),
     item_code: String(fd.get('item_code')).trim(),
+    export_code: String(fd.get('export_code') ?? '').trim() || null,
     item_description: String(fd.get('item_description')).trim(),
     customer: String(fd.get('customer')).trim(),
     max_monthly_demand_fp: maxDemand,
@@ -158,6 +159,7 @@ export async function archiveProgram(fd: FormData): Promise<void> {
 export type ImportProgramRow = {
   status: string;
   item_code: string;
+  export_code: string | null;
   item_description: string;
   customer: string;
   max_monthly_demand_fp: number;
@@ -248,6 +250,7 @@ function fieldsOf(r: ImportProgramRow) {
   return {
     status: r.status,
     item_code: r.item_code,
+    export_code: r.export_code,
     item_description: r.item_description,
     customer: r.customer,
     max_monthly_demand_fp: r.max_monthly_demand_fp,
@@ -270,7 +273,7 @@ function fieldsOf(r: ImportProgramRow) {
 
 // Fields worth showing in the audit log as old → new (skips bucket-id UUIDs).
 const DIFF_FIELDS = [
-  'status', 'item_code', 'item_description', 'customer', 'max_monthly_demand_fp',
+  'status', 'item_code', 'export_code', 'item_description', 'customer', 'max_monthly_demand_fp',
   'primary_yield', 'secondary_yield', 'tertiary_yield', 'price_per_fp',
   'barra_cost_wr', 'packing_cost_fp', 'processing_cost_fp', 'storage_cost_fp',
   'freight_cost_fp', 'other_costs_fp', 'locked',

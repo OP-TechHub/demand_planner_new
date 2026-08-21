@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import { importPrograms, type ImportProgramRow } from './actions';
 
 export const PROGRAM_CSV_HEADER = [
-  'status', 'item_code', 'item_description', 'customer', 'max_monthly_demand_fp',
+  'status', 'item_code', 'export_code', 'item_description', 'customer', 'max_monthly_demand_fp',
   'primary_bucket', 'primary_yield', 'secondary_bucket', 'secondary_yield',
   'tertiary_bucket', 'tertiary_yield', 'price_per_fp', 'barra_cost_wr',
   'packing_cost_fp', 'processing_cost_fp', 'storage_cost_fp', 'freight_cost_fp',
@@ -56,7 +56,8 @@ export function ImportPrograms({
     }
     const header = rows[0].map((h) => h.trim().toLowerCase());
     const col = (name: string) => header.indexOf(name);
-    const missing = PROGRAM_CSV_HEADER.filter((h) => col(h) === -1);
+    // export_code is exempt: it was added later, and older exports don't carry it.
+    const missing = PROGRAM_CSV_HEADER.filter((h) => h !== 'export_code' && col(h) === -1);
     if (missing.length) {
       return { valid, errors: [{ line: 1, msg: `Missing columns: ${missing.join(', ')}` }], newCount: 0, updateCount: 0 };
     }
@@ -73,6 +74,7 @@ export function ImportPrograms({
       if (!STATUSES.includes(status)) rowErr(`status "${g('status')}" must be active/pipeline/inactive`);
       const item_code = g('item_code');
       if (!item_code) rowErr('item_code is required');
+      const export_code = col('export_code') === -1 ? null : g('export_code') || null;
       if (!g('item_description')) rowErr('item_description is required');
       if (!g('customer')) rowErr('customer is required');
 
@@ -117,7 +119,7 @@ export function ImportPrograms({
 
       if (errors.length === before) {
         valid.push({
-          status, item_code, item_description: g('item_description'), customer: g('customer'),
+          status, item_code, export_code, item_description: g('item_description'), customer: g('customer'),
           max_monthly_demand_fp,
           primary_bucket_id: primary_bucket_id as string, primary_yield: primary_yield as number,
           secondary_bucket_id, secondary_yield: secondary_bucket_id ? secondary_yield : null,

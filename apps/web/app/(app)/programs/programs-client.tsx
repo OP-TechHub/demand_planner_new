@@ -50,7 +50,7 @@ export function ProgramsClient({
     return programs.filter((p) => {
       if (status !== 'all' && p.status !== status) return false;
       if (customer !== 'all' && p.customer !== customer) return false;
-      if (q && !`${p.item_code} ${p.item_description} ${p.customer}`.toLowerCase().includes(q)) return false;
+      if (q && !`${p.item_code} ${p.export_code ?? ''} ${p.item_description} ${p.customer}`.toLowerCase().includes(q)) return false;
       return true;
     });
   }, [programs, status, customer, search]);
@@ -82,7 +82,7 @@ export function ProgramsClient({
     const nm = new Map(buckets.map((b) => [b.id, b.name]));
     const name = (id: string | null) => (id ? nm.get(id) ?? '' : '');
     const data = rows.map((p) => [
-      p.status, p.item_code, p.item_description, p.customer, p.max_monthly_demand_fp,
+      p.status, p.item_code, p.export_code ?? '', p.item_description, p.customer, p.max_monthly_demand_fp,
       name(p.primary_bucket_id), p.primary_yield,
       name(p.secondary_bucket_id), p.secondary_yield ?? '',
       name(p.tertiary_bucket_id), p.tertiary_yield ?? '',
@@ -136,6 +136,7 @@ export function ProgramsClient({
               <th className="px-3 py-2">Status</th>
               <th className="px-3 py-2">Customer</th>
               <th className="px-3 py-2">Product</th>
+              <th className="px-3 py-2">Export code</th>
               <th className="px-3 py-2">Primary bucket</th>
               <th className="px-3 py-2 text-right">Demand (kg/mo)</th>
               {canEdit && <th className="px-3 py-2" />}
@@ -148,6 +149,9 @@ export function ProgramsClient({
                 <td className="px-3 py-2"><StatusChip status={p.status} /></td>
                 <td className="px-3 py-2">{p.customer}</td>
                 <td className="max-w-[18rem] truncate px-3 py-2" title={p.item_description}>{p.item_description}</td>
+                <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
+                  {p.export_code ?? <span className="text-muted-foreground/50">—</span>}
+                </td>
                 <td className="px-3 py-2">{bucketName(p.primary_bucket_id)}</td>
                 <td className="px-3 py-2 text-right tabular-nums">{p.max_monthly_demand_fp.toLocaleString()}</td>
                 {canEdit && (

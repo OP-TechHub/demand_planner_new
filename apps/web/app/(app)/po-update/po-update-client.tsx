@@ -2,7 +2,7 @@
 
 import { Fragment, useActionState, useEffect, useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { ChevronRight, Plus, Search, X } from 'lucide-react';
+import { ChevronRight, Plus, Search, Upload, X } from 'lucide-react';
 import { monthLabel } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 import { num0 } from '@/lib/format';
@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { confirmDialog } from '@/components/ui/confirm';
 import { toCsv, downloadCsv } from '@/lib/csv';
 import { savePo, deletePo, type PoFormState } from './actions';
+import { PoImport } from './po-import';
 
 /** One stored row: a single month of one PO. */
 export type PoLine = {
@@ -28,6 +29,8 @@ export type DemandCell = { program_id: string; month_index: number; demand_fp: n
 export type ProgramRow = {
   id: string;
   item_code: string;
+  /** ERP export item number, when the program has one. */
+  export_code: string | null;
   item_description: string;
   customer: string;
   status: string;
@@ -90,6 +93,7 @@ export function PoUpdateClient({
 }) {
   const router = useRouter();
   const [modal, setModal] = useState<null | { programId: string; po: Po | null }>(null);
+  const [importing, setImporting] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [from, setFrom] = useState(1);
   const [to, setTo] = useState(horizon);
@@ -148,7 +152,7 @@ export function PoUpdateClient({
   const entries = useMemo(() => {
     const out: Entry[] = [];
     for (const program of programs) {
-      if (q && !`${program.customer} ${program.item_description} ${program.item_code}`.toLowerCase().includes(q)) continue;
+      if (q && !`${program.customer} ${program.item_description} ${program.item_code} ${program.export_code ?? ''}`.toLowerCase().includes(q)) continue;
       const pos = posByProgram.get(program.id) ?? [];
       if (withPosOnly && pos.length === 0) continue;
 
@@ -247,9 +251,16 @@ export function PoUpdateClient({
           <Stat label="PO quantity" value={`${num0(totals.po)} kg`} sub={fullRange ? 'FP, whole plan' : `FP, ${rangeText}`} />
           <Stat label="Months" value={fullRange ? `All ${horizon}` : String(to - from + 1)} sub={rangeText} />
         </div>
-        <Button variant="outline" size="sm" onClick={exportCsv} disabled={totals.withPos === 0}>
-          Export CSV
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={exportCsv} disabled={totals.withPos === 0}>
+            Export CSV
+          </Button>
+          {canEdit && (
+            <Button variant="outline" size="sm" onClick={() => setImporting(true)}>
+              <Upload /> Import CSV
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-1.5">
@@ -333,7 +344,12 @@ export function PoUpdateClient({
                       <Fragment key={e.program.id}>
                         <tr className="border-b hover:bg-muted/30">
                           <td className="px-3 py-2 font-medium">{e.program.customer}</td>
-                          <td className="max-w-[20rem] truncate px-3 py-2 text-muted-foreground" title={product}>{product}</td>
+                          <td className="max-w-[20rem] px-3 py-2 text-muted-foreground">
+                          <span className="block truncate" title={product}>{product}</span>
+                          {e.program.export_code && (
+                            <span className="text-[11px] text-muted-foreground/80">{e.program.export_code}</span>
+                          )}
+                        </td>
                           <td className="px-3 py-2 text-right tabular-nums">{num0(e.demandInRange)} kg</td>
                           <td className={cn('px-3 py-2 text-right tabular-nums', e.poInRange > 0 && 'font-medium text-success')}>
                             {e.poInRange > 0 ? `${num0(e.poInRange)} kg` : '—'}
@@ -429,6 +445,17 @@ export function PoUpdateClient({
         changes the plan&apos;s inputs, so <b>Recalculate</b> afterwards to see it in the outputs.
       </p>
 
+      {importing && canEdit && (
+        <PoImport
+          planId={planId}
+          planStartDate={planStartDate}
+          horizon={horizon}
+          programs={programs}
+          onClose={() => setImporting(false)}
+          onDone={() => { setImporting(false); router.refresh(); }}
+        />
+      )}
+
       {modal && canEdit && (() => {
         const program = programs.find((p) => p.id === modal.programId);
         if (!program) return null;
@@ -496,7 +523,7 @@ function PoModal({
         <div className="mt-2 rounded-md border bg-muted/40 px-3 py-2">
           <div className="font-medium">{program.customer}</div>
           <div className="text-xs text-muted-foreground">
-            {program.item_description} ({program.item_code})
+            {program.item_description} ({program.export_code ?? program.item_code})
             {program.status !== 'active' && (
               <span className="ml-2 rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wide">{program.status}</span>
             )}
