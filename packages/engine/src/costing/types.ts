@@ -75,6 +75,17 @@ export interface SkuOverrides {
   coldChainUsd?: number;
 }
 
+/**
+ * How a SKU's selling price is arrived at.
+ *
+ *  margin — cost-plus. Price = FINAL / (1 - margin). The workbook's only mode,
+ *           and the default, so parity is unaffected.
+ *  target — you name the price and the margin falls out of it. What you do when
+ *           the market sets the price and the question is whether it clears
+ *           your cost, not what your cost implies the price should be.
+ */
+export type PricingMode = 'margin' | 'target';
+
 export interface CostSku {
   id: string;
   name: string;
@@ -96,6 +107,14 @@ export interface CostSku {
    * absorbed SKUs. Null means contribution can't be computed yet.
    */
   marketPrice?: number | null;
+  /** Defaults to 'margin' when absent, which is the workbook's behaviour. */
+  pricingMode?: PricingMode;
+  /**
+   * The price you intend to sell at, in the market's currency. Used only when
+   * pricingMode is 'target'. Domestic: the shelf/rack price. Export: the FOB
+   * price, so CIF and the chain below build on it.
+   */
+  targetPrice?: number | null;
   overrides?: SkuOverrides;
   /** bucketId -> yield. Populated later by the farm; falls back to baseYield. */
   bucketYields?: Record<string, number>;
@@ -150,14 +169,25 @@ export interface CostChain {
 
 export interface DomesticState {
   finalCost: number;
+  /** Cost-plus price at the rack margin. Always computed, whatever the mode. */
   rackRate: number;
+  /** The price actually used: the target if one is set, else the rack rate. */
+  sellingPrice: number;
+  /** Gross margin realised at sellingPrice. Negative when it sells below cost. */
+  marginPct: number | null;
   /** marketPrice - finalCost. Null when no market price is set. */
   contributionPerKg: number | null;
 }
 
 export interface ExportState {
   finalCost: number;
+  /** Cost-plus FOB at the FOB margin. Always computed, whatever the mode. */
   fob: number;
+  /** The FOB actually used: the target if one is set, else the cost-plus FOB. */
+  sellingPrice: number;
+  /** Gross margin realised at sellingPrice. */
+  marginPct: number | null;
+  /** Built on sellingPrice, so a target FOB carries through the whole chain. */
   cif: number;
   importerPrice: number;
   distributorT3: number;

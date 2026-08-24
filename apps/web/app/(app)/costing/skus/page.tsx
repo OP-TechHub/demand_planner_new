@@ -37,6 +37,13 @@ export default async function CostingSkusPage() {
       // Passed so the editor can show what each override would inherit if left
       // blank — a new SKU shouldn't be a guess about what the defaults are.
       version={ctx.version}
+      // The dialog costs the SKU live, before saving, using the same engine the
+      // grid uses — so it needs the same assumptions and freight rates.
+      odc={ctx.odc}
+      destinations={ctx.destinations}
+      rates={Object.fromEntries(
+        [...ctx.rates.entries()].map(([id, r]) => [id, { sea: r.sea_rate_per_20ft, air: r.air_rate_per_lot }])
+      )}
       // Anyone may add a SKU; editing one is limited to whoever created it
       // (Decisions §5, same rule as costings). The seeded 34 have no creator,
       // so they stay admin-only — they are shared company recipes.

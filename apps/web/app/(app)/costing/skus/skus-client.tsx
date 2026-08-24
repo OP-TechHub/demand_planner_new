@@ -1,9 +1,21 @@
 'use client';
 
-import { useActionState, useEffect, useMemo, useState, useTransition } from 'react';
+import { useActionState, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Lock, Pencil, Plus } from 'lucide-react';
-import { COST_CATEGORIES, type CostAssumptionVersion, type CostSizeBucket, type CostSkuRow } from '@oceanpick/shared';
+import { computeCost, type DomesticOutput, type ExportOutput } from '@oceanpick/engine';
+import {
+  COST_CATEGORIES,
+  type CostAssumptionVersion,
+  type CostDestinationRow,
+  type CostMarketScope,
+  type CostOdcComponentRow,
+  type CostPricingMode,
+  type CostProductForm,
+  type CostSizeBucket,
+  type CostSkuRow,
+} from '@oceanpick/shared';
+import { toAssumptions } from '@/lib/costing-adapt';
 import { cn } from '@/lib/utils';
 import { ScrollX } from '@/components/ui/scroll-x';
 import { archiveCostSku, saveCostSku, saveSkuBucketYield, type SkuFormState } from './actions';
@@ -16,6 +28,9 @@ export function SkusClient({
   yields,
   orgId,
   version,
+  odc,
+  destinations,
+  rates,
   currentUserId,
   authors,
   isAdmin,
@@ -25,6 +40,9 @@ export function SkusClient({
   yields: YieldMap;
   orgId: string;
   version: CostAssumptionVersion;
+  odc: CostOdcComponentRow[];
+  destinations: CostDestinationRow[];
+  rates: Record<string, { sea: number; air: number }>;
   currentUserId: string | null;
   authors: Record<string, string>;
   isAdmin: boolean;
@@ -116,6 +134,9 @@ export function SkusClient({
           sku={editing}
           orgId={orgId}
           version={version}
+          odc={odc}
+          destinations={destinations}
+          rates={rates}
           allSkus={skus}
           categories={categories}
           onClose={() => setEditing(undefined)}
@@ -302,11 +323,229 @@ function YieldTable({
 }
 
 // ---------------------------------------------------------------------------
+// Live preview: cost and price the SKU on screen, before it is saved
+// ---------------------------------------------------------------------------
+
+interface PreviewResult {
+  issues: string[];
+  domestic: DomesticOutput | null;
+  export: ExportOutput | null;
+  destinationName: string | null;
+  /** The cost-plus price the target is being compared against. */
+  pricingMode: CostPricingMode;
+}
+
+/**
+ * Build an engine SKU from the form and cost it, for whichever markets this SKU
+ * is scoped to.
+ *
+ * Reuses the same `computeCost` the grid and the saved costings use, so a
+ * number previewed here is the number that gets stored — there is no second
+ * implementation of the maths to drift.
+ */
+function previewFromForm(
+  fd: FormData,
+  version: CostAssumptionVersion,
+  odc: CostOdcComponentRow[],
+  destinations: CostDestinationRow[],
+  rates: Record<string, { sea: number; air: number }>
+): PreviewResult {
+  const num = (k: string) => {
+    const n = Number(String(fd.get(k) ?? '').trim());
+    return Number.isFinite(n) ? n : 0;
+  };
+  const optional = (k: string) => {
+    const s = String(fd.get(k) ?? '').trim();
+    if (s === '') return undefined;
+    const n = Number(s);
+    return Number.isFinite(n) ? n : undefined;
+  };
+
+  const marketScope = String(fd.get('market_scope') ?? 'both') as CostMarketScope;
+  const pricingMode = String(fd.get('pricing_mode') ?? 'margin') as CostPricingMode;
+  const assumptions = toAssumptions(version, odc);
+
+  const base = {
+    id: 'preview',
+    name: String(fd.get('name') ?? 'This SKU'),
+    status: 'active' as const,
+    category: String(fd.get('category') ?? ''),
+    glazePct: num('glaze_pct'),
+    baseYield: num('base_yield'),
+    pctFish: num('pct_fish'),
+    pctMarinade: num('pct_marinade'),
+    marinadeUsdPerKg: num('marinade_usd_per_kg'),
+    processUsdPerKg: num('process_usd_per_kg'),
+    packingUsdPerKg: num('packing_usd_per_kg'),
+    packSize: null,
+    rawMaterialBasis: String(fd.get('raw_material_basis') ?? 'full_fish') as 'full_fish' | 'absorbed',
+    pricingMode,
+    overrides: {
+      rackMarginPct: optional('override_rack_margin_pct'),
+      fobMarginPct: optional('override_fob_margin_pct'),
+      transportLkr: optional('override_transport_lkr'),
+      coldHoldLkr: optional('override_cold_hold_lkr'),
+      freightToPortUsd: optional('override_freight_to_port_usd'),
+      coldChainUsd: optional('override_cold_chain_usd'),
+    },
+  };
+
+  const issues: string[] = [];
+  let domesticOut: DomesticOutput | null = null;
+  let exportOut: ExportOutput | null = null;
+  let destinationName: string | null = null;
+
+  if (marketScope === 'domestic' || marketScope === 'both') {
+    const price = optional('market_price_lkr') ?? null;
+    const res = computeCost({
+      market: 'domestic',
+      assumptions,
+      sku: { ...base, marketPrice: price, targetPrice: price },
+    });
+    if (res.ok) domesticOut = res.value.result as DomesticOutput;
+    else issues.push(...res.issues.map((i) => i.message));
+  }
+
+  if (marketScope === 'export' || marketScope === 'both') {
+    // Preview against the first port. Everything up to FOB is generic, so the
+    // only figure that depends on this choice is CIF and below.
+    const dest = destinations[0];
+    if (!dest) {
+      issues.push('No destination is set up, so export freight can’t be priced.');
+    } else {
+      const price = optional('market_price_usd') ?? null;
+      const rate = rates[dest.id] ?? { sea: 0, air: 0 };
+      const res = computeCost({
+        market: 'export',
+        assumptions,
+        sku: { ...base, marketPrice: price, targetPrice: price },
+        destination: { id: dest.id, name: dest.name, seaRatePer20ft: rate.sea, airRatePerLot: rate.air },
+      });
+      if (res.ok) {
+        exportOut = res.value.result as ExportOutput;
+        destinationName = dest.name;
+      } else {
+        issues.push(...res.issues.map((i) => i.message));
+      }
+    }
+  }
+
+  return { issues: [...new Set(issues)], domestic: domesticOut, export: exportOut, destinationName, pricingMode };
+}
+
+function MarginBadge({ pct }: { pct: number | null }) {
+  if (pct == null) return <span className="text-muted-foreground">—</span>;
+  // Below cost is the answer worth seeing, so it is coloured, not hidden.
+  const tone = pct < 0 ? 'text-destructive' : pct < 0.15 ? 'text-warning' : 'text-success';
+  return <span className={cn('font-medium', tone)}>{(pct * 100).toFixed(1)}%</span>;
+}
+
+function PreviewPanel({ preview, form }: { preview: PreviewResult; form: CostProductForm }) {
+  const target = preview.pricingMode === 'target';
+  return (
+    <div className="space-y-3 rounded-md border border-primary/30 bg-primary/5 p-3">
+      <h3 className="text-xs font-semibold">
+        Costing preview
+        <span className="ml-1.5 font-normal text-muted-foreground">
+          priced on {target ? 'your target' : 'the standard margin'} · not saved yet
+        </span>
+      </h3>
+
+      {preview.issues.length > 0 && (
+        <p className="rounded border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive">
+          {preview.issues.join(' · ')}
+        </p>
+      )}
+
+      {preview.domestic && (
+        <PreviewBlock
+          title="Domestic (LKR/kg)"
+          fmt={(n) => Math.round(n).toLocaleString()}
+          rows={[
+            ['No glaze', preview.domestic.unglazed.finalCost, preview.domestic.unglazed.rackRate, preview.domestic.unglazed.sellingPrice, preview.domestic.unglazed.marginPct],
+            ...(form === 'fresh'
+              ? []
+              : ([['With glaze', preview.domestic.glazed.finalCost, preview.domestic.glazed.rackRate, preview.domestic.glazed.sellingPrice, preview.domestic.glazed.marginPct]] as PreviewRow[])),
+          ]}
+          target={target}
+        />
+      )}
+
+      {preview.export && (
+        <PreviewBlock
+          title={`Export (USD/kg)${preview.destinationName ? ` — ${preview.destinationName}` : ''}`}
+          fmt={(n) => n.toFixed(2)}
+          rows={[
+            ...(form === 'fresh'
+              ? []
+              : ([
+                  ['Frozen, no glaze', preview.export.frozenPlain.finalCost, preview.export.frozenPlain.fob, preview.export.frozenPlain.sellingPrice, preview.export.frozenPlain.marginPct],
+                  ['Frozen, glazed', preview.export.frozenGlazed.finalCost, preview.export.frozenGlazed.fob, preview.export.frozenGlazed.sellingPrice, preview.export.frozenGlazed.marginPct],
+                ] as PreviewRow[])),
+            ...(form === 'frozen'
+              ? []
+              : ([['Fresh (air)', preview.export.fresh.finalCost, preview.export.fresh.fob, preview.export.fresh.sellingPrice, preview.export.fresh.marginPct]] as PreviewRow[])),
+          ]}
+          target={target}
+        />
+      )}
+    </div>
+  );
+}
+
+type PreviewRow = [string, number, number, number, number | null];
+
+function PreviewBlock({
+  title,
+  fmt,
+  rows,
+  target,
+}: {
+  title: string;
+  fmt: (n: number) => string;
+  rows: PreviewRow[];
+  target: boolean;
+}) {
+  return (
+    <div>
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{title}</div>
+      <table className="mt-1 w-full text-right text-[11px] tabular-nums">
+        <thead className="text-[10px] uppercase text-muted-foreground">
+          <tr>
+            <th className="py-0.5 text-left font-medium">State</th>
+            <th className="py-0.5 font-medium">Cost</th>
+            <th className="py-0.5 font-medium">Standard price</th>
+            {target && <th className="py-0.5 font-medium">Your price</th>}
+            <th className="py-0.5 font-medium">Margin</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(([label, cost, standard, selling, margin]) => (
+            <tr key={label} className="border-t border-primary/10">
+              <td className="py-0.5 text-left">{label}</td>
+              <td className="py-0.5">{fmt(cost)}</td>
+              <td className={cn('py-0.5', target && 'text-muted-foreground')}>{fmt(standard)}</td>
+              {target && <td className="py-0.5 font-medium">{fmt(selling)}</td>}
+              <td className="py-0.5">
+                <MarginBadge pct={margin} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 
 function SkuDialog({
   sku,
   orgId,
   version,
+  odc,
+  destinations,
+  rates,
   allSkus,
   categories,
   onClose,
@@ -314,12 +553,17 @@ function SkuDialog({
   sku: CostSkuRow | null;
   orgId: string;
   version: CostAssumptionVersion;
+  odc: CostOdcComponentRow[];
+  destinations: CostDestinationRow[];
+  rates: Record<string, { sea: number; air: number }>;
   allSkus: CostSkuRow[];
   categories: string[];
   onClose: () => void;
 }) {
   const router = useRouter();
+  const formRef = useRef<HTMLFormElement>(null);
   const [state, action, pending] = useActionState<SkuFormState, FormData>(saveCostSku, { error: null, ok: false });
+  const [preview, setPreview] = useState<PreviewResult | null>(null);
 
   /**
    * Which record the field defaults come from.
@@ -338,10 +582,30 @@ function SkuDialog({
   const [categoryChoice, setCategoryChoice] = useState(
     src?.category && categories.includes(src.category) ? src.category : (categories[0] ?? 'Whole')
   );
+  const [pricingMode, setPricingMode] = useState(src?.pricing_mode ?? 'margin');
   // Open by default for a new SKU: the inherited values are the point of the
   // section, so they should be on screen without a click. For an existing SKU,
   // open only if it actually overrides something.
   const [showOverrides, setShowOverrides] = useState(sku ? hasOverride(sku) : true);
+
+  /**
+   * Cost and price this SKU from what is on screen right now, without saving.
+   *
+   * Reads the live form rather than mirroring every field into state: the
+   * numeric inputs are uncontrolled, and a FormData snapshot is both simpler
+   * and impossible to get out of sync with what the user can see. Recalculated
+   * on demand, so the answer always belongs to the values currently entered.
+   */
+  function calculate() {
+    const el = formRef.current;
+    if (!el) return;
+    const fd = new FormData(el);
+    setPreview(previewFromForm(fd, version, odc, destinations, rates));
+  }
+
+  // A stale preview is worse than none: it shows numbers for a recipe that is
+  // no longer on screen. Any edit clears it until Calculate is pressed again.
+  const invalidatePreview = () => setPreview(null);
 
   useEffect(() => {
     if (state.ok) {
@@ -369,8 +633,10 @@ function SkuDialog({
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4" onClick={onClose}>
       <form
+        ref={formRef}
         action={action}
         onClick={(e) => e.stopPropagation()}
+        onInput={invalidatePreview}
         // Remount when the copy source changes, so the uncontrolled numeric
         // fields pick up the new defaults instead of keeping the old ones.
         key={src?.id ?? 'new'}
@@ -485,6 +751,17 @@ function SkuDialog({
           </label>
 
           <Select label="Status" name="status" defaultValue={src?.status ?? 'active'} options={[['active', 'Active'], ['inactive', 'Inactive']]} />
+
+          {/* Free text for now. When the customer master lands, a costing will
+              pick from it and this becomes the thing to migrate from. */}
+          <Field
+            label="Customer"
+            name="customer"
+            defaultValue={src?.customer ?? ''}
+            type="text"
+            hint="optional — who this is costed for"
+            className="sm:col-span-2"
+          />
         </div>
 
         <fieldset className="rounded-md border p-3">
@@ -517,14 +794,63 @@ function SkuDialog({
           <Field label="Packing $/kg" name="packing_usd_per_kg" defaultValue={src?.packing_usd_per_kg ?? 0} step="0.01" />
         </div>
 
-        <fieldset className={cn('rounded-md border p-3', absorbed && 'border-primary/40 bg-primary/5')}>
-          <legend className="px-1 text-xs font-semibold">
-            Market price {absorbed && <span className="font-normal text-primary">— drives contribution</span>}
-          </legend>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Domestic (LKR/kg)" name="market_price_lkr" defaultValue={src?.market_price_lkr ?? ''} step="1" hint="what the market bears" />
-            <Field label="Export (USD/kg)" name="market_price_usd" defaultValue={src?.market_price_usd ?? ''} step="0.01" hint="blank = no contribution shown" />
+        <fieldset className={cn('rounded-md border p-3', (absorbed || pricingMode === 'target') && 'border-primary/40 bg-primary/5')}>
+          <legend className="px-1 text-xs font-semibold">Pricing</legend>
+
+          <div className="inline-flex rounded-md border bg-background p-0.5 text-xs">
+            {(
+              [
+                ['margin', 'Standard margin'],
+                ['target', 'Target price'],
+              ] as const
+            ).map(([mode, label]) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => {
+                  setPricingMode(mode);
+                  invalidatePreview();
+                }}
+                className={cn(
+                  'rounded px-2.5 py-1 font-medium',
+                  pricingMode === mode ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                {label}
+              </button>
+            ))}
           </div>
+          <input type="hidden" name="pricing_mode" value={pricingMode} />
+
+          <p className="mt-1.5 text-[11px] text-muted-foreground">
+            {pricingMode === 'margin'
+              ? `Price is cost ÷ (1 − margin) — ${(version.rack_margin_pct * 100).toFixed(0)}% domestic, ${(version.fob_margin_pct * 100).toFixed(0)}% FOB unless overridden below.`
+              : 'You name the price and the margin is worked out from it. Use this when the buyer sets the price and the question is whether it clears cost.'}
+          </p>
+
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <Field
+              label={pricingMode === 'target' ? 'Target price — domestic (LKR/kg)' : 'Market price — domestic (LKR/kg)'}
+              name="market_price_lkr"
+              defaultValue={src?.market_price_lkr ?? ''}
+              step="1"
+              hint={pricingMode === 'target' ? 'what you intend to charge' : 'what the market bears'}
+            />
+            <Field
+              label={pricingMode === 'target' ? 'Target price — export (USD/kg FOB)' : 'Market price — export (USD/kg)'}
+              name="market_price_usd"
+              defaultValue={src?.market_price_usd ?? ''}
+              step="0.01"
+              hint={pricingMode === 'target' ? 'CIF and below build on this' : 'blank = no contribution shown'}
+            />
+          </div>
+
+          {absorbed && (
+            <p className="mt-2 text-[11px] text-primary">
+              This is a by-product, so its cost is a floor rather than a base for margin. The price
+              above is what drives its contribution per kg.
+            </p>
+          )}
         </fieldset>
 
         {/* Shown expanded for a new SKU so the inherited figures are visible
@@ -590,14 +916,30 @@ function SkuDialog({
           )}
         </div>
 
+        {preview ? (
+          <PreviewPanel preview={preview} form={form} />
+        ) : (
+          <p className="rounded-md bg-muted/50 px-3 py-2 text-[11px] text-muted-foreground">
+            Press Calculate to cost this SKU and see the price and margin before saving.
+          </p>
+        )}
+
         <div className="flex items-center justify-between gap-2">
           {sku ? <ArchiveButton id={sku.id} onDone={onClose} /> : <span />}
           <div className="flex gap-2">
             <button type="button" onClick={onClose} className="rounded-md border px-3 py-1.5 text-sm font-medium hover:bg-muted">
               Cancel
             </button>
+            {/* type="button" matters: inside a form, a bare button submits. */}
+            <button
+              type="button"
+              onClick={calculate}
+              className="rounded-md border border-primary px-3 py-1.5 text-sm font-medium text-primary hover:bg-primary/10"
+            >
+              Calculate
+            </button>
             <button type="submit" disabled={pending} className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-50">
-              {pending ? 'Saving…' : 'Save'}
+              {pending ? 'Saving…' : pricingMode === 'target' ? 'Save with target price' : 'Save'}
             </button>
           </div>
         </div>

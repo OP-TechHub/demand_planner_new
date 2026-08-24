@@ -337,6 +337,8 @@ export type CostProductState = 'unglazed' | 'glazed' | 'frozen_plain' | 'frozen_
 export type CostProductForm = 'frozen' | 'fresh' | 'both';
 /** Which market's grid a SKU appears in. Its recipe is shared regardless. */
 export type CostMarketScope = 'domestic' | 'export' | 'both';
+/** margin = cost-plus; target = the price is named and the margin derived. */
+export type CostPricingMode = 'margin' | 'target';
 
 /** The category vocabulary in use. Free text in the DB; this is the offered set. */
 export const COST_CATEGORIES = ['Whole', 'Fillet', 'By-product', 'Value-added'] as const;
@@ -423,6 +425,13 @@ export interface CostSkuRow {
   raw_material_basis: CostRawMaterialBasis;
   product_form: CostProductForm;
   market_scope: CostMarketScope;
+  /** Free text until a customer master exists. */
+  customer: string;
+  /**
+   * How the selling price is arrived at. In 'target' mode the market_price_*
+   * columns below ARE the target — one number, not two that can drift.
+   */
+  pricing_mode: CostPricingMode;
   market_price_lkr: number | null;
   market_price_usd: number | null;
   override_rack_margin_pct: number | null;

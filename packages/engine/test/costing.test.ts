@@ -289,3 +289,84 @@ describe('determinism', () => {
     expect(new Set(runs).size).toBe(1);
   });
 });
+
+describe('target pricing', () => {
+  const fillet = skuNamed('Skin-on fillet');
+
+  it('defaults to cost-plus, so every v11 row prices on margin', () => {
+    for (const sku of v11Skus()) {
+      const out = ok(domestic(sku)).value.result as DomesticOutput;
+      expect(sku.pricingMode, sku.name).toBeUndefined();
+      expect(out.unglazed.sellingPrice, sku.name).toBeCloseTo(out.unglazed.rackRate, 9);
+    }
+  });
+
+  it('reports the margin implied by the cost-plus price', () => {
+    const out = ok(domestic(fillet)).value.result as DomesticOutput;
+    // Rack rate IS cost / (1 - 40%), so the realised margin is the input margin.
+    expect(out.unglazed.marginPct).toBeCloseTo(A.margins.rackPct, 9);
+  });
+
+  it('uses the target price and derives the margin from it', () => {
+    // FINAL is LKR 2,985.06, so LKR 6,000 leaves just over half as margin.
+    const out = ok(domestic({ ...fillet, pricingMode: 'target', targetPrice: 6000 })).value
+      .result as DomesticOutput;
+    expect(out.unglazed.sellingPrice).toBe(6000);
+    expect(out.unglazed.marginPct).toBeCloseTo((6000 - out.unglazed.finalCost) / 6000, 9);
+    // The cost-plus price stays available for comparison rather than being lost.
+    expect(out.unglazed.rackRate).toBeCloseTo(4975.09, 2);
+  });
+
+  it('reports a negative margin when the target sits below cost', () => {
+    // Worth surfacing rather than clamping: pricing below cost is the answer
+    // the question was asked to find.
+    const out = ok(domestic({ ...fillet, pricingMode: 'target', targetPrice: 2000 })).value
+      .result as DomesticOutput;
+    expect(out.unglazed.marginPct).toBeLessThan(0);
+  });
+
+  it('falls back to cost-plus when the target is blank or zero', () => {
+    const plus = ok(domestic(fillet)).value.result as DomesticOutput;
+    for (const targetPrice of [null, 0]) {
+      const out = ok(domestic({ ...fillet, pricingMode: 'target', targetPrice })).value
+        .result as DomesticOutput;
+      expect(out.unglazed.sellingPrice).toBeCloseTo(plus.unglazed.rackRate, 9);
+    }
+  });
+
+  it('ignores a target while the SKU prices on margin', () => {
+    const out = ok(domestic({ ...fillet, pricingMode: 'margin', targetPrice: 6000 })).value
+      .result as DomesticOutput;
+    expect(out.unglazed.sellingPrice).toBeCloseTo(out.unglazed.rackRate, 9);
+  });
+
+  it('carries a target FOB through CIF and the whole export chain', () => {
+    const base = ok(exported(fillet)).value.result as ExportOutput;
+    const out = ok(exported({ ...fillet, pricingMode: 'target', targetPrice: 14 })).value
+      .result as ExportOutput;
+
+    expect(out.frozenPlain.sellingPrice).toBe(14);
+    // CIF builds on what is actually charged, not on the cost-plus FOB.
+    expect(out.frozenPlain.cif).toBeCloseTo(14 + out.frozenPlain.freightPerKg, 9);
+    expect(out.frozenPlain.cif).toBeGreaterThan(base.frozenPlain.cif);
+    expect(out.frozenPlain.distributorT3).toBeGreaterThan(base.frozenPlain.distributorT3);
+    // The cost-plus FOB is still reported, so the gap is visible.
+    expect(out.frozenPlain.fob).toBeCloseTo(base.frozenPlain.fob, 9);
+  });
+
+  it('prices fresh and frozen off the same target but different freight', () => {
+    const out = ok(exported({ ...fillet, pricingMode: 'target', targetPrice: 14 })).value
+      .result as ExportOutput;
+    expect(out.fresh.sellingPrice).toBe(14);
+    expect(out.frozenPlain.sellingPrice).toBe(14);
+    // Same FOB, diverging only on the air leg.
+    expect(out.fresh.cif).toBeGreaterThan(out.frozenPlain.cif);
+  });
+
+  it('gives a glazed state a better margin at the same target', () => {
+    // Glaze lowers FINAL, so selling at one price earns more on the glazed run.
+    const out = ok(domestic({ ...fillet, glazePct: 0.2, pricingMode: 'target', targetPrice: 6000 }))
+      .value.result as DomesticOutput;
+    expect(out.glazed.marginPct!).toBeGreaterThan(out.unglazed.marginPct!);
+  });
+});
