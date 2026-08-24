@@ -17,6 +17,7 @@ export function SkusClient({
   orgId,
   version,
   currentUserId,
+  authors,
   isAdmin,
 }: {
   skus: CostSkuRow[];
@@ -25,6 +26,7 @@ export function SkusClient({
   orgId: string;
   version: CostAssumptionVersion;
   currentUserId: string | null;
+  authors: Record<string, string>;
   isAdmin: boolean;
 }) {
   const [editing, setEditing] = useState<CostSkuRow | null | undefined>(undefined);
@@ -42,6 +44,17 @@ export function SkusClient({
    * offers an edit the database will reject.
    */
   const canEdit = (s: CostSkuRow) => isAdmin || (currentUserId != null && s.created_by === currentUserId);
+
+  /**
+   * Where a recipe came from. A null creator means it arrived with the seed —
+   * a shared company recipe from the workbook, not one person's addition.
+   */
+  const sourceOf = (s: CostSkuRow): string =>
+    s.created_by == null
+      ? 'Company'
+      : s.created_by === currentUserId
+        ? 'You'
+        : (authors[s.created_by] ?? 'Someone else');
 
   return (
     <div className="space-y-4">
@@ -86,7 +99,7 @@ export function SkusClient({
       </div>
 
       {tab === 'recipe' ? (
-        <RecipeTable skus={visible} canEdit={canEdit} onEdit={setEditing} />
+        <RecipeTable skus={visible} canEdit={canEdit} sourceOf={sourceOf} onEdit={setEditing} />
       ) : (
         <YieldTable skus={visible} buckets={buckets} yields={yields} canEdit={canEdit} />
       )}
@@ -103,10 +116,12 @@ export function SkusClient({
 function RecipeTable({
   skus,
   canEdit,
+  sourceOf,
   onEdit,
 }: {
   skus: CostSkuRow[];
   canEdit: (s: CostSkuRow) => boolean;
+  sourceOf: (s: CostSkuRow) => string;
   onEdit: (s: CostSkuRow) => void;
 }) {
   return (
@@ -115,6 +130,7 @@ function RecipeTable({
         <thead>
           <tr className="border-b bg-muted/40 text-[10px] uppercase tracking-wide text-muted-foreground">
             <th className={cn(th, 'sticky left-0 z-10 bg-muted/40 text-left')}>SKU</th>
+            <th className={cn(th, 'text-left')}>Added by</th>
             <th className={cn(th, 'text-left')}>Category</th>
             <th className={cn(th, 'text-left')}>Raw material</th>
             <th className={th}>Yield</th>
@@ -145,6 +161,13 @@ function RecipeTable({
                     </span>
                   )}
                 </th>
+                <td className={cn(td, 'text-left')}>
+                  {s.created_by == null ? (
+                    <span className="text-muted-foreground">Company</span>
+                  ) : (
+                    <span className={cn(s.created_by && 'rounded bg-muted px-1.5 py-px')}>{sourceOf(s)}</span>
+                  )}
+                </td>
                 <td className={cn(td, 'text-left')}>{s.category}</td>
                 <td className={cn(td, 'text-left')}>
                   {absorbed ? (

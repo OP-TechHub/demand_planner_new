@@ -106,7 +106,17 @@ export async function saveCostSku(_prev: SkuFormState, fd: FormData): Promise<Sk
     if (error) return { error: friendly(error.message), ok: false };
   } else {
     if (!orgId) return { error: 'Missing organization.', ok: false };
-    const sortOrder = Number(String(fd.get('sort_order') ?? '0')) || 0;
+    // Land it at the END of the list. The dialog has no sort-order field, and
+    // defaulting to 0 would put every new SKU above the seeded ones — the list
+    // is read in workbook order, so a new addition belongs after it, not first.
+    const { data: last } = await supabase
+      .from('cost_skus')
+      .select('sort_order')
+      .eq('org_id', orgId)
+      .order('sort_order', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const sortOrder = ((last as { sort_order: number } | null)?.sort_order ?? 0) + 10;
     const { data: created, error } = await supabase
       .from('cost_skus')
       .insert({ ...payload, org_id: orgId, sort_order: sortOrder, created_by: user.id, updated_by: user.id })
