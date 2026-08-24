@@ -421,6 +421,8 @@ export interface CostSkuRow {
   override_cold_hold_lkr: number | null;
   override_freight_to_port_usd: number | null;
   override_cold_chain_usd: number | null;
+  /** Null for the seeded workbook recipes — those are admin-maintained. */
+  created_by: string | null;
   deleted_at: string | null;
 }
 

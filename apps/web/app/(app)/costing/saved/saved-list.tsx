@@ -3,10 +3,10 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useTransition } from 'react';
-import { AlertTriangle, Trash2 } from 'lucide-react';
+import { AlertTriangle, Copy, Trash2 } from 'lucide-react';
 import type { CostCosting } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
-import { deleteCosting } from '../actions';
+import { deleteCosting, duplicateCosting } from '../actions';
 
 export interface SavedRow {
   costing: CostCosting;
@@ -23,7 +23,8 @@ export function SavedList({ rows }: { rows: SavedRow[] }) {
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">Saved costings</h1>
         <p className="mt-0.5 text-sm text-muted-foreground">
-          Everyone&apos;s costings are visible here. Only the person who made one can change it.
+          Everyone&apos;s costings are visible here. Only the person who made one can change it — copy
+          one to work from its numbers yourself.
         </p>
       </header>
 
@@ -85,6 +86,25 @@ function Row({ row }: { row: SavedRow }) {
             custom assumptions
           </span>
         )}
+
+        {/* Available on everyone's costings, not just your own: copying is how
+            you work from someone else's numbers without overwriting a record
+            they may already have sent to a customer. */}
+        <button
+          disabled={pending}
+          onClick={() =>
+            startTransition(async () => {
+              const res = await duplicateCosting(c.id);
+              if (res.error) alert(res.error);
+              else if (res.id) router.push(`/costing/saved/${res.id}`);
+            })
+          }
+          className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+          aria-label={`Duplicate ${c.name}`}
+          title="Make my own copy of this costing"
+        >
+          <Copy className="h-3.5 w-3.5" />
+        </button>
 
         {row.canEdit && (
           <button
