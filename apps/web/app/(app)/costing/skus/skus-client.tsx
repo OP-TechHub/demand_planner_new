@@ -330,9 +330,12 @@ interface PreviewResult {
   issues: string[];
   domestic: DomesticOutput | null;
   export: ExportOutput | null;
-  destinationName: string | null;
-  /** The cost-plus price the target is being compared against. */
   pricingMode: CostPricingMode;
+  /** 0 means the glazed rows would duplicate the plain ones, so they're dropped. */
+  glazePct: number;
+  /** In target mode, whether a target was actually entered for that market. */
+  hasTargetDomestic: boolean;
+  hasTargetExport: boolean;
 }
 
 /**
@@ -393,10 +396,12 @@ function previewFromForm(
   const issues: string[] = [];
   let domesticOut: DomesticOutput | null = null;
   let exportOut: ExportOutput | null = null;
-  let destinationName: string | null = null;
+  let hasTargetDomestic = false;
+  let hasTargetExport = false;
 
   if (marketScope === 'domestic' || marketScope === 'both') {
     const price = optional('market_price_lkr') ?? null;
+    hasTargetDomestic = price != null && price > 0;
     const res = computeCost({
       market: 'domestic',
       assumptions,
@@ -407,13 +412,16 @@ function previewFromForm(
   }
 
   if (marketScope === 'export' || marketScope === 'both') {
-    // Preview against the first port. Everything up to FOB is generic, so the
-    // only figure that depends on this choice is CIF and below.
+    // Any port will do. The preview stops at FOB, and everything up to FOB is
+    // generic — the port only starts to matter at CIF, which isn't shown here.
+    // So the first destination is a stand-in, not a choice, and naming it in the
+    // UI would imply these figures are specific to it.
     const dest = destinations[0];
     if (!dest) {
       issues.push('No destination is set up, so export freight can’t be priced.');
     } else {
       const price = optional('market_price_usd') ?? null;
+      hasTargetExport = price != null && price > 0;
       const rate = rates[dest.id] ?? { sea: 0, air: 0 };
       const res = computeCost({
         market: 'export',
@@ -421,16 +429,20 @@ function previewFromForm(
         sku: { ...base, marketPrice: price, targetPrice: price },
         destination: { id: dest.id, name: dest.name, seaRatePer20ft: rate.sea, airRatePerLot: rate.air },
       });
-      if (res.ok) {
-        exportOut = res.value.result as ExportOutput;
-        destinationName = dest.name;
-      } else {
-        issues.push(...res.issues.map((i) => i.message));
-      }
+      if (res.ok) exportOut = res.value.result as ExportOutput;
+      else issues.push(...res.issues.map((i) => i.message));
     }
   }
 
-  return { issues: [...new Set(issues)], domestic: domesticOut, export: exportOut, destinationName, pricingMode };
+  return {
+    issues: [...new Set(issues)],
+    domestic: domesticOut,
+    export: exportOut,
+    pricingMode,
+    glazePct: base.glazePct,
+    hasTargetDomestic,
+    hasTargetExport,
+  };
 }
 
 function MarginBadge({ pct }: { pct: number | null }) {
@@ -440,8 +452,19 @@ function MarginBadge({ pct }: { pct: number | null }) {
   return <span className={cn('font-medium', tone)}>{(pct * 100).toFixed(1)}%</span>;
 }
 
-function PreviewPanel({ preview, form }: { preview: PreviewResult; form: CostProductForm }) {
+function PreviewPanel({
+  preview,
+  form,
+  onPriceChange,
+}: {
+  preview: PreviewResult;
+  form: CostProductForm;
+  /** Try a price: writes it into the form and recosts through the engine. */
+  onPriceChange: (market: 'domestic' | 'export', value: string) => void;
+}) {
   const target = preview.pricingMode === 'target';
+  // Glaze only earns a row of its own once it actually changes the cost.
+  const glazed = preview.glazePct > 0;
   return (
     <div className="space-y-3 rounded-md border border-primary/30 bg-primary/5 p-3">
       <h3 className="text-xs font-semibold">
@@ -451,44 +474,68 @@ function PreviewPanel({ preview, form }: { preview: PreviewResult; form: CostPro
         </span>
       </h3>
 
+      <p className="text-[11px] text-muted-foreground">
+        Type over <strong className="font-medium text-foreground">Your price</strong> to see what any
+        price earns. There is one price per market, so every state moves together — but each shows
+        its own margin, because their costs differ.
+      </p>
+
       {preview.issues.length > 0 && (
         <p className="rounded border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive">
           {preview.issues.join(' · ')}
         </p>
       )}
 
+      {/* Glaze at 0% produces a glazed row identical to the plain one — two
+          lines saying the same thing. Only show it once glaze does something. */}
       {preview.domestic && (
         <PreviewBlock
           title="Domestic (LKR/kg)"
+          note={target && !preview.hasTargetDomestic ? 'no domestic target set — showing the standard price' : undefined}
           fmt={(n) => Math.round(n).toLocaleString()}
           rows={[
-            ['No glaze', preview.domestic.unglazed.finalCost, preview.domestic.unglazed.rackRate, preview.domestic.unglazed.sellingPrice, preview.domestic.unglazed.marginPct],
-            ...(form === 'fresh'
-              ? []
-              : ([['With glaze', preview.domestic.glazed.finalCost, preview.domestic.glazed.rackRate, preview.domestic.glazed.sellingPrice, preview.domestic.glazed.marginPct]] as PreviewRow[])),
+            [glazed ? 'No glaze' : 'Per kg', preview.domestic.unglazed.finalCost, preview.domestic.unglazed.rackRate, preview.domestic.unglazed.sellingPrice, preview.domestic.unglazed.marginPct],
+            ...(glazed
+              ? ([[`With ${(preview.glazePct * 100).toFixed(0)}% glaze`, preview.domestic.glazed.finalCost, preview.domestic.glazed.rackRate, preview.domestic.glazed.sellingPrice, preview.domestic.glazed.marginPct]] as PreviewRow[])
+              : []),
           ]}
           target={target}
+          onPriceChange={(v) => onPriceChange('domestic', v)}
         />
       )}
 
       {preview.export && (
         <PreviewBlock
-          title={`Export (USD/kg)${preview.destinationName ? ` — ${preview.destinationName}` : ''}`}
+          // Deliberately no port name: every figure here is at FOB, which is the
+          // same for all of them. Naming one would imply otherwise.
+          title="Export (USD/kg, FOB)"
+          note={
+            target && !preview.hasTargetExport
+              ? 'no export target set — showing the standard price'
+              : 'same for every port — freight only starts to matter at CIF'
+          }
           fmt={(n) => n.toFixed(2)}
           rows={[
             ...(form === 'fresh'
               ? []
               : ([
-                  ['Frozen, no glaze', preview.export.frozenPlain.finalCost, preview.export.frozenPlain.fob, preview.export.frozenPlain.sellingPrice, preview.export.frozenPlain.marginPct],
-                  ['Frozen, glazed', preview.export.frozenGlazed.finalCost, preview.export.frozenGlazed.fob, preview.export.frozenGlazed.sellingPrice, preview.export.frozenGlazed.marginPct],
+                  [glazed ? 'Frozen, no glaze' : 'Frozen', preview.export.frozenPlain.finalCost, preview.export.frozenPlain.fob, preview.export.frozenPlain.sellingPrice, preview.export.frozenPlain.marginPct],
+                  ...(glazed
+                    ? ([[`Frozen, ${(preview.glazePct * 100).toFixed(0)}% glaze`, preview.export.frozenGlazed.finalCost, preview.export.frozenGlazed.fob, preview.export.frozenGlazed.sellingPrice, preview.export.frozenGlazed.marginPct]] as PreviewRow[])
+                    : []),
                 ] as PreviewRow[])),
             ...(form === 'frozen'
               ? []
               : ([['Fresh (air)', preview.export.fresh.finalCost, preview.export.fresh.fob, preview.export.fresh.sellingPrice, preview.export.fresh.marginPct]] as PreviewRow[])),
           ]}
           target={target}
+          onPriceChange={(v) => onPriceChange('export', v)}
         />
       )}
+
+      <p className="text-[10px] text-muted-foreground">
+        One SKU, costed in each state it can be sold in — not separate products.
+      </p>
     </div>
   );
 }
@@ -497,35 +544,67 @@ type PreviewRow = [string, number, number, number, number | null];
 
 function PreviewBlock({
   title,
+  note,
   fmt,
   rows,
   target,
+  onPriceChange,
 }: {
   title: string;
+  note?: string;
   fmt: (n: number) => string;
   rows: PreviewRow[];
   target: boolean;
+  onPriceChange: (value: string) => void;
 }) {
+  // Every row in a market shares one price — that is how the SKU stores it —
+  // so the cells are bound to a single value and move together.
+  const shared = rows[0]?.[3] ?? 0;
+
   return (
     <div>
-      <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{title}</div>
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+        {title}
+        {note && <span className="ml-1.5 normal-case tracking-normal opacity-80">· {note}</span>}
+      </div>
       <table className="mt-1 w-full text-right text-[11px] tabular-nums">
         <thead className="text-[10px] uppercase text-muted-foreground">
           <tr>
             <th className="py-0.5 text-left font-medium">State</th>
             <th className="py-0.5 font-medium">Cost</th>
             <th className="py-0.5 font-medium">Standard price</th>
-            {target && <th className="py-0.5 font-medium">Your price</th>}
+            <th className="py-0.5 font-medium">Your price</th>
             <th className="py-0.5 font-medium">Margin</th>
           </tr>
         </thead>
         <tbody>
-          {rows.map(([label, cost, standard, selling, margin]) => (
+          {rows.map(([label, cost, standard, , margin], i) => (
             <tr key={label} className="border-t border-primary/10">
               <td className="py-0.5 text-left">{label}</td>
               <td className="py-0.5">{fmt(cost)}</td>
               <td className={cn('py-0.5', target && 'text-muted-foreground')}>{fmt(standard)}</td>
-              {target && <td className="py-0.5 font-medium">{fmt(selling)}</td>}
+              <td className="py-0.5">
+                {i === 0 ? (
+                  <input
+                    type="number"
+                    step="any"
+                    min="0"
+                    // Rounded to what the column displays, so typing starts from
+                    // the number on screen rather than a long float.
+                    value={Number(fmt(shared).replace(/,/g, ''))}
+                    onChange={(e) => onPriceChange(e.target.value)}
+                    // The form clears the preview on any input; this input lives
+                    // inside it but must survive its own edit.
+                    onInput={(e) => e.stopPropagation()}
+                    className="w-24 rounded border bg-background px-1.5 py-0.5 text-right font-medium"
+                    aria-label="Your price"
+                  />
+                ) : (
+                  <span className="font-medium" title="One price per market — edit it on the first row">
+                    {fmt(shared)}
+                  </span>
+                )}
+              </td>
               <td className="py-0.5">
                 <MarginBadge pct={margin} />
               </td>
@@ -606,6 +685,32 @@ function SkuDialog({
   // A stale preview is worse than none: it shows numbers for a recipe that is
   // no longer on screen. Any edit clears it until Calculate is pressed again.
   const invalidatePreview = () => setPreview(null);
+
+  /**
+   * Try a price straight from the preview table.
+   *
+   * Writes it into the real target-price field and recosts, rather than working
+   * the margin out locally — so the number on screen comes from the same engine
+   * that will store it, and the two can't disagree. Typing a price also means
+   * pricing on a target, so the mode follows rather than making you set it
+   * first and then discover the field.
+   */
+  function tryPrice(market: 'domestic' | 'export', value: string) {
+    const el = formRef.current;
+    if (!el) return;
+    const field = el.elements.namedItem(
+      market === 'domestic' ? 'market_price_lkr' : 'market_price_usd'
+    ) as HTMLInputElement | null;
+    if (!field) return;
+
+    field.value = value;
+    if (pricingMode !== 'target') setPricingMode('target');
+
+    // The mode lives in React state, so it isn't in the form yet on this pass.
+    const fd = new FormData(el);
+    fd.set('pricing_mode', 'target');
+    setPreview(previewFromForm(fd, version, odc, destinations, rates));
+  }
 
   useEffect(() => {
     if (state.ok) {
@@ -917,7 +1022,7 @@ function SkuDialog({
         </div>
 
         {preview ? (
-          <PreviewPanel preview={preview} form={form} />
+          <PreviewPanel preview={preview} form={form} onPriceChange={tryPrice} />
         ) : (
           <p className="rounded-md bg-muted/50 px-3 py-2 text-[11px] text-muted-foreground">
             Press Calculate to cost this SKU and see the price and margin before saving.
