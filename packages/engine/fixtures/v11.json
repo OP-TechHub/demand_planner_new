@@ -1,0 +1,2378 @@
+{
+  "source": "costing_module/barramundi_costing_v11.xlsx",
+  "assumptions": {
+    "feedCostPerKg": 1.35,
+    "clearingCostPerKg": 0.05,
+    "fcrReference": 1.5,
+    "fxRate": 340,
+    "importTaxPct": {
+      "domestic": 0.35,
+      "export": 0
+    },
+    "domestic": {
+      "transportLkr": 60,
+      "coldHoldLkr": 40
+    },
+    "export": {
+      "freightToPortUsd": 0.1,
+      "coldChainUsd": 0.1
+    },
+    "margins": {
+      "rackPct": 0.4,
+      "fobPct": 0.4,
+      "importerClearingPct": 0.05,
+      "importerMarkupPct": 0.1,
+      "distributorMarkupPct": 0.15
+    },
+    "freight": {
+      "containerFillKg": 7000,
+      "airLotKg": 500
+    },
+    "odc": [
+      {
+        "name": "fingerling",
+        "value": 0.25,
+        "currency": "USD",
+        "basis": "per_fish"
+      },
+      {
+        "name": "transport - trinco/colombo",
+        "value": 19,
+        "currency": "LKR",
+        "basis": "per_kg"
+      },
+      {
+        "name": "ice",
+        "value": 12,
+        "currency": "LKR",
+        "basis": "per_kg"
+      },
+      {
+        "name": "vaccine",
+        "value": 23.4,
+        "currency": "LKR",
+        "basis": "per_fish"
+      },
+      {
+        "name": "additives",
+        "value": 0,
+        "currency": "USD",
+        "basis": "per_kg"
+      },
+      {
+        "name": "royalty",
+        "value": 5,
+        "currency": "LKR",
+        "basis": "per_kg"
+      }
+    ]
+  },
+  "reference": {
+    "domestic": {
+      "effectiveFeedCostUsd": 1.8725,
+      "feedCostPerKgFishUsd": 2.80875,
+      "odcUsd": 0.424705882352941,
+      "wholeFishUsd": 3.23345588235294,
+      "wholeFishLkr": 1099.375
+    },
+    "export": {
+      "effectiveFeedCostUsd": 1.4,
+      "feedCostPerKgFishUsd": 2.1,
+      "odcUsd": 0.424705882352941,
+      "wholeFishUsd": 2.52470588235294
+    }
+  },
+  "buckets": [
+    {
+      "id": "0-600g",
+      "label": "0-600g",
+      "medianG": 300,
+      "fcr": 1.1,
+      "expected": {
+        "odcUsd": 1.16862745098039,
+        "wholeFishUsd": 3.22837745098039,
+        "wholeFishLkr": 1097.64833333333
+      }
+    },
+    {
+      "id": "600-800g",
+      "label": "600-800g",
+      "medianG": 700,
+      "fcr": 1.25,
+      "expected": {
+        "odcUsd": 0.561344537815126,
+        "wholeFishUsd": 2.90196953781513,
+        "wholeFishLkr": 986.669642857143
+      }
+    },
+    {
+      "id": "800-1100g",
+      "label": "800-1100g",
+      "medianG": 950,
+      "fcr": 1.35,
+      "expected": {
+        "odcUsd": 0.441486068111455,
+        "wholeFishUsd": 2.96936106811146,
+        "wholeFishLkr": 1009.58276315789
+      }
+    },
+    {
+      "id": "1100-1500g",
+      "label": "1100-1500g",
+      "medianG": 1300,
+      "fcr": 1.45,
+      "expected": {
+        "odcUsd": 0.351131221719457,
+        "wholeFishUsd": 3.06625622171946,
+        "wholeFishLkr": 1042.52711538462
+      }
+    },
+    {
+      "id": "1500-1800g",
+      "label": "1500-1800g",
+      "medianG": 1650,
+      "fcr": 1.55,
+      "expected": {
+        "odcUsd": 0.299108734402852,
+        "wholeFishUsd": 3.20148373440285,
+        "wholeFishLkr": 1088.50446969697
+      }
+    },
+    {
+      "id": "1800-2200g",
+      "label": "1800-2200g",
+      "medianG": 2000,
+      "fcr": 1.65,
+      "expected": {
+        "odcUsd": 0.265294117647059,
+        "wholeFishUsd": 3.35491911764706,
+        "wholeFishLkr": 1140.6725
+      }
+    },
+    {
+      "id": "2200-4000g",
+      "label": "2200-4000g",
+      "medianG": 3100,
+      "fcr": 1.75,
+      "expected": {
+        "odcUsd": 0.208728652751423,
+        "wholeFishUsd": 3.48560365275142,
+        "wholeFishLkr": 1185.10524193548
+      }
+    }
+  ],
+  "destinations": [
+    {
+      "name": "Dubai (UAE)",
+      "seaRatePer20ft": 3150,
+      "airRatePerLot": 1400,
+      "expected": {
+        "seaPerKg": 0.45,
+        "airPerKg": 2.8
+      }
+    },
+    {
+      "name": "Singapore",
+      "seaRatePer20ft": 2800,
+      "airRatePerLot": 1250,
+      "expected": {
+        "seaPerKg": 0.4,
+        "airPerKg": 2.5
+      }
+    },
+    {
+      "name": "Doha (Qatar)",
+      "seaRatePer20ft": 3500,
+      "airRatePerLot": 1450,
+      "expected": {
+        "seaPerKg": 0.5,
+        "airPerKg": 2.9
+      }
+    },
+    {
+      "name": "Male (Maldives)",
+      "seaRatePer20ft": 2450,
+      "airRatePerLot": 900,
+      "expected": {
+        "seaPerKg": 0.35,
+        "airPerKg": 1.8
+      }
+    },
+    {
+      "name": "Hong Kong",
+      "seaRatePer20ft": 3150,
+      "airRatePerLot": 1300,
+      "expected": {
+        "seaPerKg": 0.45,
+        "airPerKg": 2.6
+      }
+    },
+    {
+      "name": "London (UK)",
+      "seaRatePer20ft": 5950,
+      "airRatePerLot": 2250,
+      "expected": {
+        "seaPerKg": 0.85,
+        "airPerKg": 4.5
+      }
+    },
+    {
+      "name": "Sydney (AU)",
+      "seaRatePer20ft": 4900,
+      "airRatePerLot": 1900,
+      "expected": {
+        "seaPerKg": 0.7,
+        "airPerKg": 3.8
+      }
+    },
+    {
+      "name": "New York (US)",
+      "seaRatePer20ft": 7700,
+      "airRatePerLot": 2750,
+      "expected": {
+        "seaPerKg": 1.1,
+        "airPerKg": 5.5
+      }
+    },
+    {
+      "name": "Melbourne (AU)",
+      "seaRatePer20ft": 5200,
+      "airRatePerLot": 2000,
+      "expected": {
+        "seaPerKg": 0.742857142857143,
+        "airPerKg": 4
+      }
+    },
+    {
+      "name": "Brisbane (AU)",
+      "seaRatePer20ft": 4800,
+      "airRatePerLot": 1900,
+      "expected": {
+        "seaPerKg": 0.685714285714286,
+        "airPerKg": 3.8
+      }
+    },
+    {
+      "name": "Perth (AU)",
+      "seaRatePer20ft": 4500,
+      "airRatePerLot": 1850,
+      "expected": {
+        "seaPerKg": 0.642857142857143,
+        "airPerKg": 3.7
+      }
+    },
+    {
+      "name": "Adelaide (AU)",
+      "seaRatePer20ft": 5000,
+      "airRatePerLot": 1950,
+      "expected": {
+        "seaPerKg": 0.714285714285714,
+        "airPerKg": 3.9
+      }
+    },
+    {
+      "name": "Los Angeles (US)",
+      "seaRatePer20ft": 6500,
+      "airRatePerLot": 2400,
+      "expected": {
+        "seaPerKg": 0.928571428571429,
+        "airPerKg": 4.8
+      }
+    },
+    {
+      "name": "Miami (US)",
+      "seaRatePer20ft": 7000,
+      "airRatePerLot": 2600,
+      "expected": {
+        "seaPerKg": 1,
+        "airPerKg": 5.2
+      }
+    },
+    {
+      "name": "Amsterdam (NL)",
+      "seaRatePer20ft": 6200,
+      "airRatePerLot": 2300,
+      "expected": {
+        "seaPerKg": 0.885714285714286,
+        "airPerKg": 4.6
+      }
+    }
+  ],
+  "selectedDestination": "Dubai (UAE)",
+  "skus": [
+    {
+      "name": "Whole round (ungutted)",
+      "status": "active",
+      "category": "Whole",
+      "glazePct": 0,
+      "baseYield": 0.98,
+      "pctFish": 1,
+      "pctMarinade": 0,
+      "marinadeUsdPerKg": 0,
+      "processUsdPerKg": 0.4,
+      "packingUsdPerKg": 0.5,
+      "packSize": null,
+      "expected": {
+        "domestic": {
+          "wholeFishLkr": 1099.375,
+          "fishComponent": 1121.8112244898,
+          "marinadeComponent": 0,
+          "rawMaterial": 1121.8112244898,
+          "coldHold": 40,
+          "exFactory": 1467.8112244898,
+          "freight": 60,
+          "finalCost": 1527.8112244898,
+          "unglazed": {
+            "final": 1527.8112244898,
+            "rackRate": 2546.35204081633
+          },
+          "glazed": {
+            "final": 1527.8112244898,
+            "rackRate": 2546.35204081633
+          }
+        },
+        "export": {
+          "wholeFishUsd": 2.52470588235294,
+          "fishComponent": 2.57623049219688,
+          "marinadeComponent": 0,
+          "rawMaterial": 2.57623049219688,
+          "coldHold": 0.1,
+          "exFactory": 3.57623049219688,
+          "freight": 0.1,
+          "finalCost": 3.67623049219688,
+          "frozenPlain": {
+            "final": 3.67623049219688,
+            "fob": 6.12705082032813,
+            "cif": 6.57705082032813,
+            "distributorT3": 8.73596775210084
+          },
+          "frozenGlazed": {
+            "final": 3.67623049219688,
+            "fob": 6.12705082032813,
+            "cif": 6.57705082032813,
+            "distributorT3": 8.73596775210084
+          },
+          "fresh": {
+            "final": 3.67623049219688,
+            "fob": 6.12705082032813,
+            "cif": 8.92705082032813,
+            "distributorT3": 11.8573552521008
+          }
+        }
+      }
+    },
+    {
+      "name": "Whole gutted (WG)",
+      "status": "active",
+      "category": "Whole",
+      "glazePct": 0,
+      "baseYield": 0.92,
+      "pctFish": 1,
+      "pctMarinade": 0,
+      "marinadeUsdPerKg": 0,
+      "processUsdPerKg": 0.45,
+      "packingUsdPerKg": 0.5,
+      "packSize": null,
+      "expected": {
+        "domestic": {
+          "wholeFishLkr": 1099.375,
+          "fishComponent": 1194.97282608696,
+          "marinadeComponent": 0,
+          "rawMaterial": 1194.97282608696,
+          "coldHold": 40,
+          "exFactory": 1557.97282608696,
+          "freight": 60,
+          "finalCost": 1617.97282608696,
+          "unglazed": {
+            "final": 1617.97282608696,
+            "rackRate": 2696.62137681159
+          },
+          "glazed": {
+            "final": 1617.97282608696,
+            "rackRate": 2696.62137681159
+          }
+        },
+        "export": {
+          "wholeFishUsd": 2.52470588235294,
+          "fishComponent": 2.74424552429668,
+          "marinadeComponent": 0,
+          "rawMaterial": 2.74424552429668,
+          "coldHold": 0.1,
+          "exFactory": 3.79424552429668,
+          "freight": 0.1,
+          "finalCost": 3.89424552429668,
+          "frozenPlain": {
+            "final": 3.89424552429668,
+            "fob": 6.49040920716113,
+            "cif": 6.94040920716113,
+            "distributorT3": 9.21859852941176
+          },
+          "frozenGlazed": {
+            "final": 3.89424552429668,
+            "fob": 6.49040920716113,
+            "cif": 6.94040920716113,
+            "distributorT3": 9.21859852941176
+          },
+          "fresh": {
+            "final": 3.89424552429668,
+            "fob": 6.49040920716113,
+            "cif": 9.29040920716113,
+            "distributorT3": 12.3399860294118
+          }
+        }
+      }
+    },
+    {
+      "name": "Whole gilled & gutted (WGG)",
+      "status": "inactive",
+      "category": "Whole",
+      "glazePct": 0,
+      "baseYield": 0.88,
+      "pctFish": 1,
+      "pctMarinade": 0,
+      "marinadeUsdPerKg": 0,
+      "processUsdPerKg": 0.5,
+      "packingUsdPerKg": 0.5,
+      "packSize": null,
+      "expected": {
+        "domestic": {
+          "wholeFishLkr": 1099.375,
+          "fishComponent": 1249.28977272727,
+          "marinadeComponent": 0,
+          "rawMaterial": 1249.28977272727,
+          "coldHold": 40,
+          "exFactory": 1629.28977272727,
+          "freight": 60,
+          "finalCost": 1689.28977272727,
+          "unglazed": {
+            "final": 1689.28977272727,
+            "rackRate": 2815.48295454546
+          },
+          "glazed": {
+            "final": 1689.28977272727,
+            "rackRate": 2815.48295454546
+          }
+        },
+        "export": {
+          "wholeFishUsd": 2.52470588235294,
+          "fishComponent": 2.86898395721925,
+          "marinadeComponent": 0,
+          "rawMaterial": 2.86898395721925,
+          "coldHold": 0.1,
+          "exFactory": 3.96898395721925,
+          "freight": 0.1,
+          "finalCost": 4.06898395721925,
+          "frozenPlain": {
+            "final": 4.06898395721925,
+            "fob": 6.78163992869875,
+            "cif": 7.23163992869875,
+            "distributorT3": 9.60542573529412
+          },
+          "frozenGlazed": {
+            "final": 4.06898395721925,
+            "fob": 6.78163992869875,
+            "cif": 7.23163992869875,
+            "distributorT3": 9.60542573529412
+          },
+          "fresh": {
+            "final": 4.06898395721925,
+            "fob": 6.78163992869875,
+            "cif": 9.58163992869875,
+            "distributorT3": 12.7268132352941
+          }
+        }
+      }
+    },
+    {
+      "name": "Whole scaled & gutted",
+      "status": "active",
+      "category": "Whole",
+      "glazePct": 0,
+      "baseYield": 0.85,
+      "pctFish": 1,
+      "pctMarinade": 0,
+      "marinadeUsdPerKg": 0,
+      "processUsdPerKg": 0.6,
+      "packingUsdPerKg": 0.5,
+      "packSize": null,
+      "expected": {
+        "domestic": {
+          "wholeFishLkr": 1099.375,
+          "fishComponent": 1293.38235294118,
+          "marinadeComponent": 0,
+          "rawMaterial": 1293.38235294118,
+          "coldHold": 40,
+          "exFactory": 1707.38235294118,
+          "freight": 60,
+          "finalCost": 1767.38235294118,
+          "unglazed": {
+            "final": 1767.38235294118,
+            "rackRate": 2945.63725490196
+          },
+          "glazed": {
+            "final": 1767.38235294118,
+            "rackRate": 2945.63725490196
+          }
+        },
+        "export": {
+          "wholeFishUsd": 2.52470588235294,
+          "fishComponent": 2.97024221453287,
+          "marinadeComponent": 0,
+          "rawMaterial": 2.97024221453287,
+          "coldHold": 0.1,
+          "exFactory": 4.17024221453287,
+          "freight": 0.1,
+          "finalCost": 4.27024221453287,
+          "frozenPlain": {
+            "final": 4.27024221453287,
+            "fob": 7.11707035755479,
+            "cif": 7.56707035755479,
+            "distributorT3": 10.0509612024221
+          },
+          "frozenGlazed": {
+            "final": 4.27024221453287,
+            "fob": 7.11707035755479,
+            "cif": 7.56707035755479,
+            "distributorT3": 10.0509612024221
+          },
+          "fresh": {
+            "final": 4.27024221453287,
+            "fob": 7.11707035755479,
+            "cif": 9.91707035755479,
+            "distributorT3": 13.1723487024221
+          }
+        }
+      }
+    },
+    {
+      "name": "Steaks / darne (bone-in)",
+      "status": "active",
+      "category": "Whole",
+      "glazePct": 0,
+      "baseYield": 0.82,
+      "pctFish": 1,
+      "pctMarinade": 0,
+      "marinadeUsdPerKg": 0,
+      "processUsdPerKg": 0.45,
+      "packingUsdPerKg": 0.3,
+      "packSize": "500g",
+      "expected": {
+        "domestic": {
+          "wholeFishLkr": 1099.375,
+          "fishComponent": 1340.7012195122,
+          "marinadeComponent": 0,
+          "rawMaterial": 1340.7012195122,
+          "coldHold": 40,
+          "exFactory": 1635.7012195122,
+          "freight": 60,
+          "finalCost": 1695.7012195122,
+          "unglazed": {
+            "final": 1695.7012195122,
+            "rackRate": 2826.16869918699
+          },
+          "glazed": {
+            "final": 1695.7012195122,
+            "rackRate": 2826.16869918699
+          }
+        },
+        "export": {
+          "wholeFishUsd": 2.52470588235294,
+          "fishComponent": 3.07890961262554,
+          "marinadeComponent": 0,
+          "rawMaterial": 3.07890961262554,
+          "coldHold": 0.1,
+          "exFactory": 3.92890961262554,
+          "freight": 0.1,
+          "finalCost": 4.02890961262554,
+          "frozenPlain": {
+            "final": 4.02890961262554,
+            "fob": 6.7148493543759,
+            "cif": 7.1648493543759,
+            "distributorT3": 9.51671115494979
+          },
+          "frozenGlazed": {
+            "final": 4.02890961262554,
+            "fob": 6.7148493543759,
+            "cif": 7.1648493543759,
+            "distributorT3": 9.51671115494979
+          },
+          "fresh": {
+            "final": 4.02890961262554,
+            "fob": 6.7148493543759,
+            "cif": 9.5148493543759,
+            "distributorT3": 12.6380986549498
+          }
+        }
+      }
+    },
+    {
+      "name": "Boat cut",
+      "status": "inactive",
+      "category": "Whole",
+      "glazePct": 0,
+      "baseYield": 0.75,
+      "pctFish": 1,
+      "pctMarinade": 0,
+      "marinadeUsdPerKg": 0,
+      "processUsdPerKg": 0.55,
+      "packingUsdPerKg": 0.5,
+      "packSize": null,
+      "expected": {
+        "domestic": {
+          "wholeFishLkr": 1099.375,
+          "fishComponent": 1465.83333333333,
+          "marinadeComponent": 0,
+          "rawMaterial": 1465.83333333333,
+          "coldHold": 40,
+          "exFactory": 1862.83333333333,
+          "freight": 60,
+          "finalCost": 1922.83333333333,
+          "unglazed": {
+            "final": 1922.83333333333,
+            "rackRate": 3204.72222222222
+          },
+          "glazed": {
+            "final": 1922.83333333333,
+            "rackRate": 3204.72222222222
+          }
+        },
+        "export": {
+          "wholeFishUsd": 2.52470588235294,
+          "fishComponent": 3.36627450980392,
+          "marinadeComponent": 0,
+          "rawMaterial": 3.36627450980392,
+          "coldHold": 0.1,
+          "exFactory": 4.51627450980392,
+          "freight": 0.1,
+          "finalCost": 4.61627450980392,
+          "frozenPlain": {
+            "final": 4.61627450980392,
+            "fob": 7.6937908496732,
+            "cif": 8.1437908496732,
+            "distributorT3": 10.8169901960784
+          },
+          "frozenGlazed": {
+            "final": 4.61627450980392,
+            "fob": 7.6937908496732,
+            "cif": 8.1437908496732,
+            "distributorT3": 10.8169901960784
+          },
+          "fresh": {
+            "final": 4.61627450980392,
+            "fob": 7.6937908496732,
+            "cif": 10.4937908496732,
+            "distributorT3": 13.9383776960784
+          }
+        }
+      }
+    },
+    {
+      "name": "Butterfly cut",
+      "status": "inactive",
+      "category": "Whole",
+      "glazePct": 0,
+      "baseYield": 0.72,
+      "pctFish": 1,
+      "pctMarinade": 0,
+      "marinadeUsdPerKg": 0,
+      "processUsdPerKg": 0.55,
+      "packingUsdPerKg": 0.5,
+      "packSize": null,
+      "expected": {
+        "domestic": {
+          "wholeFishLkr": 1099.375,
+          "fishComponent": 1526.90972222222,
+          "marinadeComponent": 0,
+          "rawMaterial": 1526.90972222222,
+          "coldHold": 40,
+          "exFactory": 1923.90972222222,
+          "freight": 60,
+          "finalCost": 1983.90972222222,
+          "unglazed": {
+            "final": 1983.90972222222,
+            "rackRate": 3306.5162037037
+          },
+          "glazed": {
+            "final": 1983.90972222222,
+            "rackRate": 3306.5162037037
+          }
+        },
+        "export": {
+          "wholeFishUsd": 2.52470588235294,
+          "fishComponent": 3.50653594771242,
+          "marinadeComponent": 0,
+          "rawMaterial": 3.50653594771242,
+          "coldHold": 0.1,
+          "exFactory": 4.65653594771242,
+          "freight": 0.1,
+          "finalCost": 4.75653594771242,
+          "frozenPlain": {
+            "final": 4.75653594771242,
+            "fob": 7.92755991285403,
+            "cif": 8.37755991285403,
+            "distributorT3": 11.1274939542484
+          },
+          "frozenGlazed": {
+            "final": 4.75653594771242,
+            "fob": 7.92755991285403,
+            "cif": 8.37755991285403,
+            "distributorT3": 11.1274939542484
+          },
+          "fresh": {
+            "final": 4.75653594771242,
+            "fob": 7.92755991285403,
+            "cif": 10.727559912854,
+            "distributorT3": 14.2488814542484
+          }
+        }
+      }
+    },
+    {
+      "name": "Skin-on fillet",
+      "status": "active",
+      "category": "Fillet",
+      "glazePct": 0,
+      "baseYield": 0.45,
+      "pctFish": 1,
+      "pctMarinade": 0,
+      "marinadeUsdPerKg": 0,
+      "processUsdPerKg": 1,
+      "packingUsdPerKg": 0.3,
+      "packSize": null,
+      "expected": {
+        "domestic": {
+          "wholeFishLkr": 1099.375,
+          "fishComponent": 2443.05555555556,
+          "marinadeComponent": 0,
+          "rawMaterial": 2443.05555555556,
+          "coldHold": 40,
+          "exFactory": 2925.05555555556,
+          "freight": 60,
+          "finalCost": 2985.05555555556,
+          "unglazed": {
+            "final": 2985.05555555556,
+            "rackRate": 4975.09259259259
+          },
+          "glazed": {
+            "final": 2985.05555555556,
+            "rackRate": 4975.09259259259
+          }
+        },
+        "export": {
+          "wholeFishUsd": 2.52470588235294,
+          "fishComponent": 5.61045751633987,
+          "marinadeComponent": 0,
+          "rawMaterial": 5.61045751633987,
+          "coldHold": 0.1,
+          "exFactory": 7.01045751633987,
+          "freight": 0.1,
+          "finalCost": 7.11045751633987,
+          "frozenPlain": {
+            "final": 7.11045751633987,
+            "fob": 11.8507625272331,
+            "cif": 12.3007625272331,
+            "distributorT3": 16.3384878267974
+          },
+          "frozenGlazed": {
+            "final": 7.11045751633987,
+            "fob": 11.8507625272331,
+            "cif": 12.3007625272331,
+            "distributorT3": 16.3384878267974
+          },
+          "fresh": {
+            "final": 7.11045751633987,
+            "fob": 11.8507625272331,
+            "cif": 14.6507625272331,
+            "distributorT3": 19.4598753267974
+          }
+        }
+      }
+    },
+    {
+      "name": "Skinless boneless fillet",
+      "status": "active",
+      "category": "Fillet",
+      "glazePct": 0,
+      "baseYield": 0.38,
+      "pctFish": 1,
+      "pctMarinade": 0,
+      "marinadeUsdPerKg": 0,
+      "processUsdPerKg": 1,
+      "packingUsdPerKg": 0.3,
+      "packSize": null,
+      "expected": {
+        "domestic": {
+          "wholeFishLkr": 1099.375,
+          "fishComponent": 2893.09210526316,
+          "marinadeComponent": 0,
+          "rawMaterial": 2893.09210526316,
+          "coldHold": 40,
+          "exFactory": 3375.09210526316,
+          "freight": 60,
+          "finalCost": 3435.09210526316,
+          "unglazed": {
+            "final": 3435.09210526316,
+            "rackRate": 5725.15350877193
+          },
+          "glazed": {
+            "final": 3435.09210526316,
+            "rackRate": 5725.15350877193
+          }
+        },
+        "export": {
+          "wholeFishUsd": 2.52470588235294,
+          "fishComponent": 6.64396284829721,
+          "marinadeComponent": 0,
+          "rawMaterial": 6.64396284829721,
+          "coldHold": 0.1,
+          "exFactory": 8.04396284829721,
+          "freight": 0.1,
+          "finalCost": 8.14396284829721,
+          "frozenPlain": {
+            "final": 8.14396284829721,
+            "fob": 13.5732714138287,
+            "cif": 14.0232714138287,
+            "distributorT3": 18.626410255418
+          },
+          "frozenGlazed": {
+            "final": 8.14396284829721,
+            "fob": 13.5732714138287,
+            "cif": 14.0232714138287,
+            "distributorT3": 18.626410255418
+          },
+          "fresh": {
+            "final": 8.14396284829721,
+            "fob": 13.5732714138287,
+            "cif": 16.3732714138287,
+            "distributorT3": 21.747797755418
+          }
+        }
+      }
+    },
+    {
+      "name": "Skinless fillet — premium trim",
+      "status": "inactive",
+      "category": "Fillet",
+      "glazePct": 0,
+      "baseYield": 0.34,
+      "pctFish": 1,
+      "pctMarinade": 0,
+      "marinadeUsdPerKg": 0,
+      "processUsdPerKg": 1.25,
+      "packingUsdPerKg": 0.35,
+      "packSize": null,
+      "expected": {
+        "domestic": {
+          "wholeFishLkr": 1099.375,
+          "fishComponent": 3233.45588235294,
+          "marinadeComponent": 0,
+          "rawMaterial": 3233.45588235294,
+          "coldHold": 40,
+          "exFactory": 3817.45588235294,
+          "freight": 60,
+          "finalCost": 3877.45588235294,
+          "unglazed": {
+            "final": 3877.45588235294,
+            "rackRate": 6462.42647058824
+          },
+          "glazed": {
+            "final": 3877.45588235294,
+            "rackRate": 6462.42647058824
+          }
+        },
+        "export": {
+          "wholeFishUsd": 2.52470588235294,
+          "fishComponent": 7.42560553633218,
+          "marinadeComponent": 0,
+          "rawMaterial": 7.42560553633218,
+          "coldHold": 0.1,
+          "exFactory": 9.12560553633218,
+          "freight": 0.1,
+          "finalCost": 9.22560553633218,
+          "frozenPlain": {
+            "final": 9.22560553633218,
+            "fob": 15.3760092272203,
+            "cif": 15.8260092272203,
+            "distributorT3": 21.0208967560554
+          },
+          "frozenGlazed": {
+            "final": 9.22560553633218,
+            "fob": 15.3760092272203,
+            "cif": 15.8260092272203,
+            "distributorT3": 21.0208967560554
+          },
+          "fresh": {
+            "final": 9.22560553633218,
+            "fob": 15.3760092272203,
+            "cif": 18.1760092272203,
+            "distributorT3": 24.1422842560554
+          }
+        }
+      }
+    },
+    {
+      "name": "Fillet portions — skin-on CC",
+      "status": "active",
+      "category": "Fillet",
+      "glazePct": 0,
+      "baseYield": 0.32,
+      "pctFish": 1,
+      "pctMarinade": 0,
+      "marinadeUsdPerKg": 0,
+      "processUsdPerKg": 1.15,
+      "packingUsdPerKg": 0.35,
+      "packSize": null,
+      "expected": {
+        "domestic": {
+          "wholeFishLkr": 1099.375,
+          "fishComponent": 3435.546875,
+          "marinadeComponent": 0,
+          "rawMaterial": 3435.546875,
+          "coldHold": 40,
+          "exFactory": 3985.546875,
+          "freight": 60,
+          "finalCost": 4045.546875,
+          "unglazed": {
+            "final": 4045.546875,
+            "rackRate": 6742.578125
+          },
+          "glazed": {
+            "final": 4045.546875,
+            "rackRate": 6742.578125
+          }
+        },
+        "export": {
+          "wholeFishUsd": 2.52470588235294,
+          "fishComponent": 7.88970588235294,
+          "marinadeComponent": 0,
+          "rawMaterial": 7.88970588235294,
+          "coldHold": 0.1,
+          "exFactory": 9.48970588235294,
+          "freight": 0.1,
+          "finalCost": 9.58970588235294,
+          "frozenPlain": {
+            "final": 9.58970588235294,
+            "fob": 15.9828431372549,
+            "cif": 16.4328431372549,
+            "distributorT3": 21.8269238970588
+          },
+          "frozenGlazed": {
+            "final": 9.58970588235294,
+            "fob": 15.9828431372549,
+            "cif": 16.4328431372549,
+            "distributorT3": 21.8269238970588
+          },
+          "fresh": {
+            "final": 9.58970588235294,
+            "fob": 15.9828431372549,
+            "cif": 18.7828431372549,
+            "distributorT3": 24.9483113970588
+          }
+        }
+      }
+    },
+    {
+      "name": "Fillet portions — skinless",
+      "status": "inactive",
+      "category": "Fillet",
+      "glazePct": 0,
+      "baseYield": 0.36,
+      "pctFish": 1,
+      "pctMarinade": 0,
+      "marinadeUsdPerKg": 0,
+      "processUsdPerKg": 1.15,
+      "packingUsdPerKg": 0.35,
+      "packSize": null,
+      "expected": {
+        "domestic": {
+          "wholeFishLkr": 1099.375,
+          "fishComponent": 3053.81944444445,
+          "marinadeComponent": 0,
+          "rawMaterial": 3053.81944444445,
+          "coldHold": 40,
+          "exFactory": 3603.81944444445,
+          "freight": 60,
+          "finalCost": 3663.81944444445,
+          "unglazed": {
+            "final": 3663.81944444445,
+            "rackRate": 6106.36574074074
+          },
+          "glazed": {
+            "final": 3663.81944444445,
+            "rackRate": 6106.36574074074
+          }
+        },
+        "export": {
+          "wholeFishUsd": 2.52470588235294,
+          "fishComponent": 7.01307189542484,
+          "marinadeComponent": 0,
+          "rawMaterial": 7.01307189542484,
+          "coldHold": 0.1,
+          "exFactory": 8.61307189542484,
+          "freight": 0.1,
+          "finalCost": 8.71307189542484,
+          "frozenPlain": {
+            "final": 8.71307189542484,
+            "fob": 14.5217864923747,
+            "cif": 14.9717864923747,
+            "distributorT3": 19.8862754084967
+          },
+          "frozenGlazed": {
+            "final": 8.71307189542484,
+            "fob": 14.5217864923747,
+            "cif": 14.9717864923747,
+            "distributorT3": 19.8862754084967
+          },
+          "fresh": {
+            "final": 8.71307189542484,
+            "fob": 14.5217864923747,
+            "cif": 17.3217864923747,
+            "distributorT3": 23.0076629084967
+          }
+        }
+      }
+    },
+    {
+      "name": "Tail portions — regular (70/130) s/on",
+      "status": "active",
+      "category": "Fillet",
+      "glazePct": 0,
+      "baseYield": 0.3,
+      "pctFish": 1,
+      "pctMarinade": 0,
+      "marinadeUsdPerKg": 0,
+      "processUsdPerKg": 1.15,
+      "packingUsdPerKg": 0.35,
+      "packSize": null,
+      "expected": {
+        "domestic": {
+          "wholeFishLkr": 1099.375,
+          "fishComponent": 3664.58333333333,
+          "marinadeComponent": 0,
+          "rawMaterial": 3664.58333333333,
+          "coldHold": 40,
+          "exFactory": 4214.58333333333,
+          "freight": 60,
+          "finalCost": 4274.58333333333,
+          "unglazed": {
+            "final": 4274.58333333333,
+            "rackRate": 7124.30555555556
+          },
+          "glazed": {
+            "final": 4274.58333333333,
+            "rackRate": 7124.30555555556
+          }
+        },
+        "export": {
+          "wholeFishUsd": 2.52470588235294,
+          "fishComponent": 8.4156862745098,
+          "marinadeComponent": 0,
+          "rawMaterial": 8.4156862745098,
+          "coldHold": 0.1,
+          "exFactory": 10.0156862745098,
+          "freight": 0.1,
+          "finalCost": 10.1156862745098,
+          "frozenPlain": {
+            "final": 10.1156862745098,
+            "fob": 16.859477124183,
+            "cif": 17.309477124183,
+            "distributorT3": 22.9913129901961
+          },
+          "frozenGlazed": {
+            "final": 10.1156862745098,
+            "fob": 16.859477124183,
+            "cif": 17.309477124183,
+            "distributorT3": 22.9913129901961
+          },
+          "fresh": {
+            "final": 10.1156862745098,
+            "fob": 16.859477124183,
+            "cif": 19.659477124183,
+            "distributorT3": 26.1127004901961
+          }
+        }
+      }
+    },
+    {
+      "name": "Tail portions — small (40/70) s/on",
+      "status": "active",
+      "category": "Fillet",
+      "glazePct": 0,
+      "baseYield": 0.28,
+      "pctFish": 1,
+      "pctMarinade": 0,
+      "marinadeUsdPerKg": 0,
+      "processUsdPerKg": 1.2,
+      "packingUsdPerKg": 0.35,
+      "packSize": null,
+      "expected": {
+        "domestic": {
+          "wholeFishLkr": 1099.375,
+          "fishComponent": 3926.33928571429,
+          "marinadeComponent": 0,
+          "rawMaterial": 3926.33928571429,
+          "coldHold": 40,
+          "exFactory": 4493.33928571429,
+          "freight": 60,
+          "finalCost": 4553.33928571429,
+          "unglazed": {
+            "final": 4553.33928571429,
+            "rackRate": 7588.89880952381
+          },
+          "glazed": {
+            "final": 4553.33928571429,
+            "rackRate": 7588.89880952381
+          }
+        },
+        "export": {
+          "wholeFishUsd": 2.52470588235294,
+          "fishComponent": 9.01680672268908,
+          "marinadeComponent": 0,
+          "rawMaterial": 9.01680672268908,
+          "coldHold": 0.1,
+          "exFactory": 10.6668067226891,
+          "freight": 0.1,
+          "finalCost": 10.7668067226891,
+          "frozenPlain": {
+            "final": 10.7668067226891,
+            "fob": 17.9446778711485,
+            "cif": 18.3946778711485,
+            "distributorT3": 24.4327308823529
+          },
+          "frozenGlazed": {
+            "final": 10.7668067226891,
+            "fob": 17.9446778711485,
+            "cif": 18.3946778711485,
+            "distributorT3": 24.4327308823529
+          },
+          "fresh": {
+            "final": 10.7668067226891,
+            "fob": 17.9446778711485,
+            "cif": 20.7446778711485,
+            "distributorT3": 27.5541183823529
+          }
+        }
+      }
+    },
+    {
+      "name": "Fish cubes / stir-fry",
+      "status": "active",
+      "category": "Fillet",
+      "glazePct": 0,
+      "baseYield": 0.3,
+      "pctFish": 1,
+      "pctMarinade": 0,
+      "marinadeUsdPerKg": 0,
+      "processUsdPerKg": 1.15,
+      "packingUsdPerKg": 0.33,
+      "packSize": "500g",
+      "expected": {
+        "domestic": {
+          "wholeFishLkr": 1099.375,
+          "fishComponent": 3664.58333333333,
+          "marinadeComponent": 0,
+          "rawMaterial": 3664.58333333333,
+          "coldHold": 40,
+          "exFactory": 4207.78333333334,
+          "freight": 60,
+          "finalCost": 4267.78333333334,
+          "unglazed": {
+            "final": 4267.78333333334,
+            "rackRate": 7112.97222222222
+          },
+          "glazed": {
+            "final": 4267.78333333334,
+            "rackRate": 7112.97222222222
+          }
+        },
+        "export": {
+          "wholeFishUsd": 2.52470588235294,
+          "fishComponent": 8.4156862745098,
+          "marinadeComponent": 0,
+          "rawMaterial": 8.4156862745098,
+          "coldHold": 0.1,
+          "exFactory": 9.9956862745098,
+          "freight": 0.1,
+          "finalCost": 10.0956862745098,
+          "frozenPlain": {
+            "final": 10.0956862745098,
+            "fob": 16.8261437908497,
+            "cif": 17.2761437908497,
+            "distributorT3": 22.9470379901961
+          },
+          "frozenGlazed": {
+            "final": 10.0956862745098,
+            "fob": 16.8261437908497,
+            "cif": 17.2761437908497,
+            "distributorT3": 22.9470379901961
+          },
+          "fresh": {
+            "final": 10.0956862745098,
+            "fob": 16.8261437908497,
+            "cif": 19.6261437908497,
+            "distributorT3": 26.0684254901961
+          }
+        }
+      }
+    },
+    {
+      "name": "Loin portions",
+      "status": "inactive",
+      "category": "Fillet",
+      "glazePct": 0,
+      "baseYield": 0.3,
+      "pctFish": 1,
+      "pctMarinade": 0,
+      "marinadeUsdPerKg": 0,
+      "processUsdPerKg": 1.15,
+      "packingUsdPerKg": 0.35,
+      "packSize": null,
+      "expected": {
+        "domestic": {
+          "wholeFishLkr": 1099.375,
+          "fishComponent": 3664.58333333333,
+          "marinadeComponent": 0,
+          "rawMaterial": 3664.58333333333,
+          "coldHold": 40,
+          "exFactory": 4214.58333333333,
+          "freight": 60,
+          "finalCost": 4274.58333333333,
+          "unglazed": {
+            "final": 4274.58333333333,
+            "rackRate": 7124.30555555556
+          },
+          "glazed": {
+            "final": 4274.58333333333,
+            "rackRate": 7124.30555555556
+          }
+        },
+        "export": {
+          "wholeFishUsd": 2.52470588235294,
+          "fishComponent": 8.4156862745098,
+          "marinadeComponent": 0,
+          "rawMaterial": 8.4156862745098,
+          "coldHold": 0.1,
+          "exFactory": 10.0156862745098,
+          "freight": 0.1,
+          "finalCost": 10.1156862745098,
+          "frozenPlain": {
+            "final": 10.1156862745098,
+            "fob": 16.859477124183,
+            "cif": 17.309477124183,
+            "distributorT3": 22.9913129901961
+          },
+          "frozenGlazed": {
+            "final": 10.1156862745098,
+            "fob": 16.859477124183,
+            "cif": 17.309477124183,
+            "distributorT3": 22.9913129901961
+          },
+          "fresh": {
+            "final": 10.1156862745098,
+            "fob": 16.859477124183,
+            "cif": 19.659477124183,
+            "distributorT3": 26.1127004901961
+          }
+        }
+      }
+    },
+    {
+      "name": "Belly flaps",
+      "status": "active",
+      "category": "By-product",
+      "glazePct": 0,
+      "baseYield": 0.06,
+      "pctFish": 1,
+      "pctMarinade": 0,
+      "marinadeUsdPerKg": 0,
+      "processUsdPerKg": 0.2,
+      "packingUsdPerKg": 0.3,
+      "packSize": null,
+      "expected": {
+        "domestic": {
+          "wholeFishLkr": 1099.375,
+          "fishComponent": 18322.9166666667,
+          "marinadeComponent": 0,
+          "rawMaterial": 18322.9166666667,
+          "coldHold": 40,
+          "exFactory": 18532.9166666667,
+          "freight": 60,
+          "finalCost": 18592.9166666667,
+          "unglazed": {
+            "final": 18592.9166666667,
+            "rackRate": 30988.1944444445
+          },
+          "glazed": {
+            "final": 18592.9166666667,
+            "rackRate": 30988.1944444445
+          }
+        },
+        "export": {
+          "wholeFishUsd": 2.52470588235294,
+          "fishComponent": 42.078431372549,
+          "marinadeComponent": 0,
+          "rawMaterial": 42.078431372549,
+          "coldHold": 0.1,
+          "exFactory": 42.678431372549,
+          "freight": 0.1,
+          "finalCost": 42.778431372549,
+          "frozenPlain": {
+            "final": 42.778431372549,
+            "fob": 71.2973856209151,
+            "cif": 71.7473856209151,
+            "distributorT3": 95.2984649509804
+          },
+          "frozenGlazed": {
+            "final": 42.778431372549,
+            "fob": 71.2973856209151,
+            "cif": 71.7473856209151,
+            "distributorT3": 95.2984649509804
+          },
+          "fresh": {
+            "final": 42.778431372549,
+            "fob": 71.2973856209151,
+            "cif": 74.0973856209151,
+            "distributorT3": 98.4198524509804
+          }
+        }
+      }
+    },
+    {
+      "name": "Head",
+      "status": "inactive",
+      "category": "By-product",
+      "glazePct": 0,
+      "baseYield": 0.11,
+      "pctFish": 1,
+      "pctMarinade": 0,
+      "marinadeUsdPerKg": 0,
+      "processUsdPerKg": 0.2,
+      "packingUsdPerKg": 0.15,
+      "packSize": null,
+      "expected": {
+        "domestic": {
+          "wholeFishLkr": 1099.375,
+          "fishComponent": 9994.31818181818,
+          "marinadeComponent": 0,
+          "rawMaterial": 9994.31818181818,
+          "coldHold": 40,
+          "exFactory": 10153.3181818182,
+          "freight": 60,
+          "finalCost": 10213.3181818182,
+          "unglazed": {
+            "final": 10213.3181818182,
+            "rackRate": 17022.196969697
+          },
+          "glazed": {
+            "final": 10213.3181818182,
+            "rackRate": 17022.196969697
+          }
+        },
+        "export": {
+          "wholeFishUsd": 2.52470588235294,
+          "fishComponent": 22.951871657754,
+          "marinadeComponent": 0,
+          "rawMaterial": 22.951871657754,
+          "coldHold": 0.1,
+          "exFactory": 23.401871657754,
+          "freight": 0.1,
+          "finalCost": 23.501871657754,
+          "frozenPlain": {
+            "final": 23.501871657754,
+            "fob": 39.1697860962567,
+            "cif": 39.6197860962567,
+            "distributorT3": 52.624980882353
+          },
+          "frozenGlazed": {
+            "final": 23.501871657754,
+            "fob": 39.1697860962567,
+            "cif": 39.6197860962567,
+            "distributorT3": 52.624980882353
+          },
+          "fresh": {
+            "final": 23.501871657754,
+            "fob": 39.1697860962567,
+            "cif": 41.9697860962567,
+            "distributorT3": 55.7463683823529
+          }
+        }
+      }
+    },
+    {
+      "name": "Collar",
+      "status": "inactive",
+      "category": "By-product",
+      "glazePct": 0,
+      "baseYield": 0.05,
+      "pctFish": 1,
+      "pctMarinade": 0,
+      "marinadeUsdPerKg": 0,
+      "processUsdPerKg": 0.4,
+      "packingUsdPerKg": 0.25,
+      "packSize": null,
+      "expected": {
+        "domestic": {
+          "wholeFishLkr": 1099.375,
+          "fishComponent": 21987.5,
+          "marinadeComponent": 0,
+          "rawMaterial": 21987.5,
+          "coldHold": 40,
+          "exFactory": 22248.5,
+          "freight": 60,
+          "finalCost": 22308.5,
+          "unglazed": {
+            "final": 22308.5,
+            "rackRate": 37180.8333333333
+          },
+          "glazed": {
+            "final": 22308.5,
+            "rackRate": 37180.8333333333
+          }
+        },
+        "export": {
+          "wholeFishUsd": 2.52470588235294,
+          "fishComponent": 50.4941176470588,
+          "marinadeComponent": 0,
+          "rawMaterial": 50.4941176470588,
+          "coldHold": 0.1,
+          "exFactory": 51.2441176470588,
+          "freight": 0.1,
+          "finalCost": 51.3441176470588,
+          "frozenPlain": {
+            "final": 51.3441176470588,
+            "fob": 85.5735294117647,
+            "cif": 86.0235294117647,
+            "distributorT3": 114.260752941176
+          },
+          "frozenGlazed": {
+            "final": 51.3441176470588,
+            "fob": 85.5735294117647,
+            "cif": 86.0235294117647,
+            "distributorT3": 114.260752941176
+          },
+          "fresh": {
+            "final": 51.3441176470588,
+            "fob": 85.5735294117647,
+            "cif": 88.3735294117647,
+            "distributorT3": 117.382140441176
+          }
+        }
+      }
+    },
+    {
+      "name": "Fish frames / bones (stock)",
+      "status": "inactive",
+      "category": "By-product",
+      "glazePct": 0,
+      "baseYield": 0.08,
+      "pctFish": 1,
+      "pctMarinade": 0,
+      "marinadeUsdPerKg": 0,
+      "processUsdPerKg": 0.1,
+      "packingUsdPerKg": 0.15,
+      "packSize": null,
+      "expected": {
+        "domestic": {
+          "wholeFishLkr": 1099.375,
+          "fishComponent": 13742.1875,
+          "marinadeComponent": 0,
+          "rawMaterial": 13742.1875,
+          "coldHold": 40,
+          "exFactory": 13867.1875,
+          "freight": 60,
+          "finalCost": 13927.1875,
+          "unglazed": {
+            "final": 13927.1875,
+            "rackRate": 23211.9791666667
+          },
+          "glazed": {
+            "final": 13927.1875,
+            "rackRate": 23211.9791666667
+          }
+        },
+        "export": {
+          "wholeFishUsd": 2.52470588235294,
+          "fishComponent": 31.5588235294118,
+          "marinadeComponent": 0,
+          "rawMaterial": 31.5588235294118,
+          "coldHold": 0.1,
+          "exFactory": 31.9088235294118,
+          "freight": 0.1,
+          "finalCost": 32.0088235294118,
+          "frozenPlain": {
+            "final": 32.0088235294118,
+            "fob": 53.3480392156863,
+            "cif": 53.7980392156863,
+            "distributorT3": 71.4572455882353
+          },
+          "frozenGlazed": {
+            "final": 32.0088235294118,
+            "fob": 53.3480392156863,
+            "cif": 53.7980392156863,
+            "distributorT3": 71.4572455882353
+          },
+          "fresh": {
+            "final": 32.0088235294118,
+            "fob": 53.3480392156863,
+            "cif": 56.1480392156863,
+            "distributorT3": 74.5786330882353
+          }
+        }
+      }
+    },
+    {
+      "name": "Fish skin (crispy / pet treat)",
+      "status": "inactive",
+      "category": "By-product",
+      "glazePct": 0,
+      "baseYield": 0.03,
+      "pctFish": 1,
+      "pctMarinade": 0,
+      "marinadeUsdPerKg": 0,
+      "processUsdPerKg": 0.2,
+      "packingUsdPerKg": 0.2,
+      "packSize": null,
+      "expected": {
+        "domestic": {
+          "wholeFishLkr": 1099.375,
+          "fishComponent": 36645.8333333333,
+          "marinadeComponent": 0,
+          "rawMaterial": 36645.8333333333,
+          "coldHold": 40,
+          "exFactory": 36821.8333333333,
+          "freight": 60,
+          "finalCost": 36881.8333333333,
+          "unglazed": {
+            "final": 36881.8333333333,
+            "rackRate": 61469.7222222222
+          },
+          "glazed": {
+            "final": 36881.8333333333,
+            "rackRate": 61469.7222222222
+          }
+        },
+        "export": {
+          "wholeFishUsd": 2.52470588235294,
+          "fishComponent": 84.1568627450981,
+          "marinadeComponent": 0,
+          "rawMaterial": 84.1568627450981,
+          "coldHold": 0.1,
+          "exFactory": 84.6568627450981,
+          "freight": 0.1,
+          "finalCost": 84.7568627450981,
+          "frozenPlain": {
+            "final": 84.7568627450981,
+            "fob": 141.261437908497,
+            "cif": 141.711437908497,
+            "distributorT3": 188.228217401961
+          },
+          "frozenGlazed": {
+            "final": 84.7568627450981,
+            "fob": 141.261437908497,
+            "cif": 141.711437908497,
+            "distributorT3": 188.228217401961
+          },
+          "fresh": {
+            "final": 84.7568627450981,
+            "fob": 141.261437908497,
+            "cif": 144.061437908497,
+            "distributorT3": 191.349604901961
+          }
+        }
+      }
+    },
+    {
+      "name": "Trimmings / mince",
+      "status": "inactive",
+      "category": "By-product",
+      "glazePct": 0,
+      "baseYield": 0.07,
+      "pctFish": 1,
+      "pctMarinade": 0,
+      "marinadeUsdPerKg": 0,
+      "processUsdPerKg": 0.2,
+      "packingUsdPerKg": 0.2,
+      "packSize": null,
+      "expected": {
+        "domestic": {
+          "wholeFishLkr": 1099.375,
+          "fishComponent": 15705.3571428571,
+          "marinadeComponent": 0,
+          "rawMaterial": 15705.3571428571,
+          "coldHold": 40,
+          "exFactory": 15881.3571428571,
+          "freight": 60,
+          "finalCost": 15941.3571428571,
+          "unglazed": {
+            "final": 15941.3571428571,
+            "rackRate": 26568.9285714286
+          },
+          "glazed": {
+            "final": 15941.3571428571,
+            "rackRate": 26568.9285714286
+          }
+        },
+        "export": {
+          "wholeFishUsd": 2.52470588235294,
+          "fishComponent": 36.0672268907563,
+          "marinadeComponent": 0,
+          "rawMaterial": 36.0672268907563,
+          "coldHold": 0.1,
+          "exFactory": 36.5672268907563,
+          "freight": 0.1,
+          "finalCost": 36.6672268907563,
+          "frozenPlain": {
+            "final": 36.6672268907563,
+            "fob": 61.1120448179272,
+            "cif": 61.5620448179272,
+            "distributorT3": 81.7697860294118
+          },
+          "frozenGlazed": {
+            "final": 36.6672268907563,
+            "fob": 61.1120448179272,
+            "cif": 61.5620448179272,
+            "distributorT3": 81.7697860294118
+          },
+          "fresh": {
+            "final": 36.6672268907563,
+            "fob": 61.1120448179272,
+            "cif": 63.9120448179272,
+            "distributorT3": 84.8911735294118
+          }
+        }
+      }
+    },
+    {
+      "name": "Marinated fillet — lemon herb",
+      "status": "inactive",
+      "category": "Value-added",
+      "glazePct": 0,
+      "baseYield": 0.38,
+      "pctFish": 0.82,
+      "pctMarinade": 0.18,
+      "marinadeUsdPerKg": 1.8,
+      "processUsdPerKg": 1.4,
+      "packingUsdPerKg": 0.45,
+      "packSize": null,
+      "expected": {
+        "domestic": {
+          "wholeFishLkr": 1099.375,
+          "fishComponent": 2372.33552631579,
+          "marinadeComponent": 110.16,
+          "rawMaterial": 2482.49552631579,
+          "coldHold": 40,
+          "exFactory": 3151.49552631579,
+          "freight": 60,
+          "finalCost": 3211.49552631579,
+          "unglazed": {
+            "final": 3211.49552631579,
+            "rackRate": 5352.49254385965
+          },
+          "glazed": {
+            "final": 3211.49552631579,
+            "rackRate": 5352.49254385965
+          }
+        },
+        "export": {
+          "wholeFishUsd": 2.52470588235294,
+          "fishComponent": 5.44804953560372,
+          "marinadeComponent": 0.324,
+          "rawMaterial": 5.77204953560372,
+          "coldHold": 0.1,
+          "exFactory": 7.72204953560372,
+          "freight": 0.1,
+          "finalCost": 7.82204953560372,
+          "frozenPlain": {
+            "final": 7.82204953560372,
+            "fob": 13.0367492260062,
+            "cif": 13.4867492260062,
+            "distributorT3": 17.9137746594427
+          },
+          "frozenGlazed": {
+            "final": 7.82204953560372,
+            "fob": 13.0367492260062,
+            "cif": 13.4867492260062,
+            "distributorT3": 17.9137746594427
+          },
+          "fresh": {
+            "final": 7.82204953560372,
+            "fob": 13.0367492260062,
+            "cif": 15.8367492260062,
+            "distributorT3": 21.0351621594427
+          }
+        }
+      }
+    },
+    {
+      "name": "Marinated fillet — hot & spicy",
+      "status": "inactive",
+      "category": "Value-added",
+      "glazePct": 0,
+      "baseYield": 0.38,
+      "pctFish": 0.82,
+      "pctMarinade": 0.18,
+      "marinadeUsdPerKg": 1.6,
+      "processUsdPerKg": 1.4,
+      "packingUsdPerKg": 0.45,
+      "packSize": null,
+      "expected": {
+        "domestic": {
+          "wholeFishLkr": 1099.375,
+          "fishComponent": 2372.33552631579,
+          "marinadeComponent": 97.92,
+          "rawMaterial": 2470.25552631579,
+          "coldHold": 40,
+          "exFactory": 3139.25552631579,
+          "freight": 60,
+          "finalCost": 3199.25552631579,
+          "unglazed": {
+            "final": 3199.25552631579,
+            "rackRate": 5332.09254385965
+          },
+          "glazed": {
+            "final": 3199.25552631579,
+            "rackRate": 5332.09254385965
+          }
+        },
+        "export": {
+          "wholeFishUsd": 2.52470588235294,
+          "fishComponent": 5.44804953560372,
+          "marinadeComponent": 0.288,
+          "rawMaterial": 5.73604953560372,
+          "coldHold": 0.1,
+          "exFactory": 7.68604953560372,
+          "freight": 0.1,
+          "finalCost": 7.78604953560372,
+          "frozenPlain": {
+            "final": 7.78604953560372,
+            "fob": 12.9767492260062,
+            "cif": 13.4267492260062,
+            "distributorT3": 17.8340796594427
+          },
+          "frozenGlazed": {
+            "final": 7.78604953560372,
+            "fob": 12.9767492260062,
+            "cif": 13.4267492260062,
+            "distributorT3": 17.8340796594427
+          },
+          "fresh": {
+            "final": 7.78604953560372,
+            "fob": 12.9767492260062,
+            "cif": 15.7767492260062,
+            "distributorT3": 20.9554671594427
+          }
+        }
+      }
+    },
+    {
+      "name": "Marinated portions — BBQ",
+      "status": "inactive",
+      "category": "Value-added",
+      "glazePct": 0,
+      "baseYield": 0.36,
+      "pctFish": 0.8,
+      "pctMarinade": 0.2,
+      "marinadeUsdPerKg": 1.7,
+      "processUsdPerKg": 1.3,
+      "packingUsdPerKg": 0.45,
+      "packSize": null,
+      "expected": {
+        "domestic": {
+          "wholeFishLkr": 1099.375,
+          "fishComponent": 2443.05555555556,
+          "marinadeComponent": 115.6,
+          "rawMaterial": 2558.65555555556,
+          "coldHold": 40,
+          "exFactory": 3193.65555555556,
+          "freight": 60,
+          "finalCost": 3253.65555555556,
+          "unglazed": {
+            "final": 3253.65555555556,
+            "rackRate": 5422.75925925926
+          },
+          "glazed": {
+            "final": 3253.65555555556,
+            "rackRate": 5422.75925925926
+          }
+        },
+        "export": {
+          "wholeFishUsd": 2.52470588235294,
+          "fishComponent": 5.61045751633987,
+          "marinadeComponent": 0.34,
+          "rawMaterial": 5.95045751633987,
+          "coldHold": 0.1,
+          "exFactory": 7.80045751633987,
+          "freight": 0.1,
+          "finalCost": 7.90045751633987,
+          "frozenPlain": {
+            "final": 7.90045751633987,
+            "fob": 13.1674291938998,
+            "cif": 13.6174291938998,
+            "distributorT3": 18.0873503267974
+          },
+          "frozenGlazed": {
+            "final": 7.90045751633987,
+            "fob": 13.1674291938998,
+            "cif": 13.6174291938998,
+            "distributorT3": 18.0873503267974
+          },
+          "fresh": {
+            "final": 7.90045751633987,
+            "fob": 13.1674291938998,
+            "cif": 15.9674291938998,
+            "distributorT3": 21.2087378267974
+          }
+        }
+      }
+    },
+    {
+      "name": "Marinated cubes — curry cut",
+      "status": "inactive",
+      "category": "Value-added",
+      "glazePct": 0,
+      "baseYield": 0.35,
+      "pctFish": 0.78,
+      "pctMarinade": 0.22,
+      "marinadeUsdPerKg": 1.5,
+      "processUsdPerKg": 1.35,
+      "packingUsdPerKg": 0.45,
+      "packSize": null,
+      "expected": {
+        "domestic": {
+          "wholeFishLkr": 1099.375,
+          "fishComponent": 2450.03571428571,
+          "marinadeComponent": 112.2,
+          "rawMaterial": 2562.23571428571,
+          "coldHold": 40,
+          "exFactory": 3214.23571428571,
+          "freight": 60,
+          "finalCost": 3274.23571428571,
+          "unglazed": {
+            "final": 3274.23571428571,
+            "rackRate": 5457.05952380953
+          },
+          "glazed": {
+            "final": 3274.23571428571,
+            "rackRate": 5457.05952380953
+          }
+        },
+        "export": {
+          "wholeFishUsd": 2.52470588235294,
+          "fishComponent": 5.62648739495798,
+          "marinadeComponent": 0.33,
+          "rawMaterial": 5.95648739495799,
+          "coldHold": 0.1,
+          "exFactory": 7.85648739495799,
+          "freight": 0.1,
+          "finalCost": 7.95648739495799,
+          "frozenPlain": {
+            "final": 7.95648739495799,
+            "fob": 13.26081232493,
+            "cif": 13.71081232493,
+            "distributorT3": 18.2113864705882
+          },
+          "frozenGlazed": {
+            "final": 7.95648739495799,
+            "fob": 13.26081232493,
+            "cif": 13.71081232493,
+            "distributorT3": 18.2113864705882
+          },
+          "fresh": {
+            "final": 7.95648739495799,
+            "fob": 13.26081232493,
+            "cif": 16.06081232493,
+            "distributorT3": 21.3327739705882
+          }
+        }
+      }
+    },
+    {
+      "name": "Teriyaki glazed portions",
+      "status": "inactive",
+      "category": "Value-added",
+      "glazePct": 0,
+      "baseYield": 0.36,
+      "pctFish": 0.78,
+      "pctMarinade": 0.22,
+      "marinadeUsdPerKg": 2.2,
+      "processUsdPerKg": 1.45,
+      "packingUsdPerKg": 0.5,
+      "packSize": null,
+      "expected": {
+        "domestic": {
+          "wholeFishLkr": 1099.375,
+          "fishComponent": 2381.97916666667,
+          "marinadeComponent": 164.56,
+          "rawMaterial": 2546.53916666667,
+          "coldHold": 40,
+          "exFactory": 3249.53916666667,
+          "freight": 60,
+          "finalCost": 3309.53916666667,
+          "unglazed": {
+            "final": 3309.53916666667,
+            "rackRate": 5515.89861111111
+          },
+          "glazed": {
+            "final": 3309.53916666667,
+            "rackRate": 5515.89861111111
+          }
+        },
+        "export": {
+          "wholeFishUsd": 2.52470588235294,
+          "fishComponent": 5.47019607843137,
+          "marinadeComponent": 0.484,
+          "rawMaterial": 5.95419607843137,
+          "coldHold": 0.1,
+          "exFactory": 8.00419607843137,
+          "freight": 0.1,
+          "finalCost": 8.10419607843137,
+          "frozenPlain": {
+            "final": 8.10419607843137,
+            "fob": 13.5069934640523,
+            "cif": 13.9569934640523,
+            "distributorT3": 18.5383765686275
+          },
+          "frozenGlazed": {
+            "final": 8.10419607843137,
+            "fob": 13.5069934640523,
+            "cif": 13.9569934640523,
+            "distributorT3": 18.5383765686275
+          },
+          "fresh": {
+            "final": 8.10419607843137,
+            "fob": 13.5069934640523,
+            "cif": 16.3069934640523,
+            "distributorT3": 21.6597640686275
+          }
+        }
+      }
+    },
+    {
+      "name": "Cajun skin-on fillet",
+      "status": "inactive",
+      "category": "Value-added",
+      "glazePct": 0,
+      "baseYield": 0.45,
+      "pctFish": 0.85,
+      "pctMarinade": 0.15,
+      "marinadeUsdPerKg": 1.9,
+      "processUsdPerKg": 1.2,
+      "packingUsdPerKg": 0.45,
+      "packSize": null,
+      "expected": {
+        "domestic": {
+          "wholeFishLkr": 1099.375,
+          "fishComponent": 2076.59722222222,
+          "marinadeComponent": 96.9,
+          "rawMaterial": 2173.49722222222,
+          "coldHold": 40,
+          "exFactory": 2774.49722222222,
+          "freight": 60,
+          "finalCost": 2834.49722222222,
+          "unglazed": {
+            "final": 2834.49722222222,
+            "rackRate": 4724.16203703704
+          },
+          "glazed": {
+            "final": 2834.49722222222,
+            "rackRate": 4724.16203703704
+          }
+        },
+        "export": {
+          "wholeFishUsd": 2.52470588235294,
+          "fishComponent": 4.76888888888889,
+          "marinadeComponent": 0.285,
+          "rawMaterial": 5.05388888888889,
+          "coldHold": 0.1,
+          "exFactory": 6.80388888888889,
+          "freight": 0.1,
+          "finalCost": 6.90388888888889,
+          "frozenPlain": {
+            "final": 6.90388888888889,
+            "fob": 11.5064814814815,
+            "cif": 11.9564814814815,
+            "distributorT3": 15.8811965277778
+          },
+          "frozenGlazed": {
+            "final": 6.90388888888889,
+            "fob": 11.5064814814815,
+            "cif": 11.9564814814815,
+            "distributorT3": 15.8811965277778
+          },
+          "fresh": {
+            "final": 6.90388888888889,
+            "fob": 11.5064814814815,
+            "cif": 14.3064814814815,
+            "distributorT3": 19.0025840277778
+          }
+        }
+      }
+    },
+    {
+      "name": "Crumbed / breaded fillet",
+      "status": "inactive",
+      "category": "Value-added",
+      "glazePct": 0,
+      "baseYield": 0.38,
+      "pctFish": 0.7,
+      "pctMarinade": 0.3,
+      "marinadeUsdPerKg": 1.2,
+      "processUsdPerKg": 1.6,
+      "packingUsdPerKg": 0.5,
+      "packSize": null,
+      "expected": {
+        "domestic": {
+          "wholeFishLkr": 1099.375,
+          "fishComponent": 2025.16447368421,
+          "marinadeComponent": 122.4,
+          "rawMaterial": 2147.56447368421,
+          "coldHold": 40,
+          "exFactory": 2901.56447368421,
+          "freight": 60,
+          "finalCost": 2961.56447368421,
+          "unglazed": {
+            "final": 2961.56447368421,
+            "rackRate": 4935.94078947369
+          },
+          "glazed": {
+            "final": 2961.56447368421,
+            "rackRate": 4935.94078947369
+          }
+        },
+        "export": {
+          "wholeFishUsd": 2.52470588235294,
+          "fishComponent": 4.65077399380805,
+          "marinadeComponent": 0.36,
+          "rawMaterial": 5.01077399380805,
+          "coldHold": 0.1,
+          "exFactory": 7.21077399380805,
+          "freight": 0.1,
+          "finalCost": 7.31077399380805,
+          "frozenPlain": {
+            "final": 7.31077399380805,
+            "fob": 12.1846233230134,
+            "cif": 12.6346233230134,
+            "distributorT3": 16.7819384287926
+          },
+          "frozenGlazed": {
+            "final": 7.31077399380805,
+            "fob": 12.1846233230134,
+            "cif": 12.6346233230134,
+            "distributorT3": 16.7819384287926
+          },
+          "fresh": {
+            "final": 7.31077399380805,
+            "fob": 12.1846233230134,
+            "cif": 14.9846233230134,
+            "distributorT3": 19.9033259287926
+          }
+        }
+      }
+    },
+    {
+      "name": "Battered fish fingers",
+      "status": "inactive",
+      "category": "Value-added",
+      "glazePct": 0,
+      "baseYield": 0.35,
+      "pctFish": 0.65,
+      "pctMarinade": 0.35,
+      "marinadeUsdPerKg": 1,
+      "processUsdPerKg": 1.7,
+      "packingUsdPerKg": 0.5,
+      "packSize": null,
+      "expected": {
+        "domestic": {
+          "wholeFishLkr": 1099.375,
+          "fishComponent": 2041.69642857143,
+          "marinadeComponent": 119,
+          "rawMaterial": 2160.69642857143,
+          "coldHold": 40,
+          "exFactory": 2948.69642857143,
+          "freight": 60,
+          "finalCost": 3008.69642857143,
+          "unglazed": {
+            "final": 3008.69642857143,
+            "rackRate": 5014.49404761905
+          },
+          "glazed": {
+            "final": 3008.69642857143,
+            "rackRate": 5014.49404761905
+          }
+        },
+        "export": {
+          "wholeFishUsd": 2.52470588235294,
+          "fishComponent": 4.68873949579832,
+          "marinadeComponent": 0.35,
+          "rawMaterial": 5.03873949579832,
+          "coldHold": 0.1,
+          "exFactory": 7.33873949579832,
+          "freight": 0.1,
+          "finalCost": 7.43873949579832,
+          "frozenPlain": {
+            "final": 7.43873949579832,
+            "fob": 12.3978991596639,
+            "cif": 12.8478991596639,
+            "distributorT3": 17.0652220588235
+          },
+          "frozenGlazed": {
+            "final": 7.43873949579832,
+            "fob": 12.3978991596639,
+            "cif": 12.8478991596639,
+            "distributorT3": 17.0652220588235
+          },
+          "fresh": {
+            "final": 7.43873949579832,
+            "fob": 12.3978991596639,
+            "cif": 15.1978991596639,
+            "distributorT3": 20.1866095588235
+          }
+        }
+      }
+    },
+    {
+      "name": "Fish sausages",
+      "status": "inactive",
+      "category": "Value-added",
+      "glazePct": 0,
+      "baseYield": 0.3,
+      "pctFish": 0.6,
+      "pctMarinade": 0.4,
+      "marinadeUsdPerKg": 0.9,
+      "processUsdPerKg": 1.8,
+      "packingUsdPerKg": 0.55,
+      "packSize": null,
+      "expected": {
+        "domestic": {
+          "wholeFishLkr": 1099.375,
+          "fishComponent": 2198.75,
+          "marinadeComponent": 122.4,
+          "rawMaterial": 2321.15,
+          "coldHold": 40,
+          "exFactory": 3160.15,
+          "freight": 60,
+          "finalCost": 3220.15,
+          "unglazed": {
+            "final": 3220.15,
+            "rackRate": 5366.91666666667
+          },
+          "glazed": {
+            "final": 3220.15,
+            "rackRate": 5366.91666666667
+          }
+        },
+        "export": {
+          "wholeFishUsd": 2.52470588235294,
+          "fishComponent": 5.04941176470588,
+          "marinadeComponent": 0.36,
+          "rawMaterial": 5.40941176470588,
+          "coldHold": 0.1,
+          "exFactory": 7.85941176470588,
+          "freight": 0.1,
+          "finalCost": 7.95941176470588,
+          "frozenPlain": {
+            "final": 7.95941176470588,
+            "fob": 13.2656862745098,
+            "cif": 13.7156862745098,
+            "distributorT3": 18.2178602941176
+          },
+          "frozenGlazed": {
+            "final": 7.95941176470588,
+            "fob": 13.2656862745098,
+            "cif": 13.7156862745098,
+            "distributorT3": 18.2178602941176
+          },
+          "fresh": {
+            "final": 7.95941176470588,
+            "fob": 13.2656862745098,
+            "cif": 16.0656862745098,
+            "distributorT3": 21.3392477941177
+          }
+        }
+      }
+    },
+    {
+      "name": "Fish meatballs",
+      "status": "inactive",
+      "category": "Value-added",
+      "glazePct": 0,
+      "baseYield": 0.3,
+      "pctFish": 0.62,
+      "pctMarinade": 0.38,
+      "marinadeUsdPerKg": 0.95,
+      "processUsdPerKg": 1.75,
+      "packingUsdPerKg": 0.55,
+      "packSize": null,
+      "expected": {
+        "domestic": {
+          "wholeFishLkr": 1099.375,
+          "fishComponent": 2272.04166666667,
+          "marinadeComponent": 122.74,
+          "rawMaterial": 2394.78166666667,
+          "coldHold": 40,
+          "exFactory": 3216.78166666667,
+          "freight": 60,
+          "finalCost": 3276.78166666667,
+          "unglazed": {
+            "final": 3276.78166666667,
+            "rackRate": 5461.30277777778
+          },
+          "glazed": {
+            "final": 3276.78166666667,
+            "rackRate": 5461.30277777778
+          }
+        },
+        "export": {
+          "wholeFishUsd": 2.52470588235294,
+          "fishComponent": 5.21772549019608,
+          "marinadeComponent": 0.361,
+          "rawMaterial": 5.57872549019608,
+          "coldHold": 0.1,
+          "exFactory": 7.97872549019608,
+          "freight": 0.1,
+          "finalCost": 8.07872549019608,
+          "frozenPlain": {
+            "final": 8.07872549019608,
+            "fob": 13.4645424836601,
+            "cif": 13.9145424836601,
+            "distributorT3": 18.4819910539216
+          },
+          "frozenGlazed": {
+            "final": 8.07872549019608,
+            "fob": 13.4645424836601,
+            "cif": 13.9145424836601,
+            "distributorT3": 18.4819910539216
+          },
+          "fresh": {
+            "final": 8.07872549019608,
+            "fob": 13.4645424836601,
+            "cif": 16.2645424836601,
+            "distributorT3": 21.6033785539216
+          }
+        }
+      }
+    },
+    {
+      "name": "Fish burger patties",
+      "status": "inactive",
+      "category": "Value-added",
+      "glazePct": 0,
+      "baseYield": 0.3,
+      "pctFish": 0.68,
+      "pctMarinade": 0.32,
+      "marinadeUsdPerKg": 1.1,
+      "processUsdPerKg": 1.7,
+      "packingUsdPerKg": 0.55,
+      "packSize": null,
+      "expected": {
+        "domestic": {
+          "wholeFishLkr": 1099.375,
+          "fishComponent": 2491.91666666667,
+          "marinadeComponent": 119.68,
+          "rawMaterial": 2611.59666666667,
+          "coldHold": 40,
+          "exFactory": 3416.59666666667,
+          "freight": 60,
+          "finalCost": 3476.59666666667,
+          "unglazed": {
+            "final": 3476.59666666667,
+            "rackRate": 5794.32777777778
+          },
+          "glazed": {
+            "final": 3476.59666666667,
+            "rackRate": 5794.32777777778
+          }
+        },
+        "export": {
+          "wholeFishUsd": 2.52470588235294,
+          "fishComponent": 5.72266666666667,
+          "marinadeComponent": 0.352,
+          "rawMaterial": 6.07466666666667,
+          "coldHold": 0.1,
+          "exFactory": 8.42466666666667,
+          "freight": 0.1,
+          "finalCost": 8.52466666666667,
+          "frozenPlain": {
+            "final": 8.52466666666667,
+            "fob": 14.2077777777778,
+            "cif": 14.6577777777778,
+            "distributorT3": 19.4691933333333
+          },
+          "frozenGlazed": {
+            "final": 8.52466666666667,
+            "fob": 14.2077777777778,
+            "cif": 14.6577777777778,
+            "distributorT3": 19.4691933333333
+          },
+          "fresh": {
+            "final": 8.52466666666667,
+            "fob": 14.2077777777778,
+            "cif": 17.0077777777778,
+            "distributorT3": 22.5905808333333
+          }
+        }
+      }
+    },
+    {
+      "name": "Smoked fillet",
+      "status": "inactive",
+      "category": "Value-added",
+      "glazePct": 0,
+      "baseYield": 0.38,
+      "pctFish": 0.95,
+      "pctMarinade": 0.05,
+      "marinadeUsdPerKg": 1.5,
+      "processUsdPerKg": 2.2,
+      "packingUsdPerKg": 0.6,
+      "packSize": null,
+      "expected": {
+        "domestic": {
+          "wholeFishLkr": 1099.375,
+          "fishComponent": 2748.4375,
+          "marinadeComponent": 25.5,
+          "rawMaterial": 2773.9375,
+          "coldHold": 40,
+          "exFactory": 3765.9375,
+          "freight": 60,
+          "finalCost": 3825.9375,
+          "unglazed": {
+            "final": 3825.9375,
+            "rackRate": 6376.5625
+          },
+          "glazed": {
+            "final": 3825.9375,
+            "rackRate": 6376.5625
+          }
+        },
+        "export": {
+          "wholeFishUsd": 2.52470588235294,
+          "fishComponent": 6.31176470588235,
+          "marinadeComponent": 0.075,
+          "rawMaterial": 6.38676470588235,
+          "coldHold": 0.1,
+          "exFactory": 9.28676470588235,
+          "freight": 0.1,
+          "finalCost": 9.38676470588235,
+          "frozenPlain": {
+            "final": 9.38676470588235,
+            "fob": 15.6446078431373,
+            "cif": 16.0946078431373,
+            "distributorT3": 21.3776628676471
+          },
+          "frozenGlazed": {
+            "final": 9.38676470588235,
+            "fob": 15.6446078431373,
+            "cif": 16.0946078431373,
+            "distributorT3": 21.3776628676471
+          },
+          "fresh": {
+            "final": 9.38676470588235,
+            "fob": 15.6446078431373,
+            "cif": 18.4446078431373,
+            "distributorT3": 24.4990503676471
+          }
+        }
+      }
+    }
+  ]
+}
