@@ -24,6 +24,9 @@ import {
   GitCompare,
   Users,
   ScrollText,
+  Calculator,
+  FileSpreadsheet,
+  Tags,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -66,6 +69,18 @@ const SECTIONS: Section[] = [
     items: [
       { label: 'My scenarios', href: '/scenarios', icon: GitFork },
       { label: 'Compare plans', href: '/diff', icon: GitCompare },
+    ],
+  },
+  // Its own section, not an Input or an Output: costing is a standalone module
+  // with its own tables and no link to plans or programs
+  // (costing_module/Costing_Module_Decisions.md §1).
+  {
+    title: 'Costing',
+    items: [
+      { label: 'Cost Grid', href: '/costing', icon: Calculator },
+      { label: 'Saved costings', href: '/costing/saved', icon: FileSpreadsheet },
+      { label: 'Costing SKUs', href: '/costing/skus', icon: Tags },
+      { label: 'Assumptions', href: '/costing/assumptions', icon: SlidersHorizontal },
     ],
   },
   {

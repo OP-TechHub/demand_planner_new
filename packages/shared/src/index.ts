@@ -315,3 +315,167 @@ export function parseMonthHeader(
 export function fiscalYearOf(monthIndex: number): 1 | 2 | 3 | 4 | 5 {
   return (Math.floor((monthIndex - 1) / 12) + 1) as 1 | 2 | 3 | 4 | 5;
 }
+
+// ============================================================================
+// COSTING MODULE
+//
+// Mirrors the `cost_*` tables (supabase/migrations/20260824000001_costing_module.sql).
+// Deliberately standalone: nothing here references a plan, program or bucket
+// from the demand planner (costing_module/Costing_Module_Decisions.md §1).
+// Numeric columns arrive from PostgREST as JS numbers.
+// ============================================================================
+
+export type CostMarket = 'domestic' | 'export';
+export type CostCurrency = 'LKR' | 'USD';
+export type CostOdcBasis = 'per_kg' | 'per_fish';
+export type CostSkuStatus = 'active' | 'inactive';
+export type CostDestMode = 'single' | 'multi';
+export type CostRawMaterialBasis = 'full_fish' | 'absorbed';
+export type CostProductState = 'unglazed' | 'glazed' | 'frozen_plain' | 'frozen_glazed' | 'fresh';
+
+/** Costing's own copy of the size grades — NOT demand_planner.buckets. */
+export interface CostSizeBucket {
+  id: string;
+  org_id: string;
+  label: string;
+  min_g: number;
+  max_g: number;
+  median_g: number;
+  fcr: number;
+  sort_order: number;
+}
+
+export interface CostAssumptionVersion {
+  id: string;
+  org_id: string;
+  version_no: number;
+  label: string;
+  notes: string;
+  is_current: boolean;
+  effective_from: string;
+  feed_cost_per_kg: number;
+  clearing_cost_per_kg: number;
+  fcr_reference: number;
+  fx_rate: number;
+  import_tax_pct_domestic: number;
+  import_tax_pct_export: number;
+  domestic_transport_lkr: number;
+  domestic_cold_hold_lkr: number;
+  export_freight_to_port_usd: number;
+  export_cold_chain_usd: number;
+  rack_margin_pct: number;
+  fob_margin_pct: number;
+  importer_clearing_pct: number;
+  importer_markup_pct: number;
+  distributor_markup_pct: number;
+  container_fill_kg: number;
+  air_lot_kg: number;
+}
+
+export interface CostOdcComponentRow {
+  id: string;
+  version_id: string;
+  name: string;
+  value: number;
+  currency: CostCurrency;
+  basis: CostOdcBasis;
+  sort_order: number;
+}
+
+export interface CostDestinationRow {
+  id: string;
+  org_id: string;
+  name: string;
+  is_active: boolean;
+  sort_order: number;
+}
+
+export interface CostDestinationRate {
+  version_id: string;
+  destination_id: string;
+  sea_rate_per_20ft: number;
+  air_rate_per_lot: number;
+}
+
+export interface CostSkuRow {
+  id: string;
+  org_id: string;
+  name: string;
+  status: CostSkuStatus;
+  category: string;
+  sort_order: number;
+  glaze_pct: number;
+  base_yield: number;
+  pct_fish: number;
+  pct_marinade: number;
+  marinade_usd_per_kg: number;
+  process_usd_per_kg: number;
+  packing_usd_per_kg: number;
+  pack_size: string | null;
+  raw_material_basis: CostRawMaterialBasis;
+  market_price_lkr: number | null;
+  market_price_usd: number | null;
+  override_rack_margin_pct: number | null;
+  override_fob_margin_pct: number | null;
+  override_transport_lkr: number | null;
+  override_cold_hold_lkr: number | null;
+  override_freight_to_port_usd: number | null;
+  override_cold_chain_usd: number | null;
+  deleted_at: string | null;
+}
+
+export interface CostSkuBucketYield {
+  sku_id: string;
+  bucket_id: string;
+  yield_pct: number;
+}
+
+export interface CostCosting {
+  id: string;
+  org_id: string;
+  name: string;
+  notes: string;
+  market: CostMarket;
+  version_id: string;
+  /** Fields this costing deviates from the official set on. */
+  assumption_overrides: Record<string, number>;
+  bucket_id: string | null;
+  destination_mode: CostDestMode;
+  created_at: string;
+  created_by: string;
+  deleted_at: string | null;
+}
+
+export interface CostCostingDestination {
+  costing_id: string;
+  destination_id: string;
+  destination_name: string;
+  is_primary: boolean;
+  sort_order: number;
+}
+
+export interface CostCostingLine {
+  id: string;
+  costing_id: string;
+  sku_id: string | null;
+  sku_name: string;
+  destination_id: string | null;
+  destination_name: string | null;
+  state: CostProductState;
+  currency: CostCurrency;
+  final_cost: number;
+  selling_price: number | null;
+  contribution_per_kg: number | null;
+  inputs: Record<string, unknown>;
+  outputs: Record<string, unknown>;
+  sort_order: number;
+}
+
+/** Human labels for the shipping/pack states. */
+export const COST_STATE_LABEL: Record<CostProductState, string> = {
+  unglazed: 'No glaze',
+  glazed: 'With glaze',
+  frozen_plain: 'Frozen · no glaze',
+  frozen_glazed: 'Frozen · glazed',
+  fresh: 'Fresh (air)',
+};
