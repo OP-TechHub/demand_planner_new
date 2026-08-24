@@ -333,6 +333,14 @@ export type CostDestMode = 'single' | 'multi';
 export type CostRawMaterialBasis = 'full_fish' | 'absorbed';
 export type CostProductState = 'unglazed' | 'glazed' | 'frozen_plain' | 'frozen_glazed' | 'fresh';
 
+/** Frozen, fresh, or costed either way. Fresh cannot carry glaze — glaze is ice. */
+export type CostProductForm = 'frozen' | 'fresh' | 'both';
+/** Which market's grid a SKU appears in. Its recipe is shared regardless. */
+export type CostMarketScope = 'domestic' | 'export' | 'both';
+
+/** The category vocabulary in use. Free text in the DB; this is the offered set. */
+export const COST_CATEGORIES = ['Whole', 'Fillet', 'By-product', 'Value-added'] as const;
+
 /** Costing's own copy of the size grades — NOT demand_planner.buckets. */
 export interface CostSizeBucket {
   id: string;
@@ -413,6 +421,8 @@ export interface CostSkuRow {
   packing_usd_per_kg: number;
   pack_size: string | null;
   raw_material_basis: CostRawMaterialBasis;
+  product_form: CostProductForm;
+  market_scope: CostMarketScope;
   market_price_lkr: number | null;
   market_price_usd: number | null;
   override_rack_margin_pct: number | null;

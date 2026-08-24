@@ -3,7 +3,7 @@
 import { useActionState, useEffect, useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Lock, Pencil, Plus } from 'lucide-react';
-import type { CostAssumptionVersion, CostSizeBucket, CostSkuRow } from '@oceanpick/shared';
+import { COST_CATEGORIES, type CostAssumptionVersion, type CostSizeBucket, type CostSkuRow } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 import { ScrollX } from '@/components/ui/scroll-x';
 import { archiveCostSku, saveCostSku, saveSkuBucketYield, type SkuFormState } from './actions';
@@ -17,6 +17,7 @@ export function SkusClient({
   orgId,
   version,
   currentUserId,
+  authors,
   isAdmin,
 }: {
   skus: CostSkuRow[];
@@ -25,6 +26,7 @@ export function SkusClient({
   orgId: string;
   version: CostAssumptionVersion;
   currentUserId: string | null;
+  authors: Record<string, string>;
   isAdmin: boolean;
 }) {
   const [editing, setEditing] = useState<CostSkuRow | null | undefined>(undefined);
@@ -42,6 +44,24 @@ export function SkusClient({
    * offers an edit the database will reject.
    */
   const canEdit = (s: CostSkuRow) => isAdmin || (currentUserId != null && s.created_by === currentUserId);
+
+  // The offered category vocabulary: the known set, plus anything already in
+  // use, so a value already on a row is never silently dropped by the dropdown.
+  const categories = useMemo(
+    () => [...new Set([...COST_CATEGORIES, ...skus.map((s) => s.category).filter(Boolean)])],
+    [skus]
+  );
+
+  /**
+   * Where a recipe came from. A null creator means it arrived with the seed —
+   * a shared company recipe from the workbook, not one person's addition.
+   */
+  const sourceOf = (s: CostSkuRow): string =>
+    s.created_by == null
+      ? 'Company'
+      : s.created_by === currentUserId
+        ? 'You'
+        : (authors[s.created_by] ?? 'Someone else');
 
   return (
     <div className="space-y-4">
@@ -86,13 +106,20 @@ export function SkusClient({
       </div>
 
       {tab === 'recipe' ? (
-        <RecipeTable skus={visible} canEdit={canEdit} onEdit={setEditing} />
+        <RecipeTable skus={visible} canEdit={canEdit} sourceOf={sourceOf} onEdit={setEditing} />
       ) : (
         <YieldTable skus={visible} buckets={buckets} yields={yields} canEdit={canEdit} />
       )}
 
       {editing !== undefined && (
-        <SkuDialog sku={editing} orgId={orgId} version={version} onClose={() => setEditing(undefined)} />
+        <SkuDialog
+          sku={editing}
+          orgId={orgId}
+          version={version}
+          allSkus={skus}
+          categories={categories}
+          onClose={() => setEditing(undefined)}
+        />
       )}
     </div>
   );
@@ -103,10 +130,12 @@ export function SkusClient({
 function RecipeTable({
   skus,
   canEdit,
+  sourceOf,
   onEdit,
 }: {
   skus: CostSkuRow[];
   canEdit: (s: CostSkuRow) => boolean;
+  sourceOf: (s: CostSkuRow) => string;
   onEdit: (s: CostSkuRow) => void;
 }) {
   return (
@@ -115,6 +144,7 @@ function RecipeTable({
         <thead>
           <tr className="border-b bg-muted/40 text-[10px] uppercase tracking-wide text-muted-foreground">
             <th className={cn(th, 'sticky left-0 z-10 bg-muted/40 text-left')}>SKU</th>
+            <th className={cn(th, 'text-left')}>Added by</th>
             <th className={cn(th, 'text-left')}>Category</th>
             <th className={cn(th, 'text-left')}>Raw material</th>
             <th className={th}>Yield</th>
@@ -145,6 +175,13 @@ function RecipeTable({
                     </span>
                   )}
                 </th>
+                <td className={cn(td, 'text-left')}>
+                  {s.created_by == null ? (
+                    <span className="text-muted-foreground">Company</span>
+                  ) : (
+                    <span className={cn(s.created_by && 'rounded bg-muted px-1.5 py-px')}>{sourceOf(s)}</span>
+                  )}
+                </td>
                 <td className={cn(td, 'text-left')}>{s.category}</td>
                 <td className={cn(td, 'text-left')}>
                   {absorbed ? (
@@ -270,16 +307,37 @@ function SkuDialog({
   sku,
   orgId,
   version,
+  allSkus,
+  categories,
   onClose,
 }: {
   sku: CostSkuRow | null;
   orgId: string;
   version: CostAssumptionVersion;
+  allSkus: CostSkuRow[];
+  categories: string[];
   onClose: () => void;
 }) {
   const router = useRouter();
   const [state, action, pending] = useActionState<SkuFormState, FormData>(saveCostSku, { error: null, ok: false });
-  const [basis, setBasis] = useState(sku?.raw_material_basis ?? 'full_fish');
+
+  /**
+   * Which record the field defaults come from.
+   *
+   * Normally the SKU being edited, but "copy its settings" repoints it at
+   * another SKU so a new one can start from an existing recipe instead of being
+   * retyped. It is NOT the same as `sku`: the hidden id, the title and the
+   * archive button stay bound to `sku`, so copying settings into a new SKU can
+   * never turn into an edit of the one it was copied from.
+   */
+  const [src, setSrc] = useState<CostSkuRow | null>(sku);
+
+  const [name, setName] = useState(sku?.name ?? '');
+  const [basis, setBasis] = useState(src?.raw_material_basis ?? 'full_fish');
+  const [form, setForm] = useState(src?.product_form ?? 'both');
+  const [categoryChoice, setCategoryChoice] = useState(
+    src?.category && categories.includes(src.category) ? src.category : (categories[0] ?? 'Whole')
+  );
   // Open by default for a new SKU: the inherited values are the point of the
   // section, so they should be on screen without a click. For an existing SKU,
   // open only if it actually overrides something.
@@ -294,14 +352,37 @@ function SkuDialog({
 
   const absorbed = basis === 'absorbed';
 
+  /** A different SKU already holding this name — the duplicate the list drifts on. */
+  const duplicate =
+    allSkus.find(
+      (s) => s.id !== sku?.id && s.name.trim().toLowerCase() === name.trim().toLowerCase()
+    ) ?? null;
+
+  function copyFrom(source: CostSkuRow) {
+    setSrc(source);
+    setBasis(source.raw_material_basis);
+    setForm(source.product_form);
+    setCategoryChoice(categories.includes(source.category) ? source.category : (categories[0] ?? 'Whole'));
+    setName(`${source.name} (copy)`);
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4" onClick={onClose}>
       <form
         action={action}
         onClick={(e) => e.stopPropagation()}
+        // Remount when the copy source changes, so the uncontrolled numeric
+        // fields pick up the new defaults instead of keeping the old ones.
+        key={src?.id ?? 'new'}
         className="my-8 w-full max-w-2xl space-y-4 rounded-lg border bg-card p-5 shadow-lg"
       >
         <h2 className="text-lg font-semibold">{sku ? sku.name : 'New SKU'}</h2>
+        {!sku && src && (
+          <p className="rounded-md bg-primary/5 px-3 py-2 text-xs text-primary">
+            Starting from <strong className="font-medium">{src.name}</strong> — every field below is
+            its recipe. Adjust what differs.
+          </p>
+        )}
         {sku && <input type="hidden" name="id" value={sku.id} />}
         <input type="hidden" name="org_id" value={orgId} />
 
@@ -311,10 +392,99 @@ function SkuDialog({
           </p>
         )}
 
+        {/* Market first: it frames everything below it, and it decides which
+            grid this SKU turns up in. */}
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Name" name="name" defaultValue={sku?.name ?? ''} type="text" className="sm:col-span-2" />
-          <Field label="Category" name="category" defaultValue={sku?.category ?? ''} type="text" />
-          <Select label="Status" name="status" defaultValue={sku?.status ?? 'active'} options={[['active', 'Active'], ['inactive', 'Inactive']]} />
+          <Select
+            label="Costing for"
+            name="market_scope"
+            defaultValue={src?.market_scope ?? 'both'}
+            options={[
+              ['both', 'Domestic and export'],
+              ['domestic', 'Domestic only (LKR)'],
+              ['export', 'Export only (USD)'],
+            ]}
+          />
+          <Select
+            label="Product form"
+            name="product_form"
+            defaultValue={form}
+            onChange={(e) => setForm(e.target.value as typeof form)}
+            options={[
+              ['both', 'Frozen and fresh'],
+              ['frozen', 'Frozen only'],
+              ['fresh', 'Fresh only (air freight)'],
+            ]}
+          />
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="sm:col-span-2">
+            <label className="block">
+              <span className="text-xs font-medium">Name</span>
+              {/* A datalist rather than a plain box: the existing SKUs drop down
+                  as you type, so a near-duplicate is visible before it is
+                  created. The list is one shared vocabulary. */}
+              <input
+                name="name"
+                list="cost-sku-names"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                type="text"
+                autoComplete="off"
+                placeholder="Pick an existing SKU or type a new name"
+                className={cn(inputCls, 'mt-1 w-full', duplicate && 'border-destructive')}
+              />
+              <datalist id="cost-sku-names">
+                {allSkus.map((s) => (
+                  <option key={s.id} value={s.name}>
+                    {s.category}
+                  </option>
+                ))}
+              </datalist>
+            </label>
+            {duplicate ? (
+              <p className="mt-1 text-[11px] text-destructive">
+                That name is already in use.{' '}
+                <button type="button" onClick={() => copyFrom(duplicate)} className="underline">
+                  Copy its settings
+                </button>{' '}
+                and rename, or pick a different name.
+              </p>
+            ) : (
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Existing SKUs appear as you type — reuse one rather than adding a near-duplicate.
+              </p>
+            )}
+          </div>
+
+          <label className="block">
+            <span className="text-xs font-medium">Category</span>
+            <select
+              name="category"
+              value={categoryChoice}
+              onChange={(e) => setCategoryChoice(e.target.value)}
+              className={cn(inputCls, 'mt-1 w-full')}
+            >
+              {categories.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+              <option value="__other">Other…</option>
+            </select>
+            {categoryChoice === '__other' && (
+              <input
+                name="category_other"
+                defaultValue=""
+                type="text"
+                placeholder="New category name"
+                className={cn(inputCls, 'mt-1 w-full')}
+              />
+            )}
+          </label>
+
+          <Select label="Status" name="status" defaultValue={src?.status ?? 'active'} options={[['active', 'Active'], ['inactive', 'Inactive']]} />
         </div>
 
         <fieldset className="rounded-md border p-3">
@@ -337,14 +507,14 @@ function SkuDialog({
         </fieldset>
 
         <div className="grid gap-3 sm:grid-cols-3">
-          <Field label="Yield" name="base_yield" defaultValue={sku?.base_yield ?? 0.45} step="0.01" hint="0.45 = 45%" />
-          <Field label="Glaze %" name="glaze_pct" defaultValue={sku?.glaze_pct ?? 0} step="0.01" hint="0.2 = 20% added ice" />
-          <Field label="Pack size" name="pack_size" defaultValue={sku?.pack_size ?? ''} type="text" hint="optional" />
-          <Field label="% fish" name="pct_fish" defaultValue={sku?.pct_fish ?? 1} step="0.01" hint="must total 100% with marinade" />
-          <Field label="% marinade" name="pct_marinade" defaultValue={sku?.pct_marinade ?? 0} step="0.01" />
-          <Field label="Marinade $/kg" name="marinade_usd_per_kg" defaultValue={sku?.marinade_usd_per_kg ?? 0} step="0.01" />
-          <Field label="Process $/kg" name="process_usd_per_kg" defaultValue={sku?.process_usd_per_kg ?? 0} step="0.01" />
-          <Field label="Packing $/kg" name="packing_usd_per_kg" defaultValue={sku?.packing_usd_per_kg ?? 0} step="0.01" />
+          <Field label="Yield" name="base_yield" defaultValue={src?.base_yield ?? 0.45} step="0.01" hint="0.45 = 45%" />
+          <Field label="Glaze %" name="glaze_pct" defaultValue={src?.glaze_pct ?? 0} step="0.01" hint="0.2 = 20% added ice" />
+          <Field label="Pack size" name="pack_size" defaultValue={src?.pack_size ?? ''} type="text" hint="optional" />
+          <Field label="% fish" name="pct_fish" defaultValue={src?.pct_fish ?? 1} step="0.01" hint="must total 100% with marinade" />
+          <Field label="% marinade" name="pct_marinade" defaultValue={src?.pct_marinade ?? 0} step="0.01" />
+          <Field label="Marinade $/kg" name="marinade_usd_per_kg" defaultValue={src?.marinade_usd_per_kg ?? 0} step="0.01" />
+          <Field label="Process $/kg" name="process_usd_per_kg" defaultValue={src?.process_usd_per_kg ?? 0} step="0.01" />
+          <Field label="Packing $/kg" name="packing_usd_per_kg" defaultValue={src?.packing_usd_per_kg ?? 0} step="0.01" />
         </div>
 
         <fieldset className={cn('rounded-md border p-3', absorbed && 'border-primary/40 bg-primary/5')}>
@@ -352,8 +522,8 @@ function SkuDialog({
             Market price {absorbed && <span className="font-normal text-primary">— drives contribution</span>}
           </legend>
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Domestic (LKR/kg)" name="market_price_lkr" defaultValue={sku?.market_price_lkr ?? ''} step="1" hint="what the market bears" />
-            <Field label="Export (USD/kg)" name="market_price_usd" defaultValue={sku?.market_price_usd ?? ''} step="0.01" hint="blank = no contribution shown" />
+            <Field label="Domestic (LKR/kg)" name="market_price_lkr" defaultValue={src?.market_price_lkr ?? ''} step="1" hint="what the market bears" />
+            <Field label="Export (USD/kg)" name="market_price_usd" defaultValue={src?.market_price_usd ?? ''} step="0.01" hint="blank = no contribution shown" />
           </div>
         </fieldset>
 
@@ -380,17 +550,17 @@ function SkuDialog({
                 <div className="mt-1.5 grid gap-3 sm:grid-cols-3">
                   <OverrideField
                     label="Rack margin" name="override_rack_margin_pct"
-                    current={sku?.override_rack_margin_pct ?? null}
+                    current={src?.override_rack_margin_pct ?? null}
                     inherited={version.rack_margin_pct} step="0.01" kind="pct"
                   />
                   <OverrideField
                     label="Transport" name="override_transport_lkr"
-                    current={sku?.override_transport_lkr ?? null}
+                    current={src?.override_transport_lkr ?? null}
                     inherited={version.domestic_transport_lkr} step="0.01" kind="lkr"
                   />
                   <OverrideField
                     label="Cold holding" name="override_cold_hold_lkr"
-                    current={sku?.override_cold_hold_lkr ?? null}
+                    current={src?.override_cold_hold_lkr ?? null}
                     inherited={version.domestic_cold_hold_lkr} step="0.01" kind="lkr"
                   />
                 </div>
@@ -401,17 +571,17 @@ function SkuDialog({
                 <div className="mt-1.5 grid gap-3 sm:grid-cols-3">
                   <OverrideField
                     label="FOB margin" name="override_fob_margin_pct"
-                    current={sku?.override_fob_margin_pct ?? null}
+                    current={src?.override_fob_margin_pct ?? null}
                     inherited={version.fob_margin_pct} step="0.01" kind="pct"
                   />
                   <OverrideField
                     label="Freight to port" name="override_freight_to_port_usd"
-                    current={sku?.override_freight_to_port_usd ?? null}
+                    current={src?.override_freight_to_port_usd ?? null}
                     inherited={version.export_freight_to_port_usd} step="0.01" kind="usd"
                   />
                   <OverrideField
                     label="Cold chain" name="override_cold_chain_usd"
-                    current={sku?.override_cold_chain_usd ?? null}
+                    current={src?.override_cold_chain_usd ?? null}
                     inherited={version.export_cold_chain_usd} step="0.01" kind="usd"
                   />
                 </div>

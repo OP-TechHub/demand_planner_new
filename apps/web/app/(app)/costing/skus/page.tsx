@@ -1,3 +1,4 @@
+import { createClient } from '@/lib/supabase/server';
 import { getProfile } from '@/lib/plan';
 import { loadCostingContext } from '@/lib/costing';
 import { CostingSetupNotice } from '../setup-notice';
@@ -12,8 +13,20 @@ import { SkusClient } from './skus-client';
  * forward. A customer master arrives later as its own standalone.
  */
 export default async function CostingSkusPage() {
-  const [ctx, profile] = await Promise.all([loadCostingContext(), getProfile()]);
+  const supabase = await createClient();
+  const [ctx, profile, { data: users }] = await Promise.all([
+    loadCostingContext(),
+    getProfile(),
+    supabase.from('users').select('id, full_name'),
+  ]);
   if (!ctx) return <CostingSetupNotice />;
+
+  // Now that anyone can add a SKU, the list mixes shared company recipes with
+  // colleagues' additions. Without an author it's impossible to tell which is
+  // which — and a SKU someone added shows up in everybody's cost grid.
+  const authors = Object.fromEntries(
+    ((users ?? []) as { id: string; full_name: string }[]).map((u) => [u.id, u.full_name])
+  );
 
   return (
     <SkusClient
@@ -28,6 +41,7 @@ export default async function CostingSkusPage() {
       // (Decisions §5, same rule as costings). The seeded 34 have no creator,
       // so they stay admin-only — they are shared company recipes.
       currentUserId={profile?.id ?? null}
+      authors={authors}
       isAdmin={(profile?.role ?? 'viewer') === 'admin'}
     />
   );

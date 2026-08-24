@@ -8,6 +8,7 @@ import type {
   CostAssumptionVersion,
   CostDestinationRow,
   CostMarket,
+  CostProductForm,
   CostOdcComponentRow,
   CostSizeBucket,
   CostSkuRow,
@@ -75,9 +76,12 @@ export function CostGridClient({
     return skus.filter(
       (s) =>
         (showInactive || s.status === 'active') &&
+        // A SKU can declare itself domestic-only or export-only; 'both' is the
+        // default and the seeded behaviour.
+        (s.market_scope === 'both' || s.market_scope === market) &&
         (!q || s.name.toLowerCase().includes(q) || s.category.toLowerCase().includes(q))
     );
-  }, [skus, showInactive, query]);
+  }, [skus, showInactive, query, market]);
 
   /**
    * Every visible row, recomputed whenever an input changes. Domestic has no
@@ -437,13 +441,31 @@ function GridRow({ row, domestic, showDestination }: { row: Row; domestic: boole
       <td className={tdBase}>{money(chain.exFactory)}</td>
       <td className={tdBase}>{money(chain.freight)}</td>
 
-      {domestic ? <DomesticCells out={result.value.result as DomesticOutput} absorbed={absorbed} /> : null}
-      {!domestic ? <ExportCells out={result.value.result as ExportOutput} absorbed={absorbed} /> : null}
+      {domestic ? (
+        <DomesticCells out={result.value.result as DomesticOutput} absorbed={absorbed} form={sku.product_form} />
+      ) : (
+        <ExportCells out={result.value.result as ExportOutput} absorbed={absorbed} form={sku.product_form} />
+      )}
     </tr>
   );
 }
 
-function DomesticCells({ out, absorbed }: { out: DomesticOutput; absorbed: boolean }) {
+/**
+ * A state this SKU isn't sold in. Blanked rather than hidden: the columns must
+ * stay aligned across rows, and a dash that explains itself is clearer than a
+ * number nobody should quote from.
+ */
+function NotSold({ why }: { why: string }) {
+  return (
+    <span className="text-muted-foreground/50" title={why}>
+      —
+    </span>
+  );
+}
+
+function DomesticCells({ out, absorbed, form }: { out: DomesticOutput; absorbed: boolean; form: CostProductForm }) {
+  // Glaze is added ice, so it cannot apply to a fresh product at all.
+  const noGlaze = form === 'fresh';
   return (
     <>
       <td className={cn(tdBase, 'border-l font-semibold')}>{lkr(out.unglazed.finalCost)}</td>
@@ -452,28 +474,55 @@ function DomesticCells({ out, absorbed }: { out: DomesticOutput; absorbed: boole
             rack rate on a LKR 270 floor would leave money on the table. */}
         {absorbed ? <Contribution value={out.unglazed.contributionPerKg} fmt={lkr} /> : lkr(out.unglazed.rackRate)}
       </td>
-      <td className={cn(tdBase, 'border-l')}>{lkr(out.glazed.finalCost)}</td>
+      <td className={cn(tdBase, 'border-l')}>
+        {noGlaze ? <NotSold why="Fresh product carries no glaze" /> : lkr(out.glazed.finalCost)}
+      </td>
       <td className={tdBase}>
-        {absorbed ? <Contribution value={out.glazed.contributionPerKg} fmt={lkr} /> : lkr(out.glazed.rackRate)}
+        {noGlaze ? (
+          <NotSold why="Fresh product carries no glaze" />
+        ) : absorbed ? (
+          <Contribution value={out.glazed.contributionPerKg} fmt={lkr} />
+        ) : (
+          lkr(out.glazed.rackRate)
+        )}
       </td>
     </>
   );
 }
 
-function ExportCells({ out, absorbed }: { out: ExportOutput; absorbed: boolean }) {
+function ExportCells({ out, absorbed, form }: { out: ExportOutput; absorbed: boolean; form: CostProductForm }) {
+  const freshOnly = form === 'fresh';
+  const frozenOnly = form === 'frozen';
+  const FROZEN = 'This SKU is fresh only';
+  const FRESH = 'This SKU is frozen only';
+
   return (
     <>
-      <td className={cn(tdBase, 'border-l font-semibold')}>{usd(out.frozenPlain.finalCost)}</td>
-      <td className={tdBase}>
-        {absorbed ? <Contribution value={out.frozenPlain.contributionPerKg} fmt={usd} /> : usd(out.frozenPlain.fob)}
+      <td className={cn(tdBase, 'border-l font-semibold')}>
+        {freshOnly ? <NotSold why={FROZEN} /> : usd(out.frozenPlain.finalCost)}
       </td>
-      <td className={tdBase}>{usd(out.frozenPlain.cif)}</td>
-      <td className={tdBase}>{usd(out.frozenPlain.distributorT3)}</td>
-      <td className={cn(tdBase, 'border-l')}>{usd(out.frozenGlazed.fob)}</td>
-      <td className={tdBase}>{usd(out.frozenGlazed.cif)}</td>
-      <td className={cn(tdBase, 'border-l')}>{usd(out.fresh.fob)}</td>
-      <td className={tdBase}>{usd(out.fresh.cif)}</td>
-      <td className={tdBase}>{usd(out.fresh.distributorT3)}</td>
+      <td className={tdBase}>
+        {freshOnly ? (
+          <NotSold why={FROZEN} />
+        ) : absorbed ? (
+          <Contribution value={out.frozenPlain.contributionPerKg} fmt={usd} />
+        ) : (
+          usd(out.frozenPlain.fob)
+        )}
+      </td>
+      <td className={tdBase}>{freshOnly ? <NotSold why={FROZEN} /> : usd(out.frozenPlain.cif)}</td>
+      <td className={tdBase}>{freshOnly ? <NotSold why={FROZEN} /> : usd(out.frozenPlain.distributorT3)}</td>
+
+      <td className={cn(tdBase, 'border-l')}>
+        {freshOnly ? <NotSold why="Fresh product carries no glaze" /> : usd(out.frozenGlazed.fob)}
+      </td>
+      <td className={tdBase}>
+        {freshOnly ? <NotSold why="Fresh product carries no glaze" /> : usd(out.frozenGlazed.cif)}
+      </td>
+
+      <td className={cn(tdBase, 'border-l')}>{frozenOnly ? <NotSold why={FRESH} /> : usd(out.fresh.fob)}</td>
+      <td className={tdBase}>{frozenOnly ? <NotSold why={FRESH} /> : usd(out.fresh.cif)}</td>
+      <td className={tdBase}>{frozenOnly ? <NotSold why={FRESH} /> : usd(out.fresh.distributorT3)}</td>
     </>
   );
 }
