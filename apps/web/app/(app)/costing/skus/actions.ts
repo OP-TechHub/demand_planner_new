@@ -52,6 +52,19 @@ export async function saveCostSku(_prev: SkuFormState, fd: FormData): Promise<Sk
   }
   if (glazePct == null || glazePct < 0) return { error: 'Glaze % must be 0 or more.', ok: false };
 
+  // Glaze is added ice, so a fresh product cannot carry any. Caught here as well
+  // as by a check constraint, so the message names the fix rather than leaking
+  // a constraint name.
+  const productForm = String(fd.get('product_form') ?? 'both');
+  if (productForm === 'fresh' && glazePct > 0) {
+    return { error: 'Fresh product can’t carry glaze — glaze is added ice. Set glaze to 0, or make this frozen.', ok: false };
+  }
+
+  // "Other…" in the category dropdown reveals a free-text box; prefer it when
+  // it has been filled in.
+  const categoryOther = String(fd.get('category_other') ?? '').trim();
+  const category = categoryOther || String(fd.get('category') ?? '').trim();
+
   const numeric = {
     marinade_usd_per_kg: requiredNumber(fd, 'marinade_usd_per_kg') ?? 0,
     process_usd_per_kg: requiredNumber(fd, 'process_usd_per_kg') ?? 0,
@@ -79,7 +92,9 @@ export async function saveCostSku(_prev: SkuFormState, fd: FormData): Promise<Sk
   const payload = {
     name,
     status: String(fd.get('status') ?? 'active'),
-    category: String(fd.get('category') ?? '').trim(),
+    category,
+    product_form: productForm,
+    market_scope: String(fd.get('market_scope') ?? 'both'),
     glaze_pct: glazePct,
     base_yield: baseYield,
     pct_fish: pctFish,
@@ -182,6 +197,9 @@ function friendly(message: string): string {
   const m = message.toLowerCase();
   if (m.includes('cost_skus_split_totals_100')) {
     return '% fish + % marinade must total 100%.';
+  }
+  if (m.includes('cost_skus_fresh_has_no_glaze')) {
+    return 'Fresh product can’t carry glaze — glaze is added ice.';
   }
   if (m.includes('duplicate') || m.includes('unique')) {
     return 'A SKU with that name already exists.';

@@ -475,6 +475,10 @@ create policy cost_destinations_write on demand_planner.cost_destinations for al
   with check (org_id = demand_planner.current_org_id() and demand_planner.can_admin_costing());
 
 -- --- SKUs: you own what you make ------------------------------------------
+-- NOTE: these three policies are ALSO defined in 20260824000004. This file was
+-- edited after it had already been applied somewhere, which does not reach a
+-- database that already ran it — hence the forward migration. Keep the two in
+-- step, and make future policy changes there, not here.
 -- Anyone may add a SKU — being unable to cost a product because it isn't on an
 -- admin-controlled list would contradict "anyone can do costing". But a recipe
 -- everyone else depends on must not be quietly altered by someone else, so
