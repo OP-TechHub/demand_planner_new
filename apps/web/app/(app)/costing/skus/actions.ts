@@ -89,12 +89,38 @@ export async function saveCostSku(_prev: SkuFormState, fd: FormData): Promise<Sk
     }
   }
 
+  // A SKU priced on a target needs a target in the currency its market uses.
+  // Checked here as well as by a constraint so the message says which box.
+  const pricingMode = String(fd.get('pricing_mode') ?? 'margin');
+  const marketScope = String(fd.get('market_scope') ?? 'both');
+  const targetLkr = optionalNumber(fd, 'market_price_lkr');
+  const targetUsd = optionalNumber(fd, 'market_price_usd');
+  if (pricingMode === 'target') {
+    const needsLkr = marketScope === 'domestic' || marketScope === 'both';
+    const needsUsd = marketScope === 'export' || marketScope === 'both';
+    const hasLkr = typeof targetLkr === 'number' && targetLkr > 0;
+    const hasUsd = typeof targetUsd === 'number' && targetUsd > 0;
+    if (!(needsLkr && hasLkr) && !(needsUsd && hasUsd)) {
+      return {
+        error:
+          marketScope === 'export'
+            ? 'Pricing on a target needs an export target price in USD.'
+            : marketScope === 'domestic'
+              ? 'Pricing on a target needs a domestic target price in LKR.'
+              : 'Pricing on a target needs a target price — LKR for domestic, USD for export.',
+        ok: false,
+      };
+    }
+  }
+
   const payload = {
     name,
+    customer: String(fd.get('customer') ?? '').trim(),
     status: String(fd.get('status') ?? 'active'),
     category,
     product_form: productForm,
-    market_scope: String(fd.get('market_scope') ?? 'both'),
+    market_scope: marketScope,
+    pricing_mode: pricingMode,
     glaze_pct: glazePct,
     base_yield: baseYield,
     pct_fish: pctFish,
@@ -102,8 +128,8 @@ export async function saveCostSku(_prev: SkuFormState, fd: FormData): Promise<Sk
     ...numeric,
     pack_size: String(fd.get('pack_size') ?? '').trim() || null,
     raw_material_basis: String(fd.get('raw_material_basis') ?? 'full_fish'),
-    market_price_lkr: optionalNumber(fd, 'market_price_lkr') ?? null,
-    market_price_usd: optionalNumber(fd, 'market_price_usd') ?? null,
+    market_price_lkr: targetLkr ?? null,
+    market_price_usd: targetUsd ?? null,
     ...Object.fromEntries(Object.entries(overrides).map(([k, v]) => [k, v === undefined ? null : v])),
   };
 
@@ -197,6 +223,9 @@ function friendly(message: string): string {
   const m = message.toLowerCase();
   if (m.includes('cost_skus_split_totals_100')) {
     return '% fish + % marinade must total 100%.';
+  }
+  if (m.includes('cost_skus_target_needs_a_price')) {
+    return 'Pricing on a target needs a target price for the market this SKU sells in.';
   }
   if (m.includes('cost_skus_fresh_has_no_glaze')) {
     return 'Fresh product can’t carry glaze — glaze is added ice.';

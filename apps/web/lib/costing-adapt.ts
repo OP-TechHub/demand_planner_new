@@ -144,7 +144,12 @@ export function toSku(row: CostSkuRow, market: CostMarket, bucketYields?: Record
     packingUsdPerKg: row.packing_usd_per_kg,
     packSize: row.pack_size,
     rawMaterialBasis: row.raw_material_basis,
+    // One number, two readings: what the market bears (drives by-product
+    // contribution) and what we intend to charge (the target). Which one it
+    // acts as is decided by pricing_mode, not by a second column.
     marketPrice: domestic ? row.market_price_lkr : row.market_price_usd,
+    pricingMode: row.pricing_mode,
+    targetPrice: domestic ? row.market_price_lkr : row.market_price_usd,
     overrides: {
       rackMarginPct: row.override_rack_margin_pct ?? undefined,
       fobMarginPct: row.override_fob_margin_pct ?? undefined,

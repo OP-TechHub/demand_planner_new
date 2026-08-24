@@ -149,11 +149,39 @@ function contribution(marketPrice: number | null | undefined, finalCost: number)
   return marketPrice == null ? null : marketPrice - finalCost;
 }
 
-function domesticState(finalCost: number, rackMarginPct: number, marketPrice: number | null | undefined): DomesticState {
+/**
+ * The price to actually use, and the margin it implies.
+ *
+ * A target only applies when the SKU is in target mode AND a usable figure is
+ * set: a blank or zero target must fall back to cost-plus rather than pricing
+ * the product at nothing.
+ */
+function resolvePrice(sku: CostSku, costPlusPrice: number, finalCost: number) {
+  const useTarget =
+    sku.pricingMode === 'target' && sku.targetPrice != null && sku.targetPrice > 0;
+  const sellingPrice = useTarget ? sku.targetPrice! : costPlusPrice;
+  return {
+    sellingPrice,
+    // Gross-margin basis, matching how rack and FOB margins are defined.
+    // Goes negative when the target sits below cost — which is the point of
+    // asking, so it is reported rather than clamped.
+    marginPct: sellingPrice > 0 ? (sellingPrice - finalCost) / sellingPrice : null,
+  };
+}
+
+function domesticState(
+  finalCost: number,
+  rackMarginPct: number,
+  sku: CostSku
+): DomesticState {
+  const rackRate = rackMarginPct < 1 ? finalCost / (1 - rackMarginPct) : 0;
+  const { sellingPrice, marginPct } = resolvePrice(sku, rackRate, finalCost);
   return {
     finalCost,
-    rackRate: rackMarginPct < 1 ? finalCost / (1 - rackMarginPct) : 0,
-    contributionPerKg: contribution(marketPrice, finalCost),
+    rackRate,
+    sellingPrice,
+    marginPct,
+    contributionPerKg: contribution(sku.marketPrice, finalCost),
   };
 }
 
@@ -167,13 +195,19 @@ function exportState(
   const fobMargin = sku.overrides?.fobMarginPct ?? m.fobPct;
 
   const fob = fobMargin < 1 ? finalCost / (1 - fobMargin) : 0;
-  const cif = fob + freightPerKg;
+  const { sellingPrice, marginPct } = resolvePrice(sku, fob, finalCost);
+
+  // The chain builds on the price actually charged, so a target FOB carries
+  // through to what the importer and distributor pay.
+  const cif = sellingPrice + freightPerKg;
   const importerPrice = cif * (1 + m.importerClearingPct) * (1 + m.importerMarkupPct);
   const distributorT3 = importerPrice * (1 + m.distributorMarkupPct);
 
   return {
     finalCost,
     fob,
+    sellingPrice,
+    marginPct,
     cif,
     importerPrice,
     distributorT3,
@@ -209,8 +243,8 @@ export function computeCost(input: CostInput): CostResult {
       market: 'domestic',
       currency: 'LKR',
       chain,
-      unglazed: domesticState(chain.finalCost, rackMargin, sku.marketPrice),
-      glazed: domesticState(glazed, rackMargin, sku.marketPrice),
+      unglazed: domesticState(chain.finalCost, rackMargin, sku),
+      glazed: domesticState(glazed, rackMargin, sku),
     };
     return { ok: true, value: { ...common, result } };
   }

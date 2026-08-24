@@ -472,7 +472,7 @@ function DomesticCells({ out, absorbed, form }: { out: DomesticOutput; absorbed:
       <td className={tdBase}>
         {/* Absorbed by-products are priced on contribution, not cost-plus: a 40%
             rack rate on a LKR 270 floor would leave money on the table. */}
-        {absorbed ? <Contribution value={out.unglazed.contributionPerKg} fmt={lkr} /> : lkr(out.unglazed.rackRate)}
+        {absorbed ? <Contribution value={out.unglazed.contributionPerKg} fmt={lkr} /> : lkr(out.unglazed.sellingPrice)}
       </td>
       <td className={cn(tdBase, 'border-l')}>
         {noGlaze ? <NotSold why="Fresh product carries no glaze" /> : lkr(out.glazed.finalCost)}
@@ -483,7 +483,7 @@ function DomesticCells({ out, absorbed, form }: { out: DomesticOutput; absorbed:
         ) : absorbed ? (
           <Contribution value={out.glazed.contributionPerKg} fmt={lkr} />
         ) : (
-          lkr(out.glazed.rackRate)
+          lkr(out.glazed.sellingPrice)
         )}
       </td>
     </>
@@ -507,20 +507,20 @@ function ExportCells({ out, absorbed, form }: { out: ExportOutput; absorbed: boo
         ) : absorbed ? (
           <Contribution value={out.frozenPlain.contributionPerKg} fmt={usd} />
         ) : (
-          usd(out.frozenPlain.fob)
+          usd(out.frozenPlain.sellingPrice)
         )}
       </td>
       <td className={tdBase}>{freshOnly ? <NotSold why={FROZEN} /> : usd(out.frozenPlain.cif)}</td>
       <td className={tdBase}>{freshOnly ? <NotSold why={FROZEN} /> : usd(out.frozenPlain.distributorT3)}</td>
 
       <td className={cn(tdBase, 'border-l')}>
-        {freshOnly ? <NotSold why="Fresh product carries no glaze" /> : usd(out.frozenGlazed.fob)}
+        {freshOnly ? <NotSold why="Fresh product carries no glaze" /> : usd(out.frozenGlazed.sellingPrice)}
       </td>
       <td className={tdBase}>
         {freshOnly ? <NotSold why="Fresh product carries no glaze" /> : usd(out.frozenGlazed.cif)}
       </td>
 
-      <td className={cn(tdBase, 'border-l')}>{frozenOnly ? <NotSold why={FRESH} /> : usd(out.fresh.fob)}</td>
+      <td className={cn(tdBase, 'border-l')}>{frozenOnly ? <NotSold why={FRESH} /> : usd(out.fresh.sellingPrice)}</td>
       <td className={tdBase}>{frozenOnly ? <NotSold why={FRESH} /> : usd(out.fresh.cif)}</td>
       <td className={tdBase}>{frozenOnly ? <NotSold why={FRESH} /> : usd(out.fresh.distributorT3)}</td>
     </>
@@ -665,9 +665,9 @@ function csvMatrix(rows: Row[], domestic: boolean, showDestination: boolean): (s
         ...base,
         ...nums,
         round(o.unglazed.finalCost),
-        round(o.unglazed.rackRate),
+        round(o.unglazed.sellingPrice),
         round(o.glazed.finalCost),
-        round(o.glazed.rackRate),
+        round(o.glazed.sellingPrice),
         round(o.unglazed.contributionPerKg),
       ];
     }
@@ -676,15 +676,15 @@ function csvMatrix(rows: Row[], domestic: boolean, showDestination: boolean): (s
       ...base,
       ...nums,
       round(o.frozenPlain.finalCost),
-      round(o.frozenPlain.fob),
+      round(o.frozenPlain.sellingPrice),
       round(o.frozenPlain.cif),
       round(o.frozenPlain.importerPrice),
       round(o.frozenPlain.distributorT3),
       round(o.frozenGlazed.finalCost),
-      round(o.frozenGlazed.fob),
+      round(o.frozenGlazed.sellingPrice),
       round(o.frozenGlazed.cif),
       round(o.frozenGlazed.distributorT3),
-      round(o.fresh.fob),
+      round(o.fresh.sellingPrice),
       round(o.fresh.cif),
       round(o.fresh.distributorT3),
       round(o.frozenPlain.contributionPerKg),

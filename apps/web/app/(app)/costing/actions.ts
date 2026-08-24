@@ -143,7 +143,8 @@ export async function saveCosting(input: SaveCostingInput): Promise<{ error: str
             final_cost: s.finalCost,
             // Cost-plus for a normal SKU; what the market bears for a by-product,
             // whose cost is a floor rather than a base for margin (§7).
-            selling_price: absorbed ? marketPrice : s.rackRate,
+            // sellingPrice already resolves target-vs-cost-plus in the engine.
+            selling_price: absorbed ? marketPrice : s.sellingPrice,
             contribution_per_kg: s.contributionPerKg,
             outputs: { ...s, chain: out.chain, wholeFish: result.value.wholeFish },
             sort_order: (sort += 10),
@@ -160,7 +161,7 @@ export async function saveCosting(input: SaveCostingInput): Promise<{ error: str
             ...common,
             state,
             final_cost: s.finalCost,
-            selling_price: absorbed ? marketPrice : s.fob,
+            selling_price: absorbed ? marketPrice : s.sellingPrice,
             contribution_per_kg: s.contributionPerKg,
             outputs: { ...s, chain: out.chain, destination: out.destination, wholeFish: result.value.wholeFish },
             sort_order: (sort += 10),
