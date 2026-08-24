@@ -889,14 +889,68 @@ function SkuDialog({
         </fieldset>
 
         <div className="grid gap-3 sm:grid-cols-3">
-          <Field label="Yield" name="base_yield" defaultValue={src?.base_yield ?? 0.45} step="0.01" hint="0.45 = 45%" />
-          <Field label="Glaze %" name="glaze_pct" defaultValue={src?.glaze_pct ?? 0} step="0.01" hint="0.2 = 20% added ice" />
-          <Field label="Pack size" name="pack_size" defaultValue={src?.pack_size ?? ''} type="text" hint="optional" />
-          <Field label="% fish" name="pct_fish" defaultValue={src?.pct_fish ?? 1} step="0.01" hint="must total 100% with marinade" />
-          <Field label="% marinade" name="pct_marinade" defaultValue={src?.pct_marinade ?? 0} step="0.01" />
-          <Field label="Marinade $/kg" name="marinade_usd_per_kg" defaultValue={src?.marinade_usd_per_kg ?? 0} step="0.01" />
-          <Field label="Process $/kg" name="process_usd_per_kg" defaultValue={src?.process_usd_per_kg ?? 0} step="0.01" />
-          <Field label="Packing $/kg" name="packing_usd_per_kg" defaultValue={src?.packing_usd_per_kg ?? 0} step="0.01" />
+          {/* Fractions, not percentages: 0.45 is 45%. Entered this way because
+              the engine and the workbook both work in fractions, and converting
+              at the edge is where off-by-100 errors come from. */}
+          <Field
+            label="Yield"
+            name="base_yield"
+            defaultValue={src?.base_yield ?? 0.45}
+            step="0.01"
+            hint="fraction — 0.45 = 45% of whole fish"
+          />
+          <Field
+            label="Glaze"
+            name="glaze_pct"
+            defaultValue={src?.glaze_pct ?? 0}
+            step="0.01"
+            hint="fraction — 0.2 = 20% added ice. Frozen only"
+          />
+          <Field
+            label="Pack size"
+            name="pack_size"
+            defaultValue={src?.pack_size ?? ''}
+            type="text"
+            // Deliberately not used in any calculation — all costs are per kg.
+            hint="label only, e.g. 500g or 3kg carton — not used in costing"
+          />
+          <Field
+            label="% fish"
+            name="pct_fish"
+            defaultValue={src?.pct_fish ?? 1}
+            step="0.01"
+            hint="fraction — 1 = 100%. Must total 1 with marinade"
+          />
+          <Field
+            label="% marinade"
+            name="pct_marinade"
+            defaultValue={src?.pct_marinade ?? 0}
+            step="0.01"
+            hint="fraction — 0.18 = 18% of finished weight"
+          />
+          {/* Always USD, in BOTH markets — domestic converts at the FX rate.
+              Surprising enough to say on every field rather than once. */}
+          <Field
+            label="Marinade cost"
+            name="marinade_usd_per_kg"
+            defaultValue={src?.marinade_usd_per_kg ?? 0}
+            step="0.01"
+            hint="USD per kg of marinade"
+          />
+          <Field
+            label="Processing cost"
+            name="process_usd_per_kg"
+            defaultValue={src?.process_usd_per_kg ?? 0}
+            step="0.01"
+            hint={`USD per kg finished — LKR at FX ${version.fx_rate}`}
+          />
+          <Field
+            label="Packing cost"
+            name="packing_usd_per_kg"
+            defaultValue={src?.packing_usd_per_kg ?? 0}
+            step="0.01"
+            hint={`USD per kg finished — LKR at FX ${version.fx_rate}`}
+          />
         </div>
 
         <fieldset className={cn('rounded-md border p-3', (absorbed || pricingMode === 'target') && 'border-primary/40 bg-primary/5')}>
