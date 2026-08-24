@@ -190,6 +190,102 @@ export async function saveCosting(input: SaveCostingInput): Promise<{ error: str
   };
 }
 
+/**
+ * Copy someone else's costing so you can work from their numbers.
+ *
+ * The alternative to letting people edit each other's costings: a costing is a
+ * record of what was quoted, so overwriting one destroys the answer to "who
+ * sent this price and on what basis". Duplicating gives you their figures
+ * without touching their record (Decisions §5).
+ *
+ * The copy keeps the ORIGINAL pinned assumptions version and the original
+ * resolved lines — it is a copy, not a reprice. Use "reprice at current
+ * assumptions" on the new one if you want today's numbers.
+ */
+export async function duplicateCosting(id: string): Promise<{ error: string | null; id?: string }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: 'Your session expired. Sign in again.' };
+
+  const [{ data: sourceRow }, { data: destRows }, { data: lineRows }] = await Promise.all([
+    supabase.from('cost_costings').select('*').eq('id', id).is('deleted_at', null).maybeSingle(),
+    supabase.from('cost_costing_destinations').select('*').eq('costing_id', id).order('sort_order'),
+    supabase.from('cost_costing_lines').select('*').eq('costing_id', id).order('sort_order'),
+  ]);
+  if (!sourceRow) return { error: 'That costing no longer exists.' };
+
+  const source = sourceRow as {
+    org_id: string;
+    name: string;
+    notes: string;
+    market: string;
+    version_id: string;
+    assumption_overrides: Record<string, number>;
+    bucket_id: string | null;
+    destination_mode: string;
+  };
+
+  const { data: copy, error } = await supabase
+    .from('cost_costings')
+    .insert({
+      org_id: source.org_id,
+      name: `${source.name} (copy)`,
+      notes: source.notes,
+      market: source.market,
+      version_id: source.version_id,
+      assumption_overrides: source.assumption_overrides,
+      bucket_id: source.bucket_id,
+      destination_mode: source.destination_mode,
+      created_by: user.id,
+      updated_by: user.id,
+    })
+    .select('id')
+    .single();
+  if (error || !copy) return { error: error?.message ?? 'Could not copy the costing.' };
+  const newId = (copy as { id: string }).id;
+
+  const dests = (destRows ?? []) as Record<string, unknown>[];
+  if (dests.length) {
+    const { error: destError } = await supabase.from('cost_costing_destinations').insert(
+      dests.map((d) => ({
+        costing_id: newId,
+        destination_id: d.destination_id,
+        destination_name: d.destination_name,
+        is_primary: d.is_primary,
+        sort_order: d.sort_order,
+      }))
+    );
+    if (destError) return { error: destError.message };
+  }
+
+  const lines = (lineRows ?? []) as Record<string, unknown>[];
+  for (let i = 0; i < lines.length; i += 500) {
+    const { error: lineError } = await supabase.from('cost_costing_lines').insert(
+      lines.slice(i, i + 500).map((l) => ({
+        costing_id: newId,
+        sku_id: l.sku_id,
+        sku_name: l.sku_name,
+        destination_id: l.destination_id,
+        destination_name: l.destination_name,
+        state: l.state,
+        currency: l.currency,
+        final_cost: l.final_cost,
+        selling_price: l.selling_price,
+        contribution_per_kg: l.contribution_per_kg,
+        inputs: l.inputs,
+        outputs: l.outputs,
+        sort_order: l.sort_order,
+      }))
+    );
+    if (lineError) return { error: lineError.message };
+  }
+
+  revalidatePath('/costing/saved');
+  return { error: null, id: newId };
+}
+
 /** Soft-delete a costing. RLS allows this only for its creator or an admin. */
 export async function deleteCosting(id: string): Promise<{ error: string | null }> {
   const supabase = await createClient();

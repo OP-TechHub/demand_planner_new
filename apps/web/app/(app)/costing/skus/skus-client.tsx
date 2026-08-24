@@ -3,7 +3,7 @@
 import { useActionState, useEffect, useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Lock, Pencil, Plus } from 'lucide-react';
-import type { CostSizeBucket, CostSkuRow } from '@oceanpick/shared';
+import type { CostAssumptionVersion, CostSizeBucket, CostSkuRow } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 import { ScrollX } from '@/components/ui/scroll-x';
 import { archiveCostSku, saveCostSku, saveSkuBucketYield, type SkuFormState } from './actions';
@@ -15,12 +15,16 @@ export function SkusClient({
   buckets,
   yields,
   orgId,
+  version,
+  currentUserId,
   isAdmin,
 }: {
   skus: CostSkuRow[];
   buckets: CostSizeBucket[];
   yields: YieldMap;
   orgId: string;
+  version: CostAssumptionVersion;
+  currentUserId: string | null;
   isAdmin: boolean;
 }) {
   const [editing, setEditing] = useState<CostSkuRow | null | undefined>(undefined);
@@ -32,6 +36,13 @@ export function SkusClient({
     return q ? skus.filter((s) => s.name.toLowerCase().includes(q) || s.category.toLowerCase().includes(q)) : skus;
   }, [skus, query]);
 
+  /**
+   * You own what you make. Admins may edit any recipe; everyone else may edit
+   * the ones they created. Mirrors the DB policy exactly, so the UI never
+   * offers an edit the database will reject.
+   */
+  const canEdit = (s: CostSkuRow) => isAdmin || (currentUserId != null && s.created_by === currentUserId);
+
   return (
     <div className="space-y-4">
       <header className="flex flex-wrap items-start justify-between gap-3">
@@ -42,17 +53,16 @@ export function SkusClient({
             everywhere — domestic converts them at the FX rate.
           </p>
         </div>
-        {isAdmin && (
-          <button onClick={() => setEditing(null)} className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground">
-            <Plus className="h-3.5 w-3.5" /> New SKU
-          </button>
-        )}
+        <button onClick={() => setEditing(null)} className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground">
+          <Plus className="h-3.5 w-3.5" /> New SKU
+        </button>
       </header>
 
       {!isAdmin && (
         <p className="rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
           <Lock className="mr-1.5 inline h-3.5 w-3.5" />
-          The SKU list is admin-maintained, so everyone costs off the same recipes.
+          Add any SKU you need and edit the ones you added. The shared recipes below are maintained
+          by an admin, so nobody&apos;s costings shift underneath them.
         </p>
       )}
 
@@ -76,13 +86,13 @@ export function SkusClient({
       </div>
 
       {tab === 'recipe' ? (
-        <RecipeTable skus={visible} isAdmin={isAdmin} onEdit={setEditing} />
+        <RecipeTable skus={visible} canEdit={canEdit} onEdit={setEditing} />
       ) : (
-        <YieldTable skus={visible} buckets={buckets} yields={yields} isAdmin={isAdmin} />
+        <YieldTable skus={visible} buckets={buckets} yields={yields} canEdit={canEdit} />
       )}
 
       {editing !== undefined && (
-        <SkuDialog sku={editing} orgId={orgId} onClose={() => setEditing(undefined)} />
+        <SkuDialog sku={editing} orgId={orgId} version={version} onClose={() => setEditing(undefined)} />
       )}
     </div>
   );
@@ -92,11 +102,11 @@ export function SkusClient({
 
 function RecipeTable({
   skus,
-  isAdmin,
+  canEdit,
   onEdit,
 }: {
   skus: CostSkuRow[];
-  isAdmin: boolean;
+  canEdit: (s: CostSkuRow) => boolean;
   onEdit: (s: CostSkuRow) => void;
 }) {
   return (
@@ -160,7 +170,7 @@ function RecipeTable({
                   {s.market_price_usd != null ? s.market_price_usd.toFixed(2) : absorbed ? 'set' : '—'}
                 </td>
                 <td className={td}>
-                  {isAdmin && (
+                  {canEdit(s) && (
                     <button onClick={() => onEdit(s)} className="rounded p-1 hover:bg-muted" aria-label={`Edit ${s.name}`}>
                       <Pencil className="h-3.5 w-3.5" />
                     </button>
@@ -184,12 +194,12 @@ function YieldTable({
   skus,
   buckets,
   yields,
-  isAdmin,
+  canEdit,
 }: {
   skus: CostSkuRow[];
   buckets: CostSizeBucket[];
   yields: YieldMap;
-  isAdmin: boolean;
+  canEdit: (s: CostSkuRow) => boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -235,7 +245,7 @@ function YieldTable({
                     <td key={b.id} className={td}>
                       <input
                         type="number" step="0.01" min="0.01" max="1" defaultValue={v}
-                        disabled={!isAdmin || pending}
+                        disabled={!canEdit(s) || pending}
                         onBlur={(e) => {
                           const next = Number(e.target.value);
                           if (Number.isFinite(next) && Math.abs(next - v) > 1e-9) save(s.id, b.id, next);
@@ -256,11 +266,24 @@ function YieldTable({
 
 // ---------------------------------------------------------------------------
 
-function SkuDialog({ sku, orgId, onClose }: { sku: CostSkuRow | null; orgId: string; onClose: () => void }) {
+function SkuDialog({
+  sku,
+  orgId,
+  version,
+  onClose,
+}: {
+  sku: CostSkuRow | null;
+  orgId: string;
+  version: CostAssumptionVersion;
+  onClose: () => void;
+}) {
   const router = useRouter();
   const [state, action, pending] = useActionState<SkuFormState, FormData>(saveCostSku, { error: null, ok: false });
   const [basis, setBasis] = useState(sku?.raw_material_basis ?? 'full_fish');
-  const [showOverrides, setShowOverrides] = useState(sku ? hasOverride(sku) : false);
+  // Open by default for a new SKU: the inherited values are the point of the
+  // section, so they should be on screen without a click. For an existing SKU,
+  // open only if it actually overrides something.
+  const [showOverrides, setShowOverrides] = useState(sku ? hasOverride(sku) : true);
 
   useEffect(() => {
     if (state.ok) {
@@ -334,19 +357,65 @@ function SkuDialog({ sku, orgId, onClose }: { sku: CostSkuRow | null; orgId: str
           </div>
         </fieldset>
 
+        {/* Shown expanded for a new SKU so the inherited figures are visible
+            immediately rather than hidden behind a disclosure. */}
         <div className="rounded-md border p-3">
           <button type="button" onClick={() => setShowOverrides((v) => !v)} className="text-xs font-semibold">
-            {showOverrides ? '▾' : '▸'} Per-SKU overrides
-            <span className="ml-1.5 font-normal text-muted-foreground">blank inherits the global value</span>
+            {showOverrides ? '▾' : '▸'} Margins and adders
+            <span className="ml-1.5 font-normal text-muted-foreground">
+              inherited from assumptions v{version.version_no} — override any of them here
+            </span>
           </button>
+
           {showOverrides && (
-            <div className="mt-3 grid gap-3 sm:grid-cols-3">
-              <Field label="Rack margin" name="override_rack_margin_pct" defaultValue={sku?.override_rack_margin_pct ?? ''} step="0.01" />
-              <Field label="FOB margin" name="override_fob_margin_pct" defaultValue={sku?.override_fob_margin_pct ?? ''} step="0.01" />
-              <Field label="Transport LKR/kg" name="override_transport_lkr" defaultValue={sku?.override_transport_lkr ?? ''} step="0.01" />
-              <Field label="Cold-hold LKR/kg" name="override_cold_hold_lkr" defaultValue={sku?.override_cold_hold_lkr ?? ''} step="0.01" />
-              <Field label="Freight to port $/kg" name="override_freight_to_port_usd" defaultValue={sku?.override_freight_to_port_usd ?? ''} step="0.01" />
-              <Field label="Cold chain $/kg" name="override_cold_chain_usd" defaultValue={sku?.override_cold_chain_usd ?? ''} step="0.01" />
+            <div className="mt-3 space-y-3">
+              <p className="text-[11px] text-muted-foreground">
+                Each box shows the company value in grey. Leave it empty and this SKU follows that
+                value — including when an admin changes it later. Type a number and this SKU stops
+                following it.
+              </p>
+
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Domestic</div>
+                <div className="mt-1.5 grid gap-3 sm:grid-cols-3">
+                  <OverrideField
+                    label="Rack margin" name="override_rack_margin_pct"
+                    current={sku?.override_rack_margin_pct ?? null}
+                    inherited={version.rack_margin_pct} step="0.01" kind="pct"
+                  />
+                  <OverrideField
+                    label="Transport" name="override_transport_lkr"
+                    current={sku?.override_transport_lkr ?? null}
+                    inherited={version.domestic_transport_lkr} step="0.01" kind="lkr"
+                  />
+                  <OverrideField
+                    label="Cold holding" name="override_cold_hold_lkr"
+                    current={sku?.override_cold_hold_lkr ?? null}
+                    inherited={version.domestic_cold_hold_lkr} step="0.01" kind="lkr"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Export</div>
+                <div className="mt-1.5 grid gap-3 sm:grid-cols-3">
+                  <OverrideField
+                    label="FOB margin" name="override_fob_margin_pct"
+                    current={sku?.override_fob_margin_pct ?? null}
+                    inherited={version.fob_margin_pct} step="0.01" kind="pct"
+                  />
+                  <OverrideField
+                    label="Freight to port" name="override_freight_to_port_usd"
+                    current={sku?.override_freight_to_port_usd ?? null}
+                    inherited={version.export_freight_to_port_usd} step="0.01" kind="usd"
+                  />
+                  <OverrideField
+                    label="Cold chain" name="override_cold_chain_usd"
+                    current={sku?.override_cold_chain_usd ?? null}
+                    inherited={version.export_cold_chain_usd} step="0.01" kind="usd"
+                  />
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -391,6 +460,70 @@ function ArchiveButton({ id, onDone }: { id: string; onDone: () => void }) {
 }
 
 // ---------------------------------------------------------------------------
+
+/**
+ * An assumption this SKU may override.
+ *
+ * The inherited figure is shown as a placeholder, NOT prefilled. Prefilling
+ * would post a value for every field, turning each new SKU into one that
+ * overrides everything — so a later change to the company assumptions would
+ * silently stop reaching it. Blank has to keep meaning "follow the company
+ * value", which is the whole point of an inherited default (Decisions §8).
+ */
+function OverrideField({
+  label,
+  name,
+  current,
+  inherited,
+  step,
+  kind,
+}: {
+  label: string;
+  name: string;
+  current: number | null;
+  inherited: number;
+  step: string;
+  kind: 'pct' | 'lkr' | 'usd';
+}) {
+  const [value, setValue] = useState(current == null ? '' : String(current));
+  const overriding = value.trim() !== '';
+
+  const show = (n: number) =>
+    kind === 'pct' ? `${n} (${(n * 100).toFixed(0)}%)` : kind === 'lkr' ? `LKR ${n}` : `$${n}`;
+
+  return (
+    <label className="block">
+      <span className="text-xs font-medium">{label}</span>
+      <input
+        name={name}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        type="number"
+        step={step}
+        min="0"
+        placeholder={show(inherited)}
+        className={cn(inputCls, 'mt-1 w-full', overriding && 'border-primary bg-primary/5')}
+      />
+      <span className="mt-0.5 block text-[10px] text-muted-foreground">
+        {overriding ? (
+          <>
+            <span className="text-primary">overriding</span> ·{' '}
+            <button type="button" onClick={() => setValue('')} className="underline hover:text-foreground">
+              use {show(inherited)}
+            </button>
+          </>
+        ) : (
+          <>
+            follows {show(inherited)} ·{' '}
+            <button type="button" onClick={() => setValue(String(inherited))} className="underline hover:text-foreground">
+              override
+            </button>
+          </>
+        )}
+      </span>
+    </label>
+  );
+}
 
 function Field({
   label, name, defaultValue, step, hint, type = 'number', className,

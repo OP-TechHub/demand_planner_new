@@ -474,11 +474,34 @@ create policy cost_destinations_write on demand_planner.cost_destinations for al
   using      (org_id = demand_planner.current_org_id() and demand_planner.can_admin_costing())
   with check (org_id = demand_planner.current_org_id() and demand_planner.can_admin_costing());
 
+-- --- SKUs: you own what you make ------------------------------------------
+-- Anyone may add a SKU — being unable to cost a product because it isn't on an
+-- admin-controlled list would contradict "anyone can do costing". But a recipe
+-- everyone else depends on must not be quietly altered by someone else, so
+-- editing is limited to its creator (or an admin). Same rule as costings.
+--
+-- Note the consequence for the seeded 34: they were inserted with no
+-- created_by, so they are admin-editable only. That is the intent — the
+-- workbook's recipes are shared company data, not one person's work.
 create policy cost_skus_read on demand_planner.cost_skus for select
   using (org_id = demand_planner.current_org_id() and demand_planner.can_read_costing());
-create policy cost_skus_write on demand_planner.cost_skus for all
-  using      (org_id = demand_planner.current_org_id() and demand_planner.can_admin_costing())
-  with check (org_id = demand_planner.current_org_id() and demand_planner.can_admin_costing());
+
+create policy cost_skus_insert on demand_planner.cost_skus for insert
+  with check (
+    org_id = demand_planner.current_org_id()
+    and demand_planner.can_read_costing()
+    and created_by = auth.uid()
+  );
+
+create policy cost_skus_update on demand_planner.cost_skus for update
+  using      (org_id = demand_planner.current_org_id()
+              and (created_by = auth.uid() or demand_planner.can_admin_costing()))
+  with check (org_id = demand_planner.current_org_id()
+              and (created_by = auth.uid() or demand_planner.can_admin_costing()));
+
+create policy cost_skus_delete on demand_planner.cost_skus for delete
+  using (org_id = demand_planner.current_org_id()
+         and (created_by = auth.uid() or demand_planner.can_admin_costing()));
 
 -- --- children of a master: inherit the parent's org, same rules -------------
 create policy cost_odc_components_read on demand_planner.cost_odc_components for select
@@ -507,18 +530,22 @@ create policy cost_destination_rates_write on demand_planner.cost_destination_ra
     select 1 from demand_planner.cost_assumption_versions v
     where v.id = version_id and v.org_id = demand_planner.current_org_id()));
 
+-- Yields follow their SKU's ownership: whoever may edit the recipe may set its
+-- per-grade yields.
 create policy cost_sku_bucket_yields_read on demand_planner.cost_sku_bucket_yields for select
   using (exists (
     select 1 from demand_planner.cost_skus s
     where s.id = sku_id and s.org_id = demand_planner.current_org_id()
   ) and demand_planner.can_read_costing());
 create policy cost_sku_bucket_yields_write on demand_planner.cost_sku_bucket_yields for all
-  using      (demand_planner.can_admin_costing() and exists (
+  using      (exists (
     select 1 from demand_planner.cost_skus s
-    where s.id = sku_id and s.org_id = demand_planner.current_org_id()))
-  with check (demand_planner.can_admin_costing() and exists (
+    where s.id = sku_id and s.org_id = demand_planner.current_org_id()
+      and (s.created_by = auth.uid() or demand_planner.can_admin_costing())))
+  with check (exists (
     select 1 from demand_planner.cost_skus s
-    where s.id = sku_id and s.org_id = demand_planner.current_org_id()));
+    where s.id = sku_id and s.org_id = demand_planner.current_org_id()
+      and (s.created_by = auth.uid() or demand_planner.can_admin_costing())));
 
 -- --- costings: anyone creates, everyone reads, only the owner edits ---------
 create policy cost_costings_read on demand_planner.cost_costings for select
