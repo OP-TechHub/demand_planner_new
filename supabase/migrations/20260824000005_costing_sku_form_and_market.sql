@@ -40,3 +40,11 @@ comment on column demand_planner.cost_skus.market_scope is
 alter table demand_planner.cost_skus
   add constraint cost_skus_fresh_has_no_glaze
   check (product_form <> 'fresh' or glaze_pct = 0);
+
+-- PostgREST answers from a cached copy of the schema and normally reloads itself
+-- after DDL, but the reload can lag — and until it happens, writing to a brand
+-- new column fails with:
+--   "Could not find the 'market_scope' column of 'cost_skus' in the schema cache"
+-- which reads like the column is missing when it exists. Ask for the reload
+-- explicitly so applying this migration is enough on its own.
+notify pgrst, 'reload schema';
