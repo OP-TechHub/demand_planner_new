@@ -29,6 +29,18 @@ interface Row {
   result: CostResult;
 }
 
+/**
+ * Who set this SKU's recipe up. The seeded 34 came from the v11 workbook and
+ * have no creator — they are shared company recipes, not one person's work, so
+ * they say so rather than showing a blank that reads as missing data.
+ */
+const COMPANY_RECIPE = 'Company recipe';
+
+function authorOf(sku: CostSkuRow, authors: Record<string, string>): string {
+  if (!sku.created_by) return COMPANY_RECIPE;
+  return authors[sku.created_by] ?? 'Unknown';
+}
+
 export function CostGridClient({
   version,
   odc,
@@ -37,6 +49,7 @@ export function CostGridClient({
   rates,
   skus,
   yields,
+  authors,
   isAdmin,
 }: {
   version: CostAssumptionVersion;
@@ -46,6 +59,7 @@ export function CostGridClient({
   rates: RateMap;
   skus: CostSkuRow[];
   yields: YieldMap;
+  authors: Record<string, string>;
   isAdmin: boolean;
 }) {
   const router = useRouter();
@@ -79,9 +93,15 @@ export function CostGridClient({
         // A SKU can declare itself domestic-only or export-only; 'both' is the
         // default and the seeded behaviour.
         (s.market_scope === 'both' || s.market_scope === market) &&
-        (!q || s.name.toLowerCase().includes(q) || s.category.toLowerCase().includes(q))
+        // Searching by customer is the point of showing it — "what did we quote
+        // Al Rawdah?" is a question the grid should answer directly.
+        (!q ||
+          s.name.toLowerCase().includes(q) ||
+          s.category.toLowerCase().includes(q) ||
+          (s.customer ?? '').toLowerCase().includes(q) ||
+          authorOf(s, authors).toLowerCase().includes(q))
     );
-  }, [skus, showInactive, query, market]);
+  }, [skus, showInactive, query, market, authors]);
 
   /**
    * Every visible row, recomputed whenever an input changes. Domestic has no
@@ -123,7 +143,7 @@ export function CostGridClient({
   function onExport() {
     downloadCsv(
       `costing-${market}-${new Date().toISOString().slice(0, 10)}.csv`,
-      toCsv(csvMatrix(rows, domestic, activeDests.length > 1))
+      toCsv(csvMatrix(rows, domestic, activeDests.length > 1, authors))
     );
   }
 
@@ -186,7 +206,12 @@ export function CostGridClient({
         </p>
       )}
 
-      <Grid rows={rows} domestic={domestic} showDestination={!domestic && activeDests.length > 1} />
+      <Grid
+        rows={rows}
+        domestic={domestic}
+        showDestination={!domestic && activeDests.length > 1}
+        authors={authors}
+      />
 
       <Legend />
 
@@ -276,7 +301,13 @@ function Controls({
         </label>
 
         <label className="flex items-center gap-1.5 text-xs">
-          <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find a SKU…" className={cn(selectCls, 'w-40')} />
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="SKU, customer or person…"
+            className={cn(selectCls, 'w-48')}
+          />
         </label>
 
         <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -329,7 +360,17 @@ function Controls({
 // Grid — the internal sheet, matching the v11 column order (Decisions §10)
 // ---------------------------------------------------------------------------
 
-function Grid({ rows, domestic, showDestination }: { rows: Row[]; domestic: boolean; showDestination: boolean }) {
+function Grid({
+  rows,
+  domestic,
+  showDestination,
+  authors,
+}: {
+  rows: Row[];
+  domestic: boolean;
+  showDestination: boolean;
+  authors: Record<string, string>;
+}) {
   if (rows.length === 0) {
     return (
       <div className="rounded-lg border bg-card p-8 text-center text-sm text-muted-foreground">
@@ -344,6 +385,8 @@ function Grid({ rows, domestic, showDestination }: { rows: Row[]; domestic: bool
         <thead>
           <tr className="border-b bg-muted/40 text-[10px] uppercase tracking-wide text-muted-foreground">
             <th className={cn(thBase, 'sticky left-0 z-10 bg-muted/40 text-left')}>SKU</th>
+            <th className={cn(thBase, 'text-left')}>Customer</th>
+            <th className={cn(thBase, 'text-left')}>Costed by</th>
             {showDestination && <th className={cn(thBase, 'text-left')}>Port</th>}
             <th className={thBase}>Yield</th>
             <th className={thBase}>Whole fish</th>
@@ -383,6 +426,7 @@ function Grid({ rows, domestic, showDestination }: { rows: Row[]; domestic: bool
               row={row}
               domestic={domestic}
               showDestination={showDestination}
+              authors={authors}
             />
           ))}
         </tbody>
@@ -391,11 +435,22 @@ function Grid({ rows, domestic, showDestination }: { rows: Row[]; domestic: bool
   );
 }
 
-function GridRow({ row, domestic, showDestination }: { row: Row; domestic: boolean; showDestination: boolean }) {
+function GridRow({
+  row,
+  domestic,
+  showDestination,
+  authors,
+}: {
+  row: Row;
+  domestic: boolean;
+  showDestination: boolean;
+  authors: Record<string, string>;
+}) {
   const { sku, destination, result } = row;
   const absorbed = sku.raw_material_basis === 'absorbed';
   const inactive = sku.status === 'inactive';
   const span = domestic ? 15 : 20;
+  const author = authorOf(sku, authors);
 
   const nameCell = (
     <th
@@ -411,11 +466,34 @@ function GridRow({ row, domestic, showDestination }: { row: Row; domestic: boole
     </th>
   );
 
+  // Who it is for and who built it. Both live on the SKU rather than the
+  // costing: the recipe is what carries a customer's spec, and the grid is a
+  // live view rather than a saved record (a saved costing stamps its own
+  // author separately, on the Saved page).
+  const identityCells = (
+    <>
+      <td className={cn(tdBase, 'max-w-[160px] truncate text-left')} title={sku.customer || undefined}>
+        {sku.customer ? sku.customer : <span className="text-muted-foreground/50">—</span>}
+      </td>
+      <td
+        className={cn(
+          tdBase,
+          'max-w-[140px] truncate text-left',
+          author === COMPANY_RECIPE && 'text-muted-foreground'
+        )}
+        title={author === COMPANY_RECIPE ? 'Seeded from the v11 workbook — maintained by admins' : author}
+      >
+        {author}
+      </td>
+    </>
+  );
+
   // Decisions §11: a broken split highlights and does NOT calculate.
   if (!result.ok) {
     return (
       <tr className="border-b bg-destructive/5 last:border-0">
         {nameCell}
+        {identityCells}
         <td colSpan={span} className={cn(tdBase, 'text-left text-destructive')}>
           {result.issues.map((i) => i.message).join(' · ')}
         </td>
@@ -429,6 +507,7 @@ function GridRow({ row, domestic, showDestination }: { row: Row; domestic: boole
   return (
     <tr className={cn('border-b last:border-0 hover:bg-muted/30', inactive && 'text-muted-foreground')}>
       {nameCell}
+      {identityCells}
       {showDestination && <td className={cn(tdBase, 'text-left')}>{destination?.name}</td>}
       <td className={tdBase}>{(chain.yieldUsed * 100).toFixed(0)}%</td>
       <td className={cn(tdBase, absorbed && 'text-muted-foreground line-through')}>{money(chain.wholeFish)}</td>
@@ -601,9 +680,16 @@ function SaveDialog({ onCancel, onSave, busy }: { onCancel: () => void; onSave: 
 // CSV — the internal sheet, all intermediates, matching v11 (Decisions §10)
 // ---------------------------------------------------------------------------
 
-function csvMatrix(rows: Row[], domestic: boolean, showDestination: boolean): (string | number | null)[][] {
+function csvMatrix(
+  rows: Row[],
+  domestic: boolean,
+  showDestination: boolean,
+  authors: Record<string, string>
+): (string | number | null)[][] {
   const head = [
     'SKU',
+    'Customer',
+    'Costed by',
     ...(showDestination ? ['Port'] : []),
     'Category',
     'Basis',
@@ -639,6 +725,8 @@ function csvMatrix(rows: Row[], domestic: boolean, showDestination: boolean): (s
   const body = rows.map((r) => {
     const base: (string | number | null)[] = [
       r.sku.name,
+      r.sku.customer ?? '',
+      authorOf(r.sku, authors),
       ...(showDestination ? [r.destination?.name ?? ''] : []),
       r.sku.category,
       r.sku.raw_material_basis === 'absorbed' ? 'by-product (absorbed)' : 'full fish',
