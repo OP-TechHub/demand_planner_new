@@ -276,7 +276,7 @@ export function CostGridClient({
               </div>
 
               <div className="mt-3 max-h-[70vh] overflow-y-auto rounded-md border">
-                <SkuCostSheet {...sheetProps(sheetRow, domestic, version, authors)} />
+                <SkuCostSheet {...sheetProps(sheetRow, version, authors)} />
               </div>
 
               <p className="mt-3 text-xs text-muted-foreground">
@@ -293,7 +293,7 @@ export function CostGridClient({
             as-is by the Word export.
           */}
           <div className="hidden print:block">
-            <SkuCostSheet {...sheetProps(sheetRow, domestic, version, authors)} elementId={COST_SHEET_ID} />
+            <SkuCostSheet {...sheetProps(sheetRow, version, authors)} elementId={COST_SHEET_ID} />
           </div>
         </>
       )}
@@ -319,13 +319,13 @@ export function CostGridClient({
  * the sheet shows exactly the numbers in the row you clicked, including its
  * port. Only the market that row belongs to is filled in; the other is null.
  */
-function sheetProps(
-  row: Row,
-  domestic: boolean,
-  version: CostAssumptionVersion,
-  authors: Record<string, string>
-) {
+function sheetProps(row: Row, version: CostAssumptionVersion, authors: Record<string, string>) {
   const out = row.result.ok ? row.result.value : null;
+  // Read the market off the row's own output, not off the page's market
+  // toggle: the row is a snapshot taken when it was clicked, and deciding its
+  // shape from state that has moved since would file an export result under
+  // domestic. One source, so they cannot disagree.
+  const isDomestic = out?.result.market === 'domestic';
   return {
     skuName: row.sku.name,
     category: row.sku.category,
@@ -336,10 +336,10 @@ function sheetProps(
     absorbed: row.sku.raw_material_basis === 'absorbed',
     pctFish: row.sku.pct_fish,
     pctMarinade: row.sku.pct_marinade,
-    domestic: domestic && out ? (out.result as DomesticOutput) : null,
-    domesticWholeFish: domestic && out ? out.wholeFish : null,
-    exportOut: !domestic && out ? (out.result as ExportOutput) : null,
-    exportWholeFish: !domestic && out ? out.wholeFish : null,
+    domestic: out && isDomestic ? (out.result as DomesticOutput) : null,
+    domesticWholeFish: out && isDomestic ? out.wholeFish : null,
+    exportOut: out && !isDomestic ? (out.result as ExportOutput) : null,
+    exportWholeFish: out && !isDomestic ? out.wholeFish : null,
     destinationName: row.destination?.name ?? null,
   };
 }

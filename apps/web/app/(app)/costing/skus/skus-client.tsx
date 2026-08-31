@@ -760,14 +760,18 @@ function SkuDialog({
   };
 
   /**
-   * Open the download menu, costing the SKU first if that has not happened yet.
+   * Open the download menu, costing the SKU from the form first — every time,
+   * not only when there is no preview yet.
    *
-   * The sheet is rendered from the preview, so there is nothing to download
-   * until one exists — but making the user press Calculate before the button
-   * does anything is a worse answer than just calculating for them.
+   * The document is rendered from the preview, so a preview that has drifted
+   * from the form is a document that quietly disagrees with the SKU you are
+   * about to save. Recosting on open makes that impossible by construction
+   * rather than by remembering to invalidate at every mutation site, which is
+   * exactly the kind of bookkeeping that goes wrong. previewFromForm is a pure
+   * read of the form, so doing it again costs nothing.
    */
   function openDownload() {
-    if (!preview) calculate();
+    calculate();
     setDownloadOpen(true);
   }
 
@@ -827,6 +831,10 @@ function SkuDialog({
     ) ?? null;
 
   function copyFrom(source: CostSkuRow) {
+    // Every field on screen is about to be replaced with another SKU's recipe,
+    // so a preview costed from the old one is not merely stale — it belongs to
+    // a different product.
+    invalidatePreview();
     setSrc(source);
     setBasis(source.raw_material_basis);
     setForm(source.product_form);
@@ -1145,16 +1153,19 @@ function SkuDialog({
                   <OverrideField
                     label="Rack margin" name="override_rack_margin_pct"
                     current={src?.override_rack_margin_pct ?? null}
+                    onDirty={invalidatePreview}
                     inherited={version.rack_margin_pct} step="0.01" kind="pct"
                   />
                   <OverrideField
                     label="Transport" name="override_transport_lkr"
                     current={src?.override_transport_lkr ?? null}
+                    onDirty={invalidatePreview}
                     inherited={version.domestic_transport_lkr} step="0.01" kind="lkr"
                   />
                   <OverrideField
                     label="Cold holding" name="override_cold_hold_lkr"
                     current={src?.override_cold_hold_lkr ?? null}
+                    onDirty={invalidatePreview}
                     inherited={version.domestic_cold_hold_lkr} step="0.01" kind="lkr"
                   />
                 </div>
@@ -1166,16 +1177,19 @@ function SkuDialog({
                   <OverrideField
                     label="FOB margin" name="override_fob_margin_pct"
                     current={src?.override_fob_margin_pct ?? null}
+                    onDirty={invalidatePreview}
                     inherited={version.fob_margin_pct} step="0.01" kind="pct"
                   />
                   <OverrideField
                     label="Freight to port" name="override_freight_to_port_usd"
                     current={src?.override_freight_to_port_usd ?? null}
+                    onDirty={invalidatePreview}
                     inherited={version.export_freight_to_port_usd} step="0.01" kind="usd"
                   />
                   <OverrideField
                     label="Cold chain" name="override_cold_chain_usd"
                     current={src?.override_cold_chain_usd ?? null}
+                    onDirty={invalidatePreview}
                     inherited={version.export_cold_chain_usd} step="0.01" kind="usd"
                   />
                 </div>
@@ -1193,16 +1207,19 @@ function SkuDialog({
                   <OverrideField
                     label="Importer clearing" name="override_importer_clearing_pct"
                     current={src?.override_importer_clearing_pct ?? null}
+                    onDirty={invalidatePreview}
                     inherited={version.importer_clearing_pct} step="0.01" kind="pct"
                   />
                   <OverrideField
                     label="Importer markup" name="override_importer_markup_pct"
                     current={src?.override_importer_markup_pct ?? null}
+                    onDirty={invalidatePreview}
                     inherited={version.importer_markup_pct} step="0.01" kind="pct"
                   />
                   <OverrideField
                     label="Distributor markup" name="override_distributor_markup_pct"
                     current={src?.override_distributor_markup_pct ?? null}
+                    onDirty={invalidatePreview}
                     inherited={version.distributor_markup_pct} step="0.01" kind="pct"
                   />
                 </div>
@@ -1352,6 +1369,7 @@ function OverrideField({
   inherited,
   step,
   kind,
+  onDirty,
 }: {
   label: string;
   name: string;
@@ -1359,9 +1377,21 @@ function OverrideField({
   inherited: number;
   step: string;
   kind: 'pct' | 'lkr' | 'usd';
+  /**
+   * Called whenever this field's value changes, including from the two
+   * shortcut buttons below. Typing fires a real DOM input event that the form
+   * hears on its own; setting a controlled input's value from React does not,
+   * so the buttons have to say so themselves.
+   */
+  onDirty?: () => void;
 }) {
   const [value, setValue] = useState(current == null ? '' : String(current));
   const overriding = value.trim() !== '';
+
+  const change = (v: string) => {
+    setValue(v);
+    onDirty?.();
+  };
 
   const show = (n: number) =>
     kind === 'pct' ? `${n} (${(n * 100).toFixed(0)}%)` : kind === 'lkr' ? `LKR ${n}` : `$${n}`;
@@ -1372,7 +1402,7 @@ function OverrideField({
       <input
         name={name}
         value={value}
-        onChange={(e) => setValue(e.target.value)}
+        onChange={(e) => change(e.target.value)}
         type="number"
         step={step}
         min="0"
@@ -1383,14 +1413,14 @@ function OverrideField({
         {overriding ? (
           <>
             <span className="text-primary">overriding</span> ·{' '}
-            <button type="button" onClick={() => setValue('')} className="underline hover:text-foreground">
+            <button type="button" onClick={() => change('')} className="underline hover:text-foreground">
               use {show(inherited)}
             </button>
           </>
         ) : (
           <>
             follows {show(inherited)} ·{' '}
-            <button type="button" onClick={() => setValue(String(inherited))} className="underline hover:text-foreground">
+            <button type="button" onClick={() => change(String(inherited))} className="underline hover:text-foreground">
               override
             </button>
           </>
