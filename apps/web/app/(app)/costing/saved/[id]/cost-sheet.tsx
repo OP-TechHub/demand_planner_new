@@ -45,6 +45,9 @@ export function CostSheet({
   const pctMarinade = num(inputs.pct_marinade);
   const absorbed = inputs.raw_material_basis === 'absorbed';
 
+  // The stored line is ONE state, so the footer can say plainly whether this
+  // figure includes glaze weight — the old wording claimed it never did.
+  const glazedState = line.state === 'glazed' || line.state === 'frozen_glazed';
   const chainFinal = num(chain.finalCost);
   // The state's FINAL, not the chain's: for a glazed state the two differ by the
   // glaze dilution, and the difference is a real line on the build-up.
@@ -171,7 +174,10 @@ export function CostSheet({
       )}
 
       <SheetFooter>
-        Costs are per kilogram of finished product and exclude glaze weight. Figures are those calculated when this
+        {glazedState && glazePct > 0
+          ? `Costs are per kilogram of the pack as shipped, including its ${asPct(glazePct)} glaze weight. `
+          : 'Costs are per kilogram of finished product, excluding glaze weight. '}
+        Figures are those calculated when this
         costing was saved, on {pinnedLabel}; later changes to assumptions are not reflected here. Prices are
         indicative and subject to written confirmation.
       </SheetFooter>

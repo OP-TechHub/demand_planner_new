@@ -15,7 +15,7 @@ import {
   type CostSizeBucket,
   type CostSkuRow,
 } from '@oceanpick/shared';
-import { toAssumptions } from '@/lib/costing-adapt';
+import { toAssumptions, toBucket } from '@/lib/costing-adapt';
 import { cn } from '@/lib/utils';
 import { downloadDoc, slugify } from '@/lib/doc-export';
 import { COST_SHEET_ID } from '@/components/cost-sheet-parts';
@@ -136,6 +136,8 @@ export function SkusClient({
         <SkuDialog
           sku={editing}
           orgId={orgId}
+          buckets={buckets}
+          yields={yields}
           version={version}
           odc={odc}
           destinations={destinations}
@@ -339,6 +341,8 @@ interface PreviewResult {
   /** In target mode, whether a target was actually entered for that market. */
   hasTargetDomestic: boolean;
   hasTargetExport: boolean;
+  /** The size grade costed at, or null for the flat reference model. */
+  gradeLabel: string | null;
   /**
    * The rest is not used by the on-screen preview at all — it is what the
    * downloadable sheet needs to show the ex-farm build-up and identify the SKU.
@@ -351,6 +355,7 @@ interface PreviewResult {
   category: string;
   customer: string;
   absorbed: boolean;
+  productForm: CostProductForm;
   pctFish: number;
   pctMarinade: number;
 }
@@ -368,7 +373,10 @@ function previewFromForm(
   version: CostAssumptionVersion,
   odc: CostOdcComponentRow[],
   destinations: CostDestinationRow[],
-  rates: Record<string, { sea: number; air: number }>
+  rates: Record<string, { sea: number; air: number }>,
+  /** Null costs on the flat reference model, as this dialog always used to. */
+  bucketRow?: CostSizeBucket | null,
+  bucketYields?: Record<string, number>
 ): PreviewResult {
   const num = (k: string) => {
     const n = Number(String(fd.get(k) ?? '').trim());
@@ -399,6 +407,7 @@ function previewFromForm(
     packingUsdPerKg: num('packing_usd_per_kg'),
     packSize: null,
     rawMaterialBasis: String(fd.get('raw_material_basis') ?? 'full_fish') as 'full_fish' | 'absorbed',
+    bucketYields,
     pricingMode,
     overrides: {
       rackMarginPct: optional('override_rack_margin_pct'),
@@ -412,6 +421,8 @@ function previewFromForm(
       distributorMarkupPct: optional('override_distributor_markup_pct'),
     },
   };
+
+  const bucket = bucketRow ? toBucket(bucketRow) : null;
 
   const issues: string[] = [];
   let domesticOut: DomesticOutput | null = null;
@@ -428,6 +439,7 @@ function previewFromForm(
       market: 'domestic',
       assumptions,
       sku: { ...base, marketPrice: price, targetPrice: price },
+      bucket,
     });
     if (res.ok) {
       domesticOut = res.value.result as DomesticOutput;
@@ -451,6 +463,7 @@ function previewFromForm(
         market: 'export',
         assumptions,
         sku: { ...base, marketPrice: price, targetPrice: price },
+        bucket,
         destination: { id: dest.id, name: dest.name, seaRatePer20ft: rate.sea, airRatePerLot: rate.air },
       });
       if (res.ok) {
@@ -474,6 +487,8 @@ function previewFromForm(
     category: base.category,
     customer: String(fd.get('customer') ?? ''),
     absorbed: base.rawMaterialBasis === 'absorbed',
+    productForm: String(fd.get('product_form') ?? 'both') as CostProductForm,
+    gradeLabel: bucketRow?.label ?? null,
     pctFish: base.pctFish,
     pctMarinade: base.pctMarinade,
   };
@@ -682,6 +697,8 @@ function PreviewBlock({
 function SkuDialog({
   sku,
   orgId,
+  buckets,
+  yields,
   version,
   odc,
   destinations,
@@ -692,6 +709,8 @@ function SkuDialog({
 }: {
   sku: CostSkuRow | null;
   orgId: string;
+  buckets: CostSizeBucket[];
+  yields: YieldMap;
   version: CostAssumptionVersion;
   odc: CostOdcComponentRow[];
   destinations: CostDestinationRow[];
@@ -705,6 +724,10 @@ function SkuDialog({
   const [state, action, pending] = useActionState<SkuFormState, FormData>(saveCostSku, { error: null, ok: false });
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [downloadOpen, setDownloadOpen] = useState(false);
+  // Which size grade to cost at. '' is the flat reference model, which is what
+  // this dialog used to do unconditionally — so the default preserves every
+  // number it produced before, and picking a grade is an explicit act.
+  const [previewBucketId, setPreviewBucketId] = useState('');
 
   /**
    * Which record the field defaults come from.
@@ -745,11 +768,20 @@ function SkuDialog({
    * and impossible to get out of sync with what the user can see. Recalculated
    * on demand, so the answer always belongs to the values currently entered.
    */
+  /** The grade to cost at, and this SKU's per-grade yields if it has any. */
+  function gradeContext() {
+    const bucket = previewBucketId ? (buckets.find((b) => b.id === previewBucketId) ?? null) : null;
+    // A brand-new SKU has no stored per-grade yields, so resolveYield falls
+    // back to its flat yield — correct, and the sheet says which grade it used.
+    return { bucket, bucketYields: src?.id ? yields[src.id] : undefined };
+  }
+
   function calculate() {
     const el = formRef.current;
     if (!el) return;
     const fd = new FormData(el);
-    setPreview(previewFromForm(fd, version, odc, destinations, rates));
+    const { bucket, bucketYields } = gradeContext();
+    setPreview(previewFromForm(fd, version, odc, destinations, rates, bucket, bucketYields));
   }
 
   // A stale preview is worse than none: it shows numbers for a recipe that is
@@ -812,7 +844,8 @@ function SkuDialog({
     // The mode lives in React state, so it isn't in the form yet on this pass.
     const fd = new FormData(el);
     fd.set('pricing_mode', 'target');
-    setPreview(previewFromForm(fd, version, odc, destinations, rates));
+    const { bucket, bucketYields } = gradeContext();
+    setPreview(previewFromForm(fd, version, odc, destinations, rates, bucket, bucketYields));
   }
 
   useEffect(() => {
@@ -845,7 +878,8 @@ function SkuDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4" onClick={onClose}>
+    <>
+      <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4" onClick={onClose}>
       <form
         ref={formRef}
         action={action}
@@ -1228,6 +1262,34 @@ function SkuDialog({
           )}
         </div>
 
+        {buckets.length > 0 && (
+          <label className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="font-medium">Cost at</span>
+            <select
+              // No `name`: this drives the preview only and must not land in
+              // the SKU's own FormData.
+              value={previewBucketId}
+              onChange={(e) => {
+                setPreviewBucketId(e.target.value);
+                invalidatePreview();
+              }}
+              className={cn(inputCls, 'w-auto')}
+            >
+              <option value="">Reference size (no grade)</option>
+              {buckets.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.label}
+                </option>
+              ))}
+            </select>
+            <span className="text-[10px] text-muted-foreground">
+              {previewBucketId
+                ? 'Uses this grade\u2019s FCR and yield \u2014 the Cost Grid at the same grade will agree.'
+                : 'The flat model. Pick a grade to match what the Cost Grid shows at that grade.'}
+            </span>
+          </label>
+        )}
+
         {preview ? (
           <PreviewPanel
             preview={preview}
@@ -1297,16 +1359,23 @@ function SkuDialog({
           </div>
         </div>
       </form>
+      </div>
 
       {/*
-        The document itself. It sits outside the form's fixed, scrolling modal
-        on purpose: a fixed-position ancestor confines a printed element to the
-        first page, which would silently truncate a two-market sheet. Hidden on
-        screen, revealed by the #cost-sheet print rules in globals.css, and read
+        The document itself, a SIBLING of the overlay above rather than a child.
+        That is the whole point: the overlay is `fixed` and scrolls its own
+        content, and an element printed from inside a fixed, overflowing
+        ancestor is clipped to a single page at whatever scroll offset the
+        container happened to be at — which prints the tail of the sheet and
+        silently drops its header and build-up. Out here it is in normal flow,
+        so the print rules in globals.css can lift it to the top of the page and
+        let it paginate.
+
+        Hidden on screen, revealed by the #cost-sheet print rules, and read
         as-is by the Word export.
       */}
       {preview && (
-        <div className="hidden print:block" onClick={(e) => e.stopPropagation()}>
+        <div className="hidden print:block">
           <SkuCostSheet
             elementId={COST_SHEET_ID}
             skuName={preview.skuName || (sku?.name ?? 'SKU')}
@@ -1315,6 +1384,8 @@ function SkuDialog({
             assumptionsLabel={`v${version.version_no}${version.label ? ` · ${version.label}` : ''}`}
             glazePct={preview.glazePct}
             absorbed={preview.absorbed}
+            productForm={preview.productForm}
+            gradeLabel={preview.gradeLabel}
             pctFish={preview.pctFish}
             pctMarinade={preview.pctMarinade}
             domestic={preview.domestic}
@@ -1324,7 +1395,7 @@ function SkuDialog({
           />
         </div>
       )}
-    </div>
+    </>
   );
 }
 

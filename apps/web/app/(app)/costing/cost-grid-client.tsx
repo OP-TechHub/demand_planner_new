@@ -17,6 +17,7 @@ import { toAssumptions, toBucket, toDestination, toSku } from '@/lib/costing-ada
 import { toCsv, downloadCsv } from '@/lib/csv';
 import { ScrollX } from '@/components/ui/scroll-x';
 import { cn } from '@/lib/utils';
+import { OVERRIDABLE, OVERRIDE_LABEL, PERCENT_FIELDS, type OverridableField } from '@/lib/costing-adapt';
 import { downloadDoc, slugify } from '@/lib/doc-export';
 import { COST_SHEET_ID } from '@/components/cost-sheet-parts';
 import { SkuCostSheet } from './skus/sku-cost-sheet';
@@ -175,7 +176,7 @@ export function CostGridClient({
     if (!ok) alert('Could not build the document — the breakdown sheet was not found on the page.');
   }
 
-  function onSave(name: string, skuIds: string[]) {
+  function onSave(name: string, skuIds: string[], overrides: Partial<Record<OverridableField, number>>) {
     startTransition(async () => {
       const res = await saveCosting({
         name,
@@ -184,6 +185,7 @@ export function CostGridClient({
         bucketId: bucketId || null,
         destinationIds: domestic ? [] : selectedDests,
         skuIds,
+        overrides,
       });
       setSaving(false);
       if (res.error) alert(res.error);
@@ -276,7 +278,7 @@ export function CostGridClient({
               </div>
 
               <div className="mt-3 max-h-[70vh] overflow-y-auto rounded-md border">
-                <SkuCostSheet {...sheetProps(sheetRow, version, authors)} />
+                <SkuCostSheet {...sheetProps(sheetRow, version, authors, bucket?.label ?? null)} />
               </div>
 
               <p className="mt-3 text-xs text-muted-foreground">
@@ -293,7 +295,7 @@ export function CostGridClient({
             as-is by the Word export.
           */}
           <div className="hidden print:block">
-            <SkuCostSheet {...sheetProps(sheetRow, version, authors)} elementId={COST_SHEET_ID} />
+            <SkuCostSheet {...sheetProps(sheetRow, version, authors, bucket?.label ?? null)} elementId={COST_SHEET_ID} />
           </div>
         </>
       )}
@@ -303,6 +305,7 @@ export function CostGridClient({
           skus={visibleSkus}
           brokenSkuIds={brokenSkuIds}
           authors={authors}
+          version={version}
           onCancel={() => setSaving(false)}
           onSave={onSave}
           busy={isPending}
@@ -319,7 +322,12 @@ export function CostGridClient({
  * the sheet shows exactly the numbers in the row you clicked, including its
  * port. Only the market that row belongs to is filled in; the other is null.
  */
-function sheetProps(row: Row, version: CostAssumptionVersion, authors: Record<string, string>) {
+function sheetProps(
+  row: Row,
+  version: CostAssumptionVersion,
+  authors: Record<string, string>,
+  bucketLabel: string | null
+) {
   const out = row.result.ok ? row.result.value : null;
   // Read the market off the row's own output, not off the page's market
   // toggle: the row is a snapshot taken when it was clicked, and deciding its
@@ -334,6 +342,8 @@ function sheetProps(row: Row, version: CostAssumptionVersion, authors: Record<st
     authorName: authorOf(row.sku, authors),
     glazePct: row.sku.glaze_pct,
     absorbed: row.sku.raw_material_basis === 'absorbed',
+    productForm: row.sku.product_form,
+    gradeLabel: bucketLabel,
     pctFish: row.sku.pct_fish,
     pctMarinade: row.sku.pct_marinade,
     domestic: out && isDomestic ? (out.result as DomesticOutput) : null,
@@ -806,6 +816,7 @@ function SaveDialog({
   skus,
   brokenSkuIds,
   authors,
+  version,
   onCancel,
   onSave,
   busy,
@@ -813,12 +824,38 @@ function SaveDialog({
   skus: CostSkuRow[];
   brokenSkuIds: Set<string>;
   authors: Record<string, string>;
+  version: CostAssumptionVersion;
   onCancel: () => void;
-  onSave: (name: string, skuIds: string[]) => void;
+  onSave: (
+    name: string,
+    skuIds: string[],
+    overrides: Partial<Record<OverridableField, number>>
+  ) => void;
   busy: boolean;
 }) {
   const [name, setName] = useState('');
   const [query, setQuery] = useState('');
+  // Raw strings, not numbers: '' has to keep meaning "follow the company
+  // value", and a half-typed '0.' is not a number yet.
+  const [overrides, setOverrides] = useState<Partial<Record<OverridableField, string>>>({});
+  const [showOverrides, setShowOverrides] = useState(false);
+
+  const overrideCount = OVERRIDABLE.filter((f) => {
+    const raw = overrides[f]?.trim();
+    return raw !== undefined && raw !== '' && Number(raw) !== (version[f] as number);
+  }).length;
+
+  /** Blank and unchanged fields are dropped; the server re-checks all of this. */
+  const numericOverrides = (): Partial<Record<OverridableField, number>> => {
+    const out: Partial<Record<OverridableField, number>> = {};
+    for (const f of OVERRIDABLE) {
+      const raw = overrides[f]?.trim();
+      if (!raw) continue;
+      const n = Number(raw);
+      if (Number.isFinite(n)) out[f] = n;
+    }
+    return out;
+  };
   // A SKU with a broken split cannot be costed, so the save would drop it
   // anyway. Leaving it unticked and labelled says that up front rather than
   // reporting it afterwards.
@@ -860,7 +897,7 @@ function SaveDialog({
 
   const canSave = !!name.trim() && selected.size > 0 && !busy;
   const submit = () => {
-    if (canSave) onSave(name.trim(), [...selected]);
+    if (canSave) onSave(name.trim(), [...selected], numericOverrides());
   };
 
   return (
@@ -946,6 +983,62 @@ function SaveDialog({
             Starts from what the grid is showing — change the market, port or search behind this dialog to offer a
             different set.
           </p>
+        </div>
+
+        <div className="mt-4 border-t pt-3">
+          <button
+            type="button"
+            onClick={() => setShowOverrides((v) => !v)}
+            className="flex w-full items-center justify-between text-left text-xs font-medium"
+          >
+            <span>
+              Override assumptions for this costing
+              {overrideCount > 0 && (
+                <span className="ml-1.5 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
+                  {overrideCount} changed
+                </span>
+              )}
+            </span>
+            <span className="text-muted-foreground">{showOverrides ? 'Hide' : 'Show'}</span>
+          </button>
+
+          {showOverrides && (
+            <>
+              <p className="mt-1.5 text-[11px] text-muted-foreground">
+                Blank follows the company value. Anything you type here applies to THIS costing only — the official
+                assumptions are untouched, and the deviation is stamped on the saved costing so a reviewer can see
+                what you changed.
+              </p>
+              <div className="mt-2 grid max-h-56 gap-2 overflow-y-auto rounded-md border p-2 sm:grid-cols-2">
+                {OVERRIDABLE.map((f) => {
+                  const inherited = version[f] as number;
+                  const raw = overrides[f] ?? '';
+                  const changed = raw.trim() !== '' && Number(raw) !== inherited;
+                  return (
+                    <label key={f} className="block">
+                      <span className="text-[11px] font-medium">{OVERRIDE_LABEL[f]}</span>
+                      <input
+                        type="number"
+                        step="0.0001"
+                        min="0"
+                        value={raw}
+                        onChange={(e) => setOverrides((p) => ({ ...p, [f]: e.target.value }))}
+                        placeholder={
+                          PERCENT_FIELDS.has(f)
+                            ? `${inherited} (${(inherited * 100).toFixed(0)}%)`
+                            : String(inherited)
+                        }
+                        className={cn(
+                          'mt-0.5 w-full rounded-md border px-2 py-1 text-xs',
+                          changed && 'border-primary bg-primary/5'
+                        )}
+                      />
+                    </label>
+                  );
+                })}
+              </div>
+            </>
+          )}
         </div>
 
         <div className="mt-4 flex justify-end gap-2">
