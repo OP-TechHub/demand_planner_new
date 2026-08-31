@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Download, Save, AlertTriangle } from 'lucide-react';
+import { Download, FileDown, FileText, Printer, Save, AlertTriangle } from 'lucide-react';
 import { computeCost, type CostResult, type DomesticOutput, type ExportOutput } from '@oceanpick/engine';
 import type {
   CostAssumptionVersion,
@@ -17,6 +17,9 @@ import { toAssumptions, toBucket, toDestination, toSku } from '@/lib/costing-ada
 import { toCsv, downloadCsv } from '@/lib/csv';
 import { ScrollX } from '@/components/ui/scroll-x';
 import { cn } from '@/lib/utils';
+import { downloadDoc, slugify } from '@/lib/doc-export';
+import { COST_SHEET_ID } from '@/components/cost-sheet-parts';
+import { SkuCostSheet } from './skus/sku-cost-sheet';
 import { saveCosting } from './actions';
 
 export type RateMap = Record<string, { sea: number; air: number }>;
@@ -71,6 +74,8 @@ export function CostGridClient({
   const [showInactive, setShowInactive] = useState(false);
   const [query, setQuery] = useState('');
   const [saving, setSaving] = useState(false);
+  // The row whose breakdown document is open, for preview / print / Word.
+  const [sheetRow, setSheetRow] = useState<Row | null>(null);
   const [isPending, startTransition] = useTransition();
 
   const domestic = market === 'domestic';
@@ -158,6 +163,18 @@ export function CostGridClient({
     );
   }
 
+  function onSheetWord() {
+    if (!sheetRow) return;
+    const label = sheetRow.sku.name;
+    const port = sheetRow.destination ? `-${slugify(sheetRow.destination.name, 'port')}` : '';
+    const ok = downloadDoc(
+      `${slugify(label, 'sku')}${port}-cost-breakdown`,
+      COST_SHEET_ID,
+      `${label} — cost breakdown`
+    );
+    if (!ok) alert('Could not build the document — the breakdown sheet was not found on the page.');
+  }
+
   function onSave(name: string, skuIds: string[]) {
     startTransition(async () => {
       const res = await saveCosting({
@@ -222,9 +239,64 @@ export function CostGridClient({
         domestic={domestic}
         showDestination={!domestic && activeDests.length > 1}
         authors={authors}
+        onSheet={setSheetRow}
       />
 
       <Legend />
+
+      {sheetRow && sheetRow.result.ok && (
+        <>
+          <div
+            className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 print:hidden"
+            onClick={() => setSheetRow(null)}
+          >
+            <div
+              className="my-8 w-full max-w-3xl rounded-lg border bg-card p-5 shadow-lg"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <h2 className="text-lg font-semibold">Cost breakdown</h2>
+                  <p className="text-xs text-muted-foreground">
+                    {sheetRow.sku.name}
+                    {sheetRow.destination ? ` · ${sheetRow.destination.name}` : ''}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => setSheetRow(null)} className={btnGhost}>
+                    Close
+                  </button>
+                  <button onClick={onSheetWord} className={btnGhost}>
+                    <FileText className="h-3.5 w-3.5" /> Word
+                  </button>
+                  <button onClick={() => window.print()} className={btnPrimary}>
+                    <Printer className="h-3.5 w-3.5" /> Print / Save as PDF
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-3 max-h-[70vh] overflow-y-auto rounded-md border">
+                <SkuCostSheet {...sheetProps(sheetRow, domestic, version, authors)} />
+              </div>
+
+              <p className="mt-3 text-xs text-muted-foreground">
+                Live figures at the current assumptions — not a saved costing. Save the grid as a costing if you
+                need the numbers pinned to what was quoted.
+              </p>
+            </div>
+          </div>
+
+          {/*
+            The document itself, outside the modal's fixed positioning — a fixed
+            ancestor confines a printed element to the first page. Hidden on
+            screen, revealed by the #cost-sheet print rules, and serialised
+            as-is by the Word export.
+          */}
+          <div className="hidden print:block">
+            <SkuCostSheet {...sheetProps(sheetRow, domestic, version, authors)} elementId={COST_SHEET_ID} />
+          </div>
+        </>
+      )}
 
       {saving && (
         <SaveDialog
@@ -238,6 +310,38 @@ export function CostGridClient({
       )}
     </div>
   );
+}
+
+/**
+ * A grid row as the breakdown document wants it.
+ *
+ * The row already holds a computed CostOutput, so nothing is recosted here —
+ * the sheet shows exactly the numbers in the row you clicked, including its
+ * port. Only the market that row belongs to is filled in; the other is null.
+ */
+function sheetProps(
+  row: Row,
+  domestic: boolean,
+  version: CostAssumptionVersion,
+  authors: Record<string, string>
+) {
+  const out = row.result.ok ? row.result.value : null;
+  return {
+    skuName: row.sku.name,
+    category: row.sku.category,
+    customer: row.sku.customer ?? '',
+    assumptionsLabel: `v${version.version_no}${version.label ? ` · ${version.label}` : ''}`,
+    authorName: authorOf(row.sku, authors),
+    glazePct: row.sku.glaze_pct,
+    absorbed: row.sku.raw_material_basis === 'absorbed',
+    pctFish: row.sku.pct_fish,
+    pctMarinade: row.sku.pct_marinade,
+    domestic: domestic && out ? (out.result as DomesticOutput) : null,
+    domesticWholeFish: domestic && out ? out.wholeFish : null,
+    exportOut: !domestic && out ? (out.result as ExportOutput) : null,
+    exportWholeFish: !domestic && out ? out.wholeFish : null,
+    destinationName: row.destination?.name ?? null,
+  };
 }
 
 function rateOf(rates: RateMap, id: string) {
@@ -385,11 +489,13 @@ function Grid({
   domestic,
   showDestination,
   authors,
+  onSheet,
 }: {
   rows: Row[];
   domestic: boolean;
   showDestination: boolean;
   authors: Record<string, string>;
+  onSheet: (row: Row) => void;
 }) {
   if (rows.length === 0) {
     return (
@@ -447,6 +553,7 @@ function Grid({
               domestic={domestic}
               showDestination={showDestination}
               authors={authors}
+              onSheet={onSheet}
             />
           ))}
         </tbody>
@@ -460,11 +567,13 @@ function GridRow({
   domestic,
   showDestination,
   authors,
+  onSheet,
 }: {
   row: Row;
   domestic: boolean;
   showDestination: boolean;
   authors: Record<string, string>;
+  onSheet: (row: Row) => void;
 }) {
   const { sku, destination, result } = row;
   const absorbed = sku.raw_material_basis === 'absorbed';
@@ -481,8 +590,28 @@ function GridRow({
       )}
       title={sku.name}
     >
-      {sku.name}
-      {absorbed && <ByProductBadge />}
+      <span className="flex items-center gap-1.5">
+        <span className="min-w-0 flex-1 truncate">
+          {sku.name}
+          {absorbed && <ByProductBadge />}
+        </span>
+        {/*
+          In the sticky column rather than a trailing one: this table is wide
+          enough to scroll, and an action parked past Fresh T3 would be off
+          screen exactly when you are looking at a row you want to send.
+        */}
+        {result.ok && (
+          <button
+            type="button"
+            onClick={() => onSheet(row)}
+            title="Download this SKU's cost breakdown"
+            aria-label={`Download cost breakdown for ${sku.name}`}
+            className="shrink-0 rounded p-0.5 text-muted-foreground opacity-60 transition-opacity hover:bg-muted hover:text-foreground hover:opacity-100"
+          >
+            <FileDown className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </span>
     </th>
   );
 
