@@ -1,5 +1,6 @@
 'use client';
 
+import type { CostProductForm } from '@oceanpick/shared';
 import type { CostChain, DomesticOutput, ExportOutput, WholeFishCost } from '@oceanpick/engine';
 import { Meta, Row, S, SheetFooter, SheetHeader, asPct, moneyFor } from '@/components/cost-sheet-parts';
 
@@ -20,6 +21,8 @@ export function SkuCostSheet({
   authorName,
   glazePct,
   absorbed,
+  productForm,
+  gradeLabel,
   pctFish,
   pctMarinade,
   domestic,
@@ -36,6 +39,21 @@ export function SkuCostSheet({
   authorName?: string | null;
   glazePct: number;
   absorbed: boolean;
+  /**
+   * Which states this SKU is actually sold in. The engine costs all three
+   * export states whatever the SKU is, because fresh and frozen-no-glaze share
+   * a FINAL and fall out of the same chain — but printing a Fresh section for a
+   * frozen-only product is not a harmless extra, it is a price for something
+   * nobody can order, in a document that leaves the building.
+   */
+  productForm: CostProductForm;
+  /**
+   * The size grade these figures were costed at, or null for the flat
+   * reference model. Named on the sheet because the same SKU costs differently
+   * per grade — FCR and yield both move — and a reader cannot tell which they
+   * are holding otherwise.
+   */
+  gradeLabel?: string | null;
   pctFish: number;
   pctMarinade: number;
   domestic: DomesticOutput | null;
@@ -67,6 +85,13 @@ export function SkuCostSheet({
           {category && <Meta label="Category" value={category} />}
           {customer && <Meta label="Customer" value={customer} />}
           {destinationName && <Meta label="Destination" value={destinationName} />}
+          <Meta
+            label="Sold as"
+            value={
+              productForm === 'frozen' ? 'Frozen only' : productForm === 'fresh' ? 'Fresh only (air)' : 'Frozen and fresh'
+            }
+          />
+          <Meta label="Size grade" value={gradeLabel ?? 'Reference size (no grade)'} />
           {glazePct > 0 && <Meta label="Glaze" value={asPct(glazePct)} />}
           <Meta label="Raw material" value={absorbed ? 'Absorbed by-product' : 'Full fish'} />
           <Meta label="Assumptions" value={assumptionsLabel} />
@@ -84,10 +109,18 @@ export function SkuCostSheet({
           absorbed={absorbed}
           pctFish={pctFish}
           pctMarinade={pctMarinade}
-          states={[
-            { label: glazePct > 0 ? 'No glaze' : 'Per kg', s: domestic.unglazed },
-            ...(glazePct > 0 ? [{ label: `With ${asPct(glazePct)} glaze`, s: domestic.glazed }] : []),
-          ].map(({ label, s }) => ({
+          /*
+            A glazed SKU ships as one thing: the glazed pack. Its unglazed twin
+            is the same pack read net of its ice, not a product anyone can
+            order — useful on screen for cross-checking, misleading in a
+            document that leaves the building, where "No glaze" reads as a
+            second product at a higher price. The net figure is still here, as
+            the build-up's "before glaze" total.
+          */
+          states={(glazePct > 0
+            ? [{ label: `As packed — ${asPct(glazePct)} glaze`, s: domestic.glazed }]
+            : [{ label: 'Per kg', s: domestic.unglazed }]
+          ).map(({ label, s }) => ({
             label,
             finalCost: s.finalCost,
             // Rack rate and selling price are the same number unless a target
@@ -116,10 +149,19 @@ export function SkuCostSheet({
           absorbed={absorbed}
           pctFish={pctFish}
           pctMarinade={pctMarinade}
+          /*
+            One frozen row, not two: the glazed pack when the SKU is glazed,
+            the plain one when it is not. Fresh is kept separately — it is a
+            different pack rather than the same one net of ice, and it carries
+            no glaze at all.
+          */
           states={[
-            { label: glazePct > 0 ? 'Frozen, no glaze' : 'Frozen', s: exportOut.frozenPlain },
-            ...(glazePct > 0 ? [{ label: `Frozen, ${asPct(glazePct)} glaze`, s: exportOut.frozenGlazed }] : []),
-            { label: 'Fresh (air)', s: exportOut.fresh },
+            ...(productForm === 'fresh'
+              ? []
+              : glazePct > 0
+                ? [{ label: `Frozen — as packed, ${asPct(glazePct)} glaze`, s: exportOut.frozenGlazed }]
+                : [{ label: 'Frozen', s: exportOut.frozenPlain }]),
+            ...(productForm === 'frozen' ? [] : [{ label: 'Fresh (air)', s: exportOut.fresh }]),
           ].map(({ label, s }) => ({
             label,
             finalCost: s.finalCost,
@@ -159,7 +201,10 @@ export function SkuCostSheet({
       )}
 
       <SheetFooter>
-        Costs are per kilogram of finished product and exclude glaze weight. These figures are calculated live from{' '}
+        {glazePct > 0
+          ? `Costs are per kilogram of the pack as shipped, including its ${asPct(glazePct)} glaze weight; the build-up's "before glaze" total is the same pack net of that ice. `
+          : 'Costs are per kilogram of finished product. '}
+        These figures are calculated live from{' '}
         {assumptionsLabel} and will move if the assumptions or this recipe change — save the costing to pin them.{' '}
         {destinationName
           ? `Export figures are costed to ${destinationName}; another port carries different freight and a different CIF.`
@@ -203,6 +248,10 @@ function MarketSection({
 }) {
   const money = moneyFor(isDomestic);
   const unit = `${currency}/kg`;
+  // When glaze moves a shown state's FINAL away from the chain's, the chain
+  // total is no longer any state's FINAL — calling it "FINAL COST" would put
+  // two different figures under the same name on one page.
+  const glazeShifts = states.some((st) => Math.abs(st.finalCost - chain.finalCost) >= 0.005);
 
   return (
     <>
@@ -253,7 +302,12 @@ function MarketSection({
           <Row label="Cold hold" value={chain.coldHold} fmt={money} />
           <Row label="Ex-factory" value={chain.exFactory} fmt={money} subtotal />
           <Row label={isDomestic ? 'Transport' : 'Freight to port'} value={chain.freight} fmt={money} />
-          <Row label="FINAL COST" value={chain.finalCost} fmt={money} total />
+          <Row
+            label={glazeShifts ? 'FINAL COST — before glaze' : 'FINAL COST'}
+            value={chain.finalCost}
+            fmt={money}
+            total
+          />
         </tbody>
       </table>
 
@@ -266,12 +320,20 @@ function MarketSection({
             <h3 style={S.h3}>{state.label}</h3>
             <table style={S.table}>
               <tbody>
+                {/*
+                  Restated rather than left to the table above: a page break can
+                  land between them, and "Glaze dilution −0.43" with no starting
+                  figure above it is not a number anyone can check.
+                */}
                 {shifted && (
-                  <Row
-                    label={`Glaze dilution at ${asPct(glazePct)} — added ice carries no fish cost`}
-                    value={state.finalCost - chain.finalCost}
-                    fmt={money}
-                  />
+                  <>
+                    <Row label="Cost before glaze" value={chain.finalCost} fmt={money} />
+                    <Row
+                      label={`Glaze dilution at ${asPct(glazePct)} — added ice carries no fish cost`}
+                      value={state.finalCost - chain.finalCost}
+                      fmt={money}
+                    />
+                  </>
                 )}
                 <Row label="FINAL COST" value={state.finalCost} fmt={money} subtotal />
                 {state.rows.map((r) => (

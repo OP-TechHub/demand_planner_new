@@ -2,9 +2,55 @@
 
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
-import { loadCostingContext, toAssumptions, toBucket, toDestination, toSku } from '@/lib/costing';
+import {
+  applyOverrides,
+  loadCostingContext,
+  toAssumptions,
+  toBucket,
+  toDestination,
+  toSku,
+  OVERRIDABLE,
+  type OverridableField,
+} from '@/lib/costing';
 import { computeCost, type DomesticOutput, type ExportOutput } from '@oceanpick/engine';
 import type { CostMarket, CostProductState } from '@oceanpick/shared';
+
+/**
+ * Clean the per-costing assumption overrides posted from the browser.
+ *
+ * Unknown keys are dropped rather than trusted: this object is stored verbatim
+ * and later merged over a version, so an unrecognised field would be dead
+ * weight at best and a silent surprise at worst.
+ *
+ * A value equal to the version's own is NOT an override — recording it would
+ * light the "custom assumptions" badge on a costing that deviates from nothing,
+ * and worse, would freeze that field against a later official change while
+ * claiming to be a deliberate choice.
+ */
+function cleanOverrides(
+  raw: Record<string, number> | undefined,
+  version: Record<string, unknown>
+): { overrides: Record<string, number>; error: string | null } {
+  const out: Record<string, number> = {};
+  if (!raw) return { overrides: out, error: null };
+
+  for (const field of OVERRIDABLE) {
+    const v = raw[field];
+    if (v == null) continue;
+    if (!Number.isFinite(v) || v < 0) {
+      return { overrides: {}, error: `${field.replace(/_/g, ' ')} must be a number of 0 or more.` };
+    }
+    // price = cost / (1 - margin), so 100% is a division by zero.
+    if ((field === 'rack_margin_pct' || field === 'fob_margin_pct') && v >= 1) {
+      return { overrides: {}, error: 'Rack and FOB margins must be below 100% — price is cost ÷ (1 − margin).' };
+    }
+    if (field === 'fcr_reference' || field === 'fx_rate' || field === 'container_fill_kg' || field === 'air_lot_kg') {
+      if (v <= 0) return { overrides: {}, error: `${field.replace(/_/g, ' ')} must be greater than 0.` };
+    }
+    if (v !== version[field]) out[field] = v;
+  }
+  return { overrides: out, error: null };
+}
 
 export interface SaveCostingInput {
   name: string;
@@ -14,7 +60,12 @@ export interface SaveCostingInput {
   destinationIds: string[];
   skuIds: string[];
   notes?: string;
-  overrides?: Record<string, number>;
+  /**
+   * Per-costing deviations from the pinned version, keyed by the column names
+   * in OVERRIDABLE. Applied to the engine AND stored, so the costing reproduces
+   * exactly and a reviewer can see what was changed (Decisions §4).
+   */
+  overrides?: Partial<Record<OverridableField, number>>;
 }
 
 /**
@@ -45,7 +96,16 @@ export async function saveCosting(input: SaveCostingInput): Promise<{ error: str
   const ctx = await loadCostingContext(input.versionId);
   if (!ctx) return { error: 'Costing is not set up yet.' };
 
-  const assumptions = toAssumptions(ctx.version, ctx.odc);
+  // The overrides have to reach the ENGINE, not just the stored row. Recording
+  // "this costing deviates on FX" while costing every line at the official FX
+  // would make the badge a lie and the snapshot unreproducible.
+  const { overrides, error: overrideError } = cleanOverrides(
+    input.overrides,
+    ctx.version as unknown as Record<string, unknown>
+  );
+  if (overrideError) return { error: overrideError };
+
+  const assumptions = toAssumptions(applyOverrides(ctx.version, overrides), ctx.odc);
   const bucketRow = input.bucketId ? ctx.buckets.find((b) => b.id === input.bucketId) : null;
   const bucket = bucketRow ? toBucket(bucketRow) : null;
 
@@ -60,7 +120,7 @@ export async function saveCosting(input: SaveCostingInput): Promise<{ error: str
       notes: input.notes ?? '',
       market: input.market,
       version_id: ctx.version.id,
-      assumption_overrides: input.overrides ?? {},
+      assumption_overrides: overrides,
       bucket_id: input.bucketId,
       destination_mode: dests.length > 1 ? 'multi' : 'single',
       created_by: user.id,

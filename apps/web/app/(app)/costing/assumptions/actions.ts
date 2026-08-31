@@ -28,6 +28,23 @@ const NUMERIC_FIELDS = [
 export type SaveState = { error: string | null; ok: boolean };
 
 /**
+ * Is the caller an admin?
+ *
+ * RLS already refuses a non-admin write, so this is about the message rather
+ * than the permission: without it the user gets a raw policy-violation string
+ * from Postgres, which reads like a bug in the app rather than a rule.
+ */
+async function requireAdmin(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string
+): Promise<string | null> {
+  const { data } = await supabase.from('users').select('role').eq('id', userId).maybeSingle();
+  return (data as { role: string } | null)?.role === 'admin'
+    ? null
+    : 'Only an admin can change the company assumptions. Override them inside your own costing instead.';
+}
+
+/**
  * Create a NEW version from the current one, with edits applied.
  *
  * Deliberately never an in-place update: saved costings pin a version, so
@@ -55,6 +72,9 @@ export async function publishAssumptionVersion(_prev: SaveState, fd: FormData): 
     .maybeSingle();
   if (!base) return { error: 'That assumptions version no longer exists.', ok: false };
   const from = base as CostAssumptionVersion;
+
+  const denied = await requireAdmin(supabase, user.id);
+  if (denied) return { error: denied, ok: false };
 
   const next: Record<string, unknown> = {};
   for (const field of NUMERIC_FIELDS) {
@@ -92,13 +112,49 @@ export async function publishAssumptionVersion(_prev: SaveState, fd: FormData): 
     .maybeSingle();
   const versionNo = ((latest as { version_no: number } | null)?.version_no ?? 0) + 1;
 
+  // Which version is current right now — not necessarily the one being edited,
+  // since you can publish from an older one. Remembered so a failure part-way
+  // through can put it back.
+  const { data: prevCurrentRow } = await supabase
+    .from('cost_assumption_versions')
+    .select('id')
+    .eq('org_id', from.org_id)
+    .eq('is_current', true)
+    .maybeSingle();
+  const prevCurrentId = (prevCurrentRow as { id: string } | null)?.id ?? null;
+
+  /**
+   * Undo a half-finished publish.
+   *
+   * This matters more than it looks. A version whose ODC components failed to
+   * copy is not a version with a missing screen — odcTotalUsd sums an empty
+   * list to zero, so every SKU's whole-fish cost silently drops by the whole of
+   * its other direct costs, and the grid shows cheaper numbers with no error
+   * anywhere. Leaving that as the org's current assumptions is far worse than
+   * refusing the publish.
+   */
+  const rollback = async (message: string): Promise<SaveState> => {
+    if (newVersionId) await supabase.from('cost_assumption_versions').delete().eq('id', newVersionId);
+    if (prevCurrentId) {
+      await supabase
+        .from('cost_assumption_versions')
+        .update({ is_current: true, updated_by: user.id })
+        .eq('id', prevCurrentId);
+    }
+    return { error: message, ok: false };
+  };
+
+  // Set once the insert below succeeds, so rollback knows whether there is a
+  // version to remove.
+  let newVersionId: string | null = null;
+
   // Clear the current flag first: a partial unique index allows only one.
   const { error: clearError } = await supabase
     .from('cost_assumption_versions')
     .update({ is_current: false, updated_by: user.id })
     .eq('org_id', from.org_id)
     .eq('is_current', true);
-  if (clearError) return { error: clearError.message, ok: false };
+  if (clearError) return rollback(clearError.message);
 
   const { data: created, error } = await supabase
     .from('cost_assumption_versions')
@@ -114,8 +170,9 @@ export async function publishAssumptionVersion(_prev: SaveState, fd: FormData): 
     })
     .select('id')
     .single();
-  if (error || !created) return { error: error?.message ?? 'Could not save.', ok: false };
+  if (error || !created) return rollback(error?.message ?? 'Could not save.');
   const newId = (created as { id: string }).id;
+  newVersionId = newId;
 
   // Carry ODC components and destination rates forward, then apply their edits.
   const [{ data: odc }, { data: rates }] = await Promise.all([
@@ -140,7 +197,7 @@ export async function publishAssumptionVersion(_prev: SaveState, fd: FormData): 
         };
       })
     );
-    if (odcError) return { error: odcError.message, ok: false };
+    if (odcError) return rollback(`copying the other direct costs: ${odcError.message}`);
   }
 
   const rateRows = (rates ?? []) as { destination_id: string; sea_rate_per_20ft: number; air_rate_per_lot: number }[];
@@ -157,7 +214,7 @@ export async function publishAssumptionVersion(_prev: SaveState, fd: FormData): 
         };
       })
     );
-    if (rateError) return { error: rateError.message, ok: false };
+    if (rateError) return rollback(`copying the freight rates: ${rateError.message}`);
   }
 
   revalidatePath('/costing');
@@ -172,6 +229,9 @@ export async function makeVersionCurrent(id: string): Promise<{ error: string | 
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return { error: 'Your session expired.' };
+
+  const denied = await requireAdmin(supabase, user.id);
+  if (denied) return { error: denied };
 
   const { data: v } = await supabase
     .from('cost_assumption_versions')
@@ -192,7 +252,10 @@ export async function makeVersionCurrent(id: string): Promise<{ error: string | 
     .from('cost_assumption_versions')
     .update({ is_current: true, updated_by: user.id })
     .eq('id', id);
-  if (error) return { error: error.message };
+  // Nothing is current now. loadCostingContext falls back to the highest
+  // version number so the app keeps working, but say so rather than reporting
+  // a bare database error for a state the user cannot see.
+  if (error) return { error: `${error.message} — no version is marked current; set one before costing.` };
 
   revalidatePath('/costing');
   revalidatePath('/costing/assumptions');
@@ -205,6 +268,13 @@ export async function saveSizeBucket(
   patch: { median_g?: number; fcr?: number }
 ): Promise<{ error: string | null }> {
   const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: 'Your session expired.' };
+  const denied = await requireAdmin(supabase, user.id);
+  if (denied) return { error: denied };
+
   const clean: Record<string, number> = {};
   if (patch.median_g != null) {
     if (!Number.isFinite(patch.median_g) || patch.median_g <= 0) return { error: 'Median weight must be above 0.' };
