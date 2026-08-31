@@ -157,6 +157,9 @@ export function toSku(row: CostSkuRow, market: CostMarket, bucketYields?: Record
       coldHoldLkr: row.override_cold_hold_lkr ?? undefined,
       freightToPortUsd: row.override_freight_to_port_usd ?? undefined,
       coldChainUsd: row.override_cold_chain_usd ?? undefined,
+      importerClearingPct: row.override_importer_clearing_pct ?? undefined,
+      importerMarkupPct: row.override_importer_markup_pct ?? undefined,
+      distributorMarkupPct: row.override_distributor_markup_pct ?? undefined,
     },
     bucketYields,
   };

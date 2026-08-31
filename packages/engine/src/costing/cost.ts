@@ -199,9 +199,13 @@ function exportState(
 
   // The chain builds on the price actually charged, so a target FOB carries
   // through to what the importer and distributor pay.
+  const clearing = sku.overrides?.importerClearingPct ?? m.importerClearingPct;
+  const importerMarkup = sku.overrides?.importerMarkupPct ?? m.importerMarkupPct;
+  const distributorMarkup = sku.overrides?.distributorMarkupPct ?? m.distributorMarkupPct;
+
   const cif = sellingPrice + freightPerKg;
-  const importerPrice = cif * (1 + m.importerClearingPct) * (1 + m.importerMarkupPct);
-  const distributorT3 = importerPrice * (1 + m.distributorMarkupPct);
+  const importerPrice = cif * (1 + clearing) * (1 + importerMarkup);
+  const distributorT3 = importerPrice * (1 + distributorMarkup);
 
   return {
     finalCost,

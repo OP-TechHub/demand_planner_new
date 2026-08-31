@@ -2,8 +2,8 @@
 
 import { useActionState, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Lock, Pencil, Plus } from 'lucide-react';
-import { computeCost, type DomesticOutput, type ExportOutput } from '@oceanpick/engine';
+import { Download, FileText, Lock, Pencil, Plus, Printer } from 'lucide-react';
+import { computeCost, type DomesticOutput, type ExportOutput, type WholeFishCost } from '@oceanpick/engine';
 import {
   COST_CATEGORIES,
   type CostAssumptionVersion,
@@ -17,7 +17,10 @@ import {
 } from '@oceanpick/shared';
 import { toAssumptions } from '@/lib/costing-adapt';
 import { cn } from '@/lib/utils';
+import { downloadDoc, slugify } from '@/lib/doc-export';
+import { COST_SHEET_ID } from '@/components/cost-sheet-parts';
 import { ScrollX } from '@/components/ui/scroll-x';
+import { SkuCostSheet } from './sku-cost-sheet';
 import { archiveCostSku, saveCostSku, saveSkuBucketYield, type SkuFormState } from './actions';
 
 type YieldMap = Record<string, Record<string, number>>;
@@ -336,6 +339,20 @@ interface PreviewResult {
   /** In target mode, whether a target was actually entered for that market. */
   hasTargetDomestic: boolean;
   hasTargetExport: boolean;
+  /**
+   * The rest is not used by the on-screen preview at all — it is what the
+   * downloadable sheet needs to show the ex-farm build-up and identify the SKU.
+   * Kept on the preview so the document and the panel can never be costed from
+   * two different snapshots of the form.
+   */
+  domesticWholeFish: WholeFishCost | null;
+  exportWholeFish: WholeFishCost | null;
+  skuName: string;
+  category: string;
+  customer: string;
+  absorbed: boolean;
+  pctFish: number;
+  pctMarinade: number;
 }
 
 /**
@@ -390,12 +407,17 @@ function previewFromForm(
       coldHoldLkr: optional('override_cold_hold_lkr'),
       freightToPortUsd: optional('override_freight_to_port_usd'),
       coldChainUsd: optional('override_cold_chain_usd'),
+      importerClearingPct: optional('override_importer_clearing_pct'),
+      importerMarkupPct: optional('override_importer_markup_pct'),
+      distributorMarkupPct: optional('override_distributor_markup_pct'),
     },
   };
 
   const issues: string[] = [];
   let domesticOut: DomesticOutput | null = null;
   let exportOut: ExportOutput | null = null;
+  let domesticWholeFish: WholeFishCost | null = null;
+  let exportWholeFish: WholeFishCost | null = null;
   let hasTargetDomestic = false;
   let hasTargetExport = false;
 
@@ -407,8 +429,10 @@ function previewFromForm(
       assumptions,
       sku: { ...base, marketPrice: price, targetPrice: price },
     });
-    if (res.ok) domesticOut = res.value.result as DomesticOutput;
-    else issues.push(...res.issues.map((i) => i.message));
+    if (res.ok) {
+      domesticOut = res.value.result as DomesticOutput;
+      domesticWholeFish = res.value.wholeFish;
+    } else issues.push(...res.issues.map((i) => i.message));
   }
 
   if (marketScope === 'export' || marketScope === 'both') {
@@ -429,8 +453,10 @@ function previewFromForm(
         sku: { ...base, marketPrice: price, targetPrice: price },
         destination: { id: dest.id, name: dest.name, seaRatePer20ft: rate.sea, airRatePerLot: rate.air },
       });
-      if (res.ok) exportOut = res.value.result as ExportOutput;
-      else issues.push(...res.issues.map((i) => i.message));
+      if (res.ok) {
+        exportOut = res.value.result as ExportOutput;
+        exportWholeFish = res.value.wholeFish;
+      } else issues.push(...res.issues.map((i) => i.message));
     }
   }
 
@@ -442,6 +468,14 @@ function previewFromForm(
     glazePct: base.glazePct,
     hasTargetDomestic,
     hasTargetExport,
+    domesticWholeFish,
+    exportWholeFish,
+    skuName: base.name,
+    category: base.category,
+    customer: String(fd.get('customer') ?? ''),
+    absorbed: base.rawMaterialBasis === 'absorbed',
+    pctFish: base.pctFish,
+    pctMarinade: base.pctMarinade,
   };
 }
 
@@ -456,23 +490,50 @@ function PreviewPanel({
   preview,
   form,
   onPriceChange,
+  onPrint,
+  onWord,
 }: {
   preview: PreviewResult;
   form: CostProductForm;
   /** Try a price: writes it into the form and recosts through the engine. */
   onPriceChange: (market: 'domestic' | 'export', value: string) => void;
+  onPrint: () => void;
+  onWord: () => void;
 }) {
   const target = preview.pricingMode === 'target';
   // Glaze only earns a row of its own once it actually changes the cost.
   const glazed = preview.glazePct > 0;
   return (
     <div className="space-y-3 rounded-md border border-primary/30 bg-primary/5 p-3">
-      <h3 className="text-xs font-semibold">
-        Costing preview
-        <span className="ml-1.5 font-normal text-muted-foreground">
-          priced on {target ? 'your target' : 'the standard margin'} · not saved yet
-        </span>
-      </h3>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <h3 className="text-xs font-semibold">
+          Costing preview
+          <span className="ml-1.5 font-normal text-muted-foreground">
+            priced on {target ? 'your target' : 'the standard margin'} · not saved yet
+          </span>
+        </h3>
+        {/*
+          The document is only offered once there is something costed to put in
+          it — downloading a breakdown of a recipe that has not been calculated
+          would produce an empty or stale sheet.
+        */}
+        <div className="flex shrink-0 gap-1.5">
+          <button
+            type="button"
+            onClick={onPrint}
+            className="inline-flex items-center gap-1 rounded-md border bg-card px-2 py-1 text-[11px] font-medium hover:bg-muted"
+          >
+            <Printer className="h-3 w-3" /> Print / PDF
+          </button>
+          <button
+            type="button"
+            onClick={onWord}
+            className="inline-flex items-center gap-1 rounded-md border bg-card px-2 py-1 text-[11px] font-medium hover:bg-muted"
+          >
+            <FileText className="h-3 w-3" /> Word
+          </button>
+        </div>
+      </div>
 
       <p className="text-[11px] text-muted-foreground">
         Type over <strong className="font-medium text-foreground">Your price</strong> to see what any
@@ -643,6 +704,7 @@ function SkuDialog({
   const formRef = useRef<HTMLFormElement>(null);
   const [state, action, pending] = useActionState<SkuFormState, FormData>(saveCostSku, { error: null, ok: false });
   const [preview, setPreview] = useState<PreviewResult | null>(null);
+  const [downloadOpen, setDownloadOpen] = useState(false);
 
   /**
    * Which record the field defaults come from.
@@ -658,6 +720,14 @@ function SkuDialog({
   const [name, setName] = useState(sku?.name ?? '');
   const [basis, setBasis] = useState(src?.raw_material_basis ?? 'full_fish');
   const [form, setForm] = useState(src?.product_form ?? 'both');
+  // Glazed is not stored as its own flag — a SKU is glazed exactly when it
+  // carries glaze. The toggle is derived from that on open and collapses back
+  // to a glaze of 0 when switched off, so there is one fact, not two that can
+  // disagree.
+  const [glazed, setGlazed] = useState((src?.glaze_pct ?? 0) > 0);
+  const [glazePctValue, setGlazePctValue] = useState(
+    src?.glaze_pct ? String(src.glaze_pct) : ''
+  );
   const [categoryChoice, setCategoryChoice] = useState(
     src?.category && categories.includes(src.category) ? src.category : (categories[0] ?? 'Whole')
   );
@@ -684,7 +754,36 @@ function SkuDialog({
 
   // A stale preview is worse than none: it shows numbers for a recipe that is
   // no longer on screen. Any edit clears it until Calculate is pressed again.
-  const invalidatePreview = () => setPreview(null);
+  const invalidatePreview = () => {
+    setPreview(null);
+    setDownloadOpen(false);
+  };
+
+  /**
+   * Open the download menu, costing the SKU first if that has not happened yet.
+   *
+   * The sheet is rendered from the preview, so there is nothing to download
+   * until one exists — but making the user press Calculate before the button
+   * does anything is a worse answer than just calculating for them.
+   */
+  function openDownload() {
+    if (!preview) calculate();
+    setDownloadOpen(true);
+  }
+
+  function downloadWord() {
+    if (!preview) return;
+    const label = preview.skuName || 'SKU';
+    if (!downloadDoc(`${slugify(label, 'sku')}-cost-breakdown`, COST_SHEET_ID, `${label} — cost breakdown`)) {
+      alert('Could not build the document — the breakdown sheet was not found on the page.');
+    }
+    setDownloadOpen(false);
+  }
+
+  function printSheet() {
+    setDownloadOpen(false);
+    window.print();
+  }
 
   /**
    * Try a price straight from the preview table.
@@ -731,6 +830,8 @@ function SkuDialog({
     setSrc(source);
     setBasis(source.raw_material_basis);
     setForm(source.product_form);
+    setGlazed((source.glaze_pct ?? 0) > 0);
+    setGlazePctValue(source.glaze_pct ? String(source.glaze_pct) : '');
     setCategoryChoice(categories.includes(source.category) ? source.category : (categories[0] ?? 'Whole'));
     setName(`${source.name} (copy)`);
   }
@@ -899,12 +1000,20 @@ function SkuDialog({
             step="0.01"
             hint="fraction — 0.45 = 45% of whole fish"
           />
-          <Field
-            label="Glaze"
-            name="glaze_pct"
-            defaultValue={src?.glaze_pct ?? 0}
-            step="0.01"
-            hint="fraction — 0.2 = 20% added ice. Frozen only"
+          <GlazeField
+            glazed={glazed}
+            // The toggle is a button, so it never fires the form's onInput and
+            // would leave a preview standing for a recipe that just changed.
+            setGlazed={(v) => {
+              setGlazed(v);
+              invalidatePreview();
+            }}
+            value={glazePctValue}
+            setValue={setGlazePctValue}
+            // Glaze is added ice, so a fresh-only product cannot carry any.
+            // Locked rather than merely validated on save: offering a choice
+            // that will be rejected is worse than not offering it.
+            fresh={form === 'fresh'}
           />
           <Field
             label="Pack size"
@@ -1070,13 +1179,46 @@ function SkuDialog({
                     inherited={version.export_cold_chain_usd} step="0.01" kind="usd"
                   />
                 </div>
+
+                {/*
+                  Past FOB. These do not touch this SKU's cost or its FOB — they
+                  shape the CIF → importer → distributor ladder underneath it,
+                  which is why they sit in their own row rather than beside the
+                  adders that do move the cost.
+                */}
+                <p className="mt-3 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                  Downstream — past FOB
+                </p>
+                <div className="mt-1 grid gap-3 sm:grid-cols-3">
+                  <OverrideField
+                    label="Importer clearing" name="override_importer_clearing_pct"
+                    current={src?.override_importer_clearing_pct ?? null}
+                    inherited={version.importer_clearing_pct} step="0.01" kind="pct"
+                  />
+                  <OverrideField
+                    label="Importer markup" name="override_importer_markup_pct"
+                    current={src?.override_importer_markup_pct ?? null}
+                    inherited={version.importer_markup_pct} step="0.01" kind="pct"
+                  />
+                  <OverrideField
+                    label="Distributor markup" name="override_distributor_markup_pct"
+                    current={src?.override_distributor_markup_pct ?? null}
+                    inherited={version.distributor_markup_pct} step="0.01" kind="pct"
+                  />
+                </div>
               </div>
             </div>
           )}
         </div>
 
         {preview ? (
-          <PreviewPanel preview={preview} form={form} onPriceChange={tryPrice} />
+          <PreviewPanel
+            preview={preview}
+            form={form}
+            onPriceChange={tryPrice}
+            onPrint={() => window.print()}
+            onWord={downloadWord}
+          />
         ) : (
           <p className="rounded-md bg-muted/50 px-3 py-2 text-[11px] text-muted-foreground">
             Press Calculate to cost this SKU and see the price and margin before saving.
@@ -1097,12 +1239,74 @@ function SkuDialog({
             >
               Calculate
             </button>
+
+            <div className="relative">
+              <button
+                type="button"
+                onClick={openDownload}
+                className="inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm font-medium hover:bg-muted"
+              >
+                <Download className="h-3.5 w-3.5" /> Download
+              </button>
+              {downloadOpen && (
+                <>
+                  {/* Click-away, behind the menu but above the form. */}
+                  <div className="fixed inset-0 z-10" onClick={() => setDownloadOpen(false)} />
+                  <div className="absolute bottom-full right-0 z-20 mb-1 w-56 overflow-hidden rounded-md border bg-popover shadow-lg">
+                    <button
+                      type="button"
+                      onClick={printSheet}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-muted"
+                    >
+                      <Printer className="h-3.5 w-3.5" /> Print / Save as PDF
+                    </button>
+                    <button
+                      type="button"
+                      onClick={downloadWord}
+                      className="flex w-full items-center gap-2 border-t px-3 py-2 text-left text-sm hover:bg-muted"
+                    >
+                      <FileText className="h-3.5 w-3.5" /> Download as Word
+                    </button>
+                    <p className="border-t bg-muted/40 px-3 py-1.5 text-[11px] text-muted-foreground">
+                      The full cost build-up for this SKU, at current assumptions.
+                    </p>
+                  </div>
+                </>
+              )}
+            </div>
             <button type="submit" disabled={pending} className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-50">
               {pending ? 'Saving…' : pricingMode === 'target' ? 'Save with target price' : 'Save'}
             </button>
           </div>
         </div>
       </form>
+
+      {/*
+        The document itself. It sits outside the form's fixed, scrolling modal
+        on purpose: a fixed-position ancestor confines a printed element to the
+        first page, which would silently truncate a two-market sheet. Hidden on
+        screen, revealed by the #cost-sheet print rules in globals.css, and read
+        as-is by the Word export.
+      */}
+      {preview && (
+        <div className="hidden print:block" onClick={(e) => e.stopPropagation()}>
+          <SkuCostSheet
+            elementId={COST_SHEET_ID}
+            skuName={preview.skuName || (sku?.name ?? 'SKU')}
+            category={preview.category}
+            customer={preview.customer}
+            assumptionsLabel={`v${version.version_no}${version.label ? ` · ${version.label}` : ''}`}
+            glazePct={preview.glazePct}
+            absorbed={preview.absorbed}
+            pctFish={preview.pctFish}
+            pctMarinade={preview.pctMarinade}
+            domestic={preview.domestic}
+            domesticWholeFish={preview.domesticWholeFish}
+            exportOut={preview.export}
+            exportWholeFish={preview.exportWholeFish}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -1211,6 +1415,81 @@ function Field({
   );
 }
 
+/**
+ * Glazed or not, and the percentage only when it is.
+ *
+ * `glaze_pct` is always submitted — 0 when unglazed — so the server and the
+ * engine keep seeing the single numeric field they already understand. The
+ * toggle is pure UI over that one number.
+ */
+function GlazeField({
+  glazed,
+  setGlazed,
+  value,
+  setValue,
+  fresh,
+}: {
+  glazed: boolean;
+  setGlazed: (v: boolean) => void;
+  value: string;
+  setValue: (v: string) => void;
+  fresh: boolean;
+}) {
+  const on = glazed && !fresh;
+  return (
+    <div className="block">
+      <span className="text-xs font-medium">Glaze</span>
+      <div className="mt-1 inline-flex w-full rounded-md border p-0.5">
+        {([
+          [false, 'Not glazed'],
+          [true, 'Glazed'],
+        ] as [boolean, string][]).map(([v, label]) => (
+          <button
+            key={label}
+            type="button"
+            disabled={fresh && v}
+            onClick={() => setGlazed(v)}
+            className={cn(
+              'flex-1 rounded px-2 py-1 text-xs font-medium transition-colors',
+              on === v ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground',
+              fresh && v && 'cursor-not-allowed opacity-50 hover:text-muted-foreground'
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {on ? (
+        <>
+          <input
+            name="glaze_pct"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            type="number"
+            step="0.01"
+            min="0"
+            autoFocus
+            placeholder="0.2"
+            className={cn(inputCls, 'mt-1.5 w-full')}
+          />
+          <span className="mt-0.5 block text-[10px] text-muted-foreground">
+            fraction — 0.2 = 20% added ice
+          </span>
+        </>
+      ) : (
+        <>
+          {/* Still submitted, so the server sees the field it expects. */}
+          <input type="hidden" name="glaze_pct" value="0" />
+          <span className="mt-1.5 block text-[10px] text-muted-foreground">
+            {fresh ? 'Fresh product carries no glaze — it is added ice.' : 'No added ice.'}
+          </span>
+        </>
+      )}
+    </div>
+  );
+}
+
 function Select({
   label, name, defaultValue, options, onChange,
 }: {
@@ -1235,7 +1514,10 @@ const hasOverride = (s: CostSkuRow): boolean =>
   s.override_transport_lkr != null ||
   s.override_cold_hold_lkr != null ||
   s.override_freight_to_port_usd != null ||
-  s.override_cold_chain_usd != null;
+  s.override_cold_chain_usd != null ||
+  s.override_importer_clearing_pct != null ||
+  s.override_importer_markup_pct != null ||
+  s.override_distributor_markup_pct != null;
 
 const pct = (n: number) => (n * 100).toFixed(0) + '%';
 const th = 'whitespace-nowrap px-2 py-2 font-medium';

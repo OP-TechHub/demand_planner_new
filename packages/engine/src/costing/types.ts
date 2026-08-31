@@ -73,6 +73,14 @@ export interface SkuOverrides {
   coldHoldLkr?: number;
   freightToPortUsd?: number;
   coldChainUsd?: number;
+  /**
+   * The downstream export ladder, past FOB. Clearing and trade markups are
+   * negotiated per product and per channel, so a SKU can carry its own instead
+   * of every line sharing the version's.
+   */
+  importerClearingPct?: number;
+  importerMarkupPct?: number;
+  distributorMarkupPct?: number;
 }
 
 /**

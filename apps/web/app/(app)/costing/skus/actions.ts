@@ -50,7 +50,13 @@ export async function saveCostSku(_prev: SkuFormState, fd: FormData): Promise<Sk
       ok: false,
     };
   }
-  if (glazePct == null || glazePct < 0) return { error: 'Glaze % must be 0 or more.', ok: false };
+  // Blank reads as null here. With the glazed/not-glazed toggle the only way
+  // to reach that is picking "Glazed" and leaving the box empty, so name that
+  // rather than talking about a field the user never saw when unglazed.
+  if (glazePct == null) {
+    return { error: 'A glazed SKU needs a glaze percentage — 0.2 for 20% added ice.', ok: false };
+  }
+  if (glazePct < 0) return { error: 'Glaze % must be 0 or more.', ok: false };
 
   // Glaze is added ice, so a fresh product cannot carry any. Caught here as well
   // as by a check constraint, so the message names the fix rather than leaking
@@ -81,6 +87,11 @@ export async function saveCostSku(_prev: SkuFormState, fd: FormData): Promise<Sk
     override_cold_hold_lkr: optionalNumber(fd, 'override_cold_hold_lkr'),
     override_freight_to_port_usd: optionalNumber(fd, 'override_freight_to_port_usd'),
     override_cold_chain_usd: optionalNumber(fd, 'override_cold_chain_usd'),
+    // Past FOB. Markups, not margins: they multiply a price rather than divide
+    // into it, so unlike rack/FOB below they carry no upper bound.
+    override_importer_clearing_pct: optionalNumber(fd, 'override_importer_clearing_pct'),
+    override_importer_markup_pct: optionalNumber(fd, 'override_importer_markup_pct'),
+    override_distributor_markup_pct: optionalNumber(fd, 'override_distributor_markup_pct'),
   };
   for (const m of ['override_rack_margin_pct', 'override_fob_margin_pct'] as const) {
     const v = overrides[m];
