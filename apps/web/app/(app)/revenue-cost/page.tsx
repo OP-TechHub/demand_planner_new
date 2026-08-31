@@ -5,7 +5,7 @@ import type { GridRow } from '@/lib/grid-csv';
 import { StalePlanNotice } from '../stale-banner';
 import { MetricGrid, type Metric } from '@/components/metric-grid';
 import { fetchAllByPlan } from '@/lib/fetch-all';
-import { programOrder, gridRowsFor } from '@/lib/outputs';
+import { programOrder, gridRowsFor, unitGridRowsFor } from '@/lib/outputs';
 
 export default async function RevenueCostPage() {
   const plan = await getActivePlan();
@@ -58,6 +58,27 @@ export default async function RevenueCostPage() {
         key: p.id, label: p.label, sublabel: p.sublabel,
         group: statusById.get(p.id) ?? 'active',
         values: Array.from({ length: m }, (_, i) => (fpByPM.get(`${p.id}:${i + 1}`) ?? 0) * rate),
+      };
+    });
+    return { key, label, rows };
+  });
+
+  /**
+   * The same six components per kilo, for the Unit cost tab. These rates are what
+   * the program was set up with, so they sit flat across the months a program
+   * ships in — and read 0 in a month it ships nothing, because there is no kilo
+   * to charge. The weights keep those empty months out of the averages.
+   */
+  const unitCostBreakdown = COST_PARTS.map(({ key, label, perFp }) => {
+    const rows: GridRow[] = order.map((p) => {
+      const prog = progById.get(p.id);
+      const rate = prog ? perFp(prog) : 0;
+      const fp = Array.from({ length: m }, (_, i) => fpByPM.get(`${p.id}:${i + 1}`) ?? 0);
+      return {
+        key: p.id, label: p.label, sublabel: p.sublabel,
+        group: statusById.get(p.id) ?? 'active',
+        values: fp.map((v) => (v > 0 ? rate : 0)),
+        weights: fp,
       };
     });
     return { key, label, rows };
@@ -132,6 +153,12 @@ export default async function RevenueCostPage() {
     // rather than the primary path throughout. Excel does the latter, so `Margin`
     // stays the parity figure and this sits beside it.
     { key: 'margin_path', label: 'Margin (per-path)', format: 'usd', rows: [...tag(gridRowsFor(order, rr, m, 'rolling_margin_per_path')), ...secRows] },
+    // Per kilo of finished product. Program rows only: secondary products are
+    // recovered from round weight, so their revenue has no kg of finished
+    // product behind it and cannot share this denominator.
+    { key: 'unit_revenue', label: 'Unit revenue', format: 'usd2', aggregate: 'ratio', rows: tag(unitGridRowsFor(order, rr, m, 'revenue')) },
+    { key: 'unit_cost', label: 'Unit cost', format: 'usd2', aggregate: 'ratio', rows: tag(unitGridRowsFor(order, rr, m, 'cost')), breakdown: unitCostBreakdown },
+    { key: 'unit_margin', label: 'Unit margin', format: 'usd2', aggregate: 'ratio', rows: tag(unitGridRowsFor(order, rr, m, 'rolling_margin')) },
   ];
 
   // The column only has values after a recompute; existing rows default to 0.
@@ -154,6 +181,17 @@ export default async function RevenueCostPage() {
         earn is also a dollar of margin — which makes the <b>TOTAL</b> row on Margin the plan&apos;s total margin,
         programs and secondary products together. The program rows above it are untouched, so the parity figures are
         still there to read.
+      </p>
+      <p className="text-xs text-muted-foreground">
+        <b>Unit revenue</b>, <b>Unit cost</b> and <b>Unit margin</b> are the same three figures divided by the kilos of
+        finished product behind them — the realised price per kg, the loaded cost per kg, and the difference. A rate
+        can&apos;t be added up, so on these three tabs the total column and the bottom row are a{' '}
+        <b>weighted average</b>: total dollars ÷ total kilos, which lets a large program pull the average its way
+        instead of counting equally with a small one. A month a program ships nothing has no rate, so it reads $0.00 and
+        is left out of the averages rather than dragging them down. <b>Unit cost</b> splits into the same six components
+        through the dropdown. These three tabs carry <b>no Secondary products row</b>: by-products are recovered from
+        round weight, so their revenue has no kilo of finished product behind it and can&apos;t share this denominator —
+        read them on the dollar tabs above.
       </p>
       {hasMargin && !perPathReady && (
         <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">

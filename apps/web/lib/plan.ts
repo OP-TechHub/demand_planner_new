@@ -16,29 +16,46 @@ export const getCurrentUser = cache(async () => {
   return user;
 });
 
+export type Profile = {
+  id: string;
+  full_name: string;
+  email: string;
+  role: string;
+  is_active: boolean;
+  last_login_at: string | null;
+  edit_sections: string[] | null;
+};
+
+/**
+ * Request-cached profile row plus the query's error, if any.
+ *
+ * The two failure modes look identical to a caller that only sees `null`, but
+ * they mean opposite things: no row = the account was never provisioned; an
+ * error = the database is unreachable (PostgREST 503, RLS refusal) and the row
+ * may well be there. The shell has to tell them apart so it doesn't accuse a
+ * perfectly good account of being unprovisioned during an outage.
+ */
+export const getProfileResult = cache(
+  async (): Promise<{ profile: Profile | null; error: string | null }> => {
+    const user = await getCurrentUser();
+    if (!user) return { profile: null, error: null };
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from('users')
+      .select('id, full_name, email, role, is_active, last_login_at, edit_sections')
+      .eq('id', user.id)
+      .maybeSingle();
+    return { profile: (data as Profile) ?? null, error: error ? error.message : null };
+  }
+);
+
 /**
  * Request-cached profile row (role, grants, status). Shared by the layout and
- * every page that used to run its own `users` query.
+ * every page that used to run its own `users` query. Null means "no usable
+ * profile" — use getProfileResult where a failed query must not be mistaken
+ * for a missing account.
  */
-export const getProfile = cache(async () => {
-  const user = await getCurrentUser();
-  if (!user) return null;
-  const supabase = await createClient();
-  const { data } = await supabase
-    .from('users')
-    .select('id, full_name, email, role, is_active, last_login_at, edit_sections')
-    .eq('id', user.id)
-    .maybeSingle();
-  return data as {
-    id: string;
-    full_name: string;
-    email: string;
-    role: string;
-    is_active: boolean;
-    last_login_at: string | null;
-    edit_sections: string[] | null;
-  } | null;
-});
+export const getProfile = cache(async () => (await getProfileResult()).profile);
 
 /**
  * The current user's per-plan edit grants for one plan: the set of input tabs

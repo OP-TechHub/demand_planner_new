@@ -4,18 +4,18 @@ import { useEffect, useRef, useState } from 'react';
 import { BarChart3 } from 'lucide-react';
 import { monthLabel } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
-import { kg, usd, usd0, num0, pct } from '@/lib/format';
+import { kg, usd, usd0, usd2, num0, pct } from '@/lib/format';
 import { ScrollX } from '@/components/ui/scroll-x';
-import type { GridRow } from '@/lib/grid-csv';
+import { weightedTotal, type Aggregate, type GridRow } from '@/lib/grid-csv';
 
-export type { GridRow };
+export type { GridRow, Aggregate };
 
 /**
  * Formatters and colour scales are resolved HERE, from a serializable key —
  * this is a client component, and functions can't cross the server→client
  * boundary (the output pages are server components).
  */
-const FMT = { kg, usd, usd0, num0, pct } as const;
+const FMT = { kg, usd, usd0, usd2, num0, pct } as const;
 export type FmtKey = keyof typeof FMT;
 
 const COLOR = {
@@ -42,6 +42,7 @@ export function OutputGrid({
   horizon,
   rows,
   format,
+  aggregate = 'sum',
   colorFor,
   rightLabel = '60mo total',
   showColumnTotals = true,
@@ -56,6 +57,12 @@ export function OutputGrid({
   horizon: number;
   rows: GridRow[];
   format: FmtKey;
+  /**
+   * How the total column and TOTAL row are arrived at. 'sum' adds; 'ratio'
+   * takes a weighted average over each row's `weights`, which is the only
+   * honest way to total a $/kg rate.
+   */
+  aggregate?: Aggregate;
   colorFor?: ColorKey;
   rightLabel?: string;
   showColumnTotals?: boolean;
@@ -99,8 +106,44 @@ export function OutputGrid({
   const color = colorFor ? COLOR[colorFor] : undefined;
 
   // Totals cover the visible range, so a row total always matches the cells beside it.
-  const rowTotal = (r: GridRow) => visibleMonths.reduce((s: number, mo) => s + (r.values[mo - 1] ?? 0), 0);
-  const colTotal = (mo: number) => rows.reduce((s: number, r) => s + (r.values[mo - 1] ?? 0), 0);
+  const ratio = aggregate === 'ratio';
+  const rowTotal = (r: GridRow) =>
+    ratio ? weightedTotal(r, visibleMonths) : visibleMonths.reduce((s: number, mo) => s + (r.values[mo - 1] ?? 0), 0);
+
+  /**
+   * A month's figure across every row. Summing is right for dollars and kilos;
+   * for a rate it is nonsense, so those re-derive the rate from the underlying
+   * quantities — Σ(rate × kg) ÷ Σkg, i.e. total dollars over total kilos. A
+   * heavy program therefore pulls the average its way, as it should.
+   */
+  const colTotal = (mo: number): number | null => {
+    if (!ratio) return rows.reduce((s: number, r) => s + (r.values[mo - 1] ?? 0), 0);
+    let num = 0;
+    let den = 0;
+    for (const r of rows) {
+      const w = r.weights?.[mo - 1] ?? 0;
+      if (!w) continue;
+      num += (r.values[mo - 1] ?? 0) * w;
+      den += w;
+    }
+    return den > 0 ? num / den : null;
+  };
+
+  /** The bottom-right cell: every row over every visible month, aggregated once. */
+  const grandTotal = (): number | null => {
+    if (!ratio) return rows.reduce((s: number, r) => s + ((rowTotal(r) as number) ?? 0), 0);
+    let num = 0;
+    let den = 0;
+    for (const r of rows) {
+      for (const mo of visibleMonths) {
+        const w = r.weights?.[mo - 1] ?? 0;
+        if (!w) continue;
+        num += (r.values[mo - 1] ?? 0) * w;
+        den += w;
+      }
+    }
+    return den > 0 ? num / den : null;
+  };
   // A vertical divider at each fiscal-year boundary (M13, M25, …) to orient the eye.
   const yearStart = (mo: number) => mo > 1 && (mo - 1) % 12 === 0;
   const stickyCol =
@@ -159,7 +202,7 @@ export function OutputGrid({
               ))}
               {!hideTotals && (
                 <th className="sticky top-0 z-20 min-w-[6rem] border-b border-l border-border bg-muted px-3 py-2 text-right font-semibold">
-                  {fullRange ? rightLabel : 'Range total'}
+                  {fullRange ? (ratio ? 'Weighted avg' : rightLabel) : ratio ? 'Range avg' : 'Range total'}
                 </th>
               )}
             </tr>
@@ -202,12 +245,14 @@ export function OutputGrid({
             ))}
             {!hideTotals && showColumnTotals && rows.length > 0 && (
               <tr className="border-t-2 bg-muted/40 font-semibold">
-                <td className={cn(stickyCol, 'bg-muted/40 px-3 py-1.5')}>TOTAL</td>
+                <td className={cn(stickyCol, 'bg-muted/40 px-3 py-1.5')} title={ratio ? 'Total dollars ÷ total kilos — not the average of the rows' : undefined}>
+                  {ratio ? 'WEIGHTED AVG' : 'TOTAL'}
+                </td>
                 {extraCols?.map((c) => <td key={c.label} className="border-r px-3 py-1.5" />)}
                 {visibleMonths.map((mo) => (
                   <td key={mo} className={cn('px-2 py-1.5 text-right tabular-nums', yearStart(mo) && 'border-l border-border/60')}>{fmt(colTotal(mo))}</td>
                 ))}
-                <td className="border-l px-3 py-1.5 text-right tabular-nums">{fmt(rows.reduce((s: number, r) => s + rowTotal(r), 0))}</td>
+                <td className="border-l px-3 py-1.5 text-right tabular-nums">{fmt(grandTotal())}</td>
               </tr>
             )}
           </tbody>
