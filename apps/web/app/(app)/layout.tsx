@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation';
 import { LogOut } from 'lucide-react';
 import { AppSidebar } from '@/components/app-sidebar';
 import type { UserRole } from '@oceanpick/shared';
-import { getActivePlan, getSelectablePlans, getCurrentUser, getProfile, getUserName } from '@/lib/plan';
+import { getActivePlan, getSelectablePlans, getCurrentUser, getProfileResult, getUserName } from '@/lib/plan';
 import { PlanSelector } from './plan-selector';
 import { ScenarioBanner, OfficialPlanBanner, type ScenarioAccess } from './scenario-banner';
 import { ThemeToggle } from '@/components/theme-toggle';
@@ -16,20 +16,42 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   if (!user) redirect('/login');
 
   // Request-cached: shared with every page under this layout on the same render.
-  const profile = await getProfile();
+  const { profile, error: profileError } = await getProfileResult();
 
-  // A profile row is created by the handle_new_user() trigger. If it's missing,
-  // something went wrong at signup rather than the user being unauthorised —
-  // fail loudly instead of showing a broken shell.
+  // Auth lives in a different service from the data, so signing in successfully
+  // proves nothing about the database being up. When the profile query itself
+  // failed, the account is almost certainly fine — say so, rather than sending
+  // the user to an admin to re-seed a database that is merely unreachable.
+  if (profileError) {
+    return (
+      <main className="flex min-h-screen items-center justify-center px-4">
+        <div className="max-w-md rounded-lg border border-destructive/30 bg-destructive/10 p-6 text-sm">
+          <p className="font-semibold text-destructive">Can’t reach the database</p>
+          <p className="mt-2 text-destructive">
+            You’re signed in, but the app couldn’t load your profile. This is a service
+            problem, not a problem with your account — check the Supabase project status
+            and try again in a minute.
+          </p>
+          <p className="mt-2 font-mono text-xs text-destructive/80">{profileError}</p>
+        </div>
+      </main>
+    );
+  }
+
+  // A profile row is created by the handle_new_user() trigger. If the query
+  // succeeded and still found nothing, something went wrong at signup rather
+  // than the user being unauthorised — fail loudly instead of a broken shell.
   if (!profile) {
     return (
       <main className="flex min-h-screen items-center justify-center px-4">
         <div className="max-w-md rounded-lg border border-destructive/30 bg-destructive/10 p-6 text-sm">
           <p className="font-semibold text-destructive">Account not fully provisioned</p>
           <p className="mt-2 text-destructive">
-            Your login exists but your profile row is missing. This usually means the seed
-            never ran, so no organisation matches your email domain. Ask an admin to run
-            <code className="mx-1 rounded bg-destructive/15 px-1">supabase/seed.sql</code>.
+            Your login exists but your profile row is missing. Either the seed never ran
+            (no Oceanpick organisation for the signup trigger to attach you to), or this
+            login predates the schema. Ask an admin to run
+            <code className="mx-1 rounded bg-destructive/15 px-1">supabase/seed.sql</code>
+            and sign up again.
           </p>
         </div>
       </main>

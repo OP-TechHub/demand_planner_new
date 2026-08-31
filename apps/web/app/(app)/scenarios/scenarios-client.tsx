@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useEffect, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Plus, CalendarPlus } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -11,10 +11,23 @@ import { Input, Textarea } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { toast } from '@/components/ui/toast';
 import { confirmDialog } from '@/components/ui/confirm';
-import { createScenario, createPlan, deleteScenario, renameScenario, setActivePlan } from '../plan-actions';
+import { createScenario, createPlan, deleteScenario, listPlanPrograms, renameScenario, setActivePlan } from '../plan-actions';
 
 interface ScenarioRow { id: string; name: string; description: string; forked_at: string | null }
-export interface PickProgram { id: string; item_code: string; item_description: string; customer: string }
+
+/** One row of the New plan dialog's program picker, as returned by `listPlanPrograms`. */
+interface PickProgram { id: string; item_code: string; item_description: string; customer: string }
+
+/** A plan a new scenario can be forked from. */
+export interface ForkSource {
+  id: string;
+  name: string;
+  /** 'master' and 'official' are the org's shared plans; 'mine' is the caller's own sandbox. */
+  kind: 'master' | 'official' | 'mine';
+  isLive: boolean;
+  horizonMonths: number;
+  planStartDate: string;
+}
 
 export function ScenariosClient({
   scenarios,
@@ -22,17 +35,20 @@ export function ScenariosClient({
   hasMaster,
   canCreate,
   yearsAhead,
-  programs,
+  forkSources,
 }: {
   scenarios: ScenarioRow[];
   activeId: string;
   hasMaster: boolean;
   canCreate: boolean;
   yearsAhead: number;
-  programs: PickProgram[];
+  forkSources: ForkSource[];
 }) {
   const router = useRouter();
+  // Both open the same dialog; `creating` starts it at the default source,
+  // while the row's Duplicate button pre-selects that scenario.
   const [creating, setCreating] = useState(false);
+  const [duplicating, setDuplicating] = useState<ScenarioRow | null>(null);
   const [planning, setPlanning] = useState(false);
   const [renaming, setRenaming] = useState<ScenarioRow | null>(null);
   const [isPending, start] = useTransition();
@@ -80,7 +96,12 @@ export function ScenariosClient({
       )}
 
       <p className="text-xs text-muted-foreground">
-        <b>New Plan</b> starts a fresh plan for a financial year with the programs you choose. <b>New Scenario</b> is a full what-if fork of the master. Either way the master is never affected. {scenarios.length} of 20 used.
+        Both start from a plan you can see — the master, an official plan, or one of your own scenarios — so you can
+        branch off work you&apos;ve already done instead of starting from the master each time. <b>New Plan</b> takes that
+        plan&apos;s programs and settings but a start and length you choose. <b>New Scenario</b> is a full what-if copy,
+        window and all. <b>Duplicate</b> on a row is a scenario with that row pre-picked. Whatever you base on is never
+        affected.{' '}
+        {scenarios.length} of 20 used.
       </p>
 
       {error && !creating && (
@@ -110,6 +131,13 @@ export function ScenariosClient({
                 <td className="px-3 py-2">
                   <div className="flex justify-end gap-3">
                     <button onClick={() => open(s.id)} disabled={isPending} className="text-primary hover:underline">Open</button>
+                    <button
+                      onClick={() => { setError(null); setDuplicating(s); }}
+                      disabled={isPending || !canCreate || scenarios.length >= 20}
+                      className="text-muted-foreground hover:text-foreground disabled:opacity-50"
+                    >
+                      Duplicate
+                    </button>
                     <button onClick={() => setRenaming(s)} disabled={isPending} className="text-muted-foreground hover:text-foreground">Rename</button>
                     <button onClick={() => onDelete(s)} disabled={isPending} className="text-muted-foreground hover:text-destructive">Delete</button>
                   </div>
@@ -127,7 +155,8 @@ export function ScenariosClient({
 
       {planning && (
         <NewPlanModal
-          programs={programs}
+          sources={forkSources}
+          activeId={activeId}
           yearsAhead={yearsAhead}
           pending={isPending}
           error={error}
@@ -143,15 +172,25 @@ export function ScenariosClient({
         />
       )}
 
-      {creating && (
+      {(creating || duplicating) && (
         <CreateModal
-          onClose={() => setCreating(false)}
-          onCreate={(name, description) => {
+          key={duplicating?.id ?? 'new'}
+          sources={forkSources}
+          activeId={activeId}
+          initialSourceId={duplicating?.id}
+          initialName={duplicating ? `${duplicating.name} (copy)` : ''}
+          onClose={() => { setCreating(false); setDuplicating(null); }}
+          onCreate={(name, description, sourcePlanId) => {
             setError(null);
             start(async () => {
-              const res = await createScenario(name, description);
+              const res = await createScenario(name, description, { sourcePlanId });
               if (res.error) setError(res.error);
-              else { toast.success(`Created “${name.trim()}”`); setCreating(false); router.push('/home'); }
+              else {
+                toast.success(`Created “${name.trim()}”`);
+                setCreating(false);
+                setDuplicating(null);
+                router.push('/home');
+              }
             });
           }}
           pending={isPending}
@@ -215,36 +254,123 @@ function RenameDialog({
   );
 }
 
+/**
+ * Which plan a dialog should start on: an explicit pick (a row's Duplicate),
+ * else whatever you're looking at — you reach for "New scenario"/"New plan"
+ * while working in a plan far more often than from a standing start — else the
+ * org's live plan, then the master.
+ */
+function pickDefaultSource(sources: ForkSource[], activeId: string, preferred?: string): string {
+  return (
+    sources.find((s) => s.id === preferred)?.id ??
+    sources.find((s) => s.id === activeId)?.id ??
+    sources.find((s) => s.isLive)?.id ??
+    sources.find((s) => s.kind === 'master')?.id ??
+    sources[0]?.id ??
+    ''
+  );
+}
+
+/** The grouped "Copy from" / "Base on" picker shared by New scenario and New plan. */
+function SourceSelect({
+  sources,
+  value,
+  onChange,
+  label,
+}: {
+  sources: ForkSource[];
+  value: string;
+  onChange: (id: string) => void;
+  label: string;
+}) {
+  const shared = sources.filter((s) => s.kind !== 'mine');
+  const mine = sources.filter((s) => s.kind === 'mine');
+  return (
+    <label className="block space-y-1.5">
+      <span className="text-xs font-medium text-muted-foreground">{label}</span>
+      <Select value={value} onChange={(e) => onChange(e.target.value)}>
+        {shared.length > 0 && (
+          <optgroup label="Plans">
+            {shared.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+                {s.kind === 'master' ? ' (master)' : ''}
+                {s.isLive ? ' — live' : ''}
+              </option>
+            ))}
+          </optgroup>
+        )}
+        {mine.length > 0 && (
+          <optgroup label="My scenarios">
+            {mine.map((s) => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+          </optgroup>
+        )}
+      </Select>
+    </label>
+  );
+}
+
+/** 'Apr 2026 · 12 months' — the window a fork would inherit from its source. */
+function windowOf(s: ForkSource): string {
+  const d = new Date(`${s.planStartDate}T00:00:00`);
+  const start = Number.isNaN(d.getTime())
+    ? s.planStartDate
+    : d.toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+  return `${start} · ${s.horizonMonths} month${s.horizonMonths === 1 ? '' : 's'}`;
+}
+
 function CreateModal({
+  sources,
+  activeId,
+  initialSourceId,
+  initialName = '',
   onClose,
   onCreate,
   pending,
   error,
 }: {
+  sources: ForkSource[];
+  activeId: string;
+  /** Pre-selected source — set when the dialog was opened by a row's Duplicate. */
+  initialSourceId?: string;
+  initialName?: string;
   onClose: () => void;
-  onCreate: (name: string, description: string) => void;
+  onCreate: (name: string, description: string, sourcePlanId: string) => void;
   pending: boolean;
   error: string | null;
 }) {
-  const [name, setName] = useState('');
+  const [sourceId, setSourceId] = useState(() => pickDefaultSource(sources, activeId, initialSourceId));
+  const [name, setName] = useState(initialName);
   const [description, setDescription] = useState('');
+  const source = sources.find((s) => s.id === sourceId);
+
   return (
     <Dialog
       open
       onClose={onClose}
       title="New scenario"
-      description="Forks the current master state (programs, demand, harvest, settings)."
+      description="A full what-if copy — programs, demand, harvest, POs and settings. The plan you copy is never affected."
       className="max-w-sm"
       footer={
         <>
           <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button onClick={() => onCreate(name, description)} disabled={pending || !name.trim()}>
+          <Button onClick={() => onCreate(name, description, sourceId)} disabled={pending || !name.trim() || !sourceId}>
             {pending ? 'Forking…' : 'Create'}
           </Button>
         </>
       }
     >
       <div className="space-y-3">
+        <div className="space-y-1.5">
+          <SourceSelect sources={sources} value={sourceId} onChange={setSourceId} label="Copy from" />
+          {source && (
+            <span className="block text-xs text-muted-foreground">
+              Inherits its window: {windowOf(source)}.
+            </span>
+          )}
+        </div>
         <label className="block space-y-1.5">
           <span className="text-xs font-medium text-muted-foreground">Name</span>
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder='e.g. "Q4 uplift +20%"' autoFocus />
@@ -291,22 +417,26 @@ function addMonthsYM(ym: string, n: number): string {
 }
 
 function NewPlanModal({
-  programs,
+  sources,
+  activeId,
   yearsAhead,
   pending,
   error,
   onClose,
   onCreate,
 }: {
-  programs: PickProgram[];
+  sources: ForkSource[];
+  activeId: string;
   yearsAhead: number;
   pending: boolean;
   error: string | null;
   onClose: () => void;
-  onCreate: (input: { name: string; planStartDate: string; horizonMonths: number; programIds: string[]; copyData: boolean }) => void;
+  onCreate: (input: { name: string; planStartDate: string; horizonMonths: number; programIds: string[]; copyData: boolean; sourcePlanId: string }) => void;
 }) {
   const options = fyStartOptions(yearsAhead);
   const [name, setName] = useState('');
+  const [sourceId, setSourceId] = useState(() => pickDefaultSource(sources, activeId));
+  const source = sources.find((s) => s.id === sourceId);
   const [startMode, setStartMode] = useState<'fy' | 'custom'>('fy');
   const [fyStart, setFyStart] = useState(options[1]?.value ?? options[0]?.value ?? '');
   const [customMonth, setCustomMonth] = useState(''); // 'YYYY-MM'
@@ -315,8 +445,41 @@ function NewPlanModal({
   // Default to a 12-month plan (end = start + 11 months).
   const [endMonth, setEndMonth] = useState<string>(() => addMonthsYM((options[1]?.value ?? '').slice(0, 7), 11));
   const horizon = monthsBetween(startYM, endMonth);
-  const [selected, setSelected] = useState<Set<string>>(new Set(programs.map((p) => p.id)));
+  const [programs, setPrograms] = useState<PickProgram[]>([]);
+  const [loadingPrograms, setLoadingPrograms] = useState(sources.length > 0);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [copyData, setCopyData] = useState(false);
+
+  // The program list belongs to the source plan, so it is fetched when the
+  // dialog opens and again whenever you switch source. Plans already seen this
+  // session are served from the cache so flicking between them stays instant;
+  // switching always re-selects everything, since a half-kept selection from
+  // the previous plan would be meaningless here.
+  const cache = useRef(new Map<string, PickProgram[]>());
+  useEffect(() => {
+    if (!sourceId) { setPrograms([]); setSelected(new Set()); setLoadingPrograms(false); return; }
+    const hit = cache.current.get(sourceId);
+    if (hit) {
+      setPrograms(hit);
+      setSelected(new Set(hit.map((p) => p.id)));
+      setLoadError(null);
+      setLoadingPrograms(false);
+      return;
+    }
+    let cancelled = false;
+    setLoadingPrograms(true);
+    setLoadError(null);
+    listPlanPrograms(sourceId).then((res) => {
+      if (cancelled) return;
+      setLoadingPrograms(false);
+      if (res.error) { setLoadError(res.error); setPrograms([]); setSelected(new Set()); return; }
+      cache.current.set(sourceId, res.programs);
+      setPrograms(res.programs);
+      setSelected(new Set(res.programs.map((p) => p.id)));
+    });
+    return () => { cancelled = true; };
+  }, [sourceId]);
 
   const toggle = (id: string) =>
     setSelected((prev) => {
@@ -326,19 +489,19 @@ function NewPlanModal({
       return next;
     });
 
-  const disabled = pending || !name.trim() || !startDate || horizon < 1 || horizon > 60 || selected.size === 0;
+  const disabled = pending || loadingPrograms || !name.trim() || !startDate || horizon < 1 || horizon > 60 || selected.size === 0 || !sourceId;
 
   return (
     <Dialog
       open
       onClose={onClose}
       title="New plan"
-      description="Create a plan of any length (up to 60 months) with the programs you choose."
+      description="Create a plan of any length (up to 60 months), based on any plan you can see and the programs you choose."
       footer={
         <>
           <Button variant="outline" onClick={onClose}>Cancel</Button>
           <Button
-            onClick={() => onCreate({ name, planStartDate: startDate, horizonMonths: horizon, programIds: [...selected], copyData })}
+            onClick={() => onCreate({ name, planStartDate: startDate, horizonMonths: horizon, programIds: [...selected], copyData, sourcePlanId: sourceId })}
             disabled={disabled}
           >
             {pending ? 'Creating…' : 'Create plan'}
@@ -347,6 +510,14 @@ function NewPlanModal({
       }
     >
       <div className="space-y-4">
+        <div className="space-y-1.5">
+          <SourceSelect sources={sources} value={sourceId} onChange={setSourceId} label="Base on" />
+          <span className="block text-xs text-muted-foreground">
+            Its programs and settings seed the new plan. You pick your own start and length below — unlike New
+            scenario, the window is not inherited. {source?.name ? <>&ldquo;{source.name}&rdquo; is never affected.</> : null}
+          </span>
+        </div>
+
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="block space-y-1.5">
             <span className="text-xs font-medium text-muted-foreground">Plan name</span>
@@ -411,9 +582,18 @@ function NewPlanModal({
               <button type="button" className="text-muted-foreground hover:text-foreground" onClick={() => setSelected(new Set())}>None</button>
             </div>
           </div>
-          {programs.length === 0 ? (
+          {loadingPrograms ? (
             <p className="rounded-md border border-dashed border-border p-3 text-xs text-muted-foreground">
-              The master plan has no programs yet. Add programs first.
+              Loading programs…
+            </p>
+          ) : loadError ? (
+            <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              Could not load programs: {loadError}
+            </p>
+          ) : programs.length === 0 ? (
+            <p className="rounded-md border border-dashed border-border p-3 text-xs text-muted-foreground">
+              {source?.name ? `“${source.name}” has` : 'This plan has'} no programs yet. Pick another plan to base
+              this on, or add programs there first.
             </p>
           ) : (
             <div className="max-h-56 space-y-0.5 overflow-y-auto rounded-md border border-border p-1">
@@ -432,10 +612,11 @@ function NewPlanModal({
 
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={copyData} onChange={(e) => setCopyData(e.target.checked)} />
-          Also copy demand overrides &amp; harvest capacity from master
+          Also copy demand overrides, POs &amp; harvest capacity from {source?.name ? `“${source.name}”` : 'the source plan'}
         </label>
         <p className="text-xs text-muted-foreground">
           Off = programs come in with their baseline demand and empty harvest, ready to plan the new year from scratch.
+          On = months past the new plan&apos;s length are dropped.
         </p>
 
         {error && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}

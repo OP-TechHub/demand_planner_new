@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
-import { ArrowLeft, Download, TrendingDown, TrendingUp } from 'lucide-react';
+import { ArrowLeft, Download, FileText, Printer, TrendingDown, TrendingUp } from 'lucide-react';
 import {
   COST_STATE_LABEL,
   type CostCosting,
@@ -11,8 +11,12 @@ import {
   type CostProductState,
 } from '@oceanpick/shared';
 import { toCsv, downloadCsv } from '@/lib/csv';
+import { downloadDoc, slugify } from '@/lib/doc-export';
+import { Dialog } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
 import { ScrollX } from '@/components/ui/scroll-x';
 import { cn } from '@/lib/utils';
+import { CostSheet, COST_SHEET_ID } from './cost-sheet';
 
 export interface RepricedLine {
   finalCost: number;
@@ -40,6 +44,8 @@ export function CostingDetail({
 }) {
   const [showReprice, setShowReprice] = useState(false);
   const [state, setState] = useState<CostProductState | 'all'>('all');
+  // The line whose breakdown sheet is open, for print / Word / preview.
+  const [sheetLine, setSheetLine] = useState<CostCostingLine | null>(null);
 
   const overrides = Object.entries(costing.assumption_overrides ?? {});
   const states = useMemo(
@@ -56,6 +62,17 @@ export function CostingDetail({
 
   // Only meaningful once the pinned version is no longer the current one.
   const repriceAvailable = !pinnedIsCurrent && Object.keys(repriced).length > 0;
+
+  function onWord() {
+    if (!sheetLine) return;
+    const title = `${costing.name} — ${sheetLine.sku_name}`;
+    const name = `${slugify(costing.name, 'costing')}-${slugify(sheetLine.sku_name, 'sku')}-${sheetLine.state}`;
+    // The sheet is always mounted while a line is selected, so a miss here means
+    // the id moved rather than a timing problem — say so instead of failing mute.
+    if (!downloadDoc(name, COST_SHEET_ID, title)) {
+      window.alert('Could not build the document — the breakdown sheet was not found on the page.');
+    }
+  }
 
   function onExport() {
     const head = ['SKU', 'Port', 'State', 'Currency', 'FINAL cost', 'Selling price', 'Contribution/kg'];
@@ -158,6 +175,7 @@ export function CostingDetail({
                   <th className={th}>Change</th>
                 </>
               )}
+              <th className={cn(th, 'text-right')} />
             </tr>
           </thead>
           <tbody>
@@ -200,12 +218,68 @@ export function CostingDetail({
                       </td>
                     </>
                   )}
+                  <td className={cn(td, 'text-right')}>
+                    <button
+                      onClick={() => setSheetLine(l)}
+                      className="whitespace-nowrap font-medium text-primary hover:underline"
+                    >
+                      Breakdown
+                    </button>
+                  </td>
                 </tr>
               );
             })}
           </tbody>
         </table>
       </ScrollX>
+
+      {/*
+        Two copies of the same sheet, deliberately. The one in the dialog is the
+        on-screen preview; the one below carries COST_SHEET_ID and is what print
+        reveals and the Word export serialises — it sits at page level, outside
+        the dialog's fixed positioning, so a sheet longer than a page still
+        prints in full.
+      */}
+      {sheetLine && (
+        <>
+          <Dialog
+            open
+            onClose={() => setSheetLine(null)}
+            title="Cost breakdown"
+            description={`${sheetLine.sku_name} · ${COST_STATE_LABEL[sheetLine.state]}${sheetLine.destination_name ? ` · ${sheetLine.destination_name}` : ''}`}
+            className="max-w-3xl print:hidden"
+            footer={
+              <>
+                <Button variant="outline" onClick={() => setSheetLine(null)}>Close</Button>
+                <Button variant="outline" onClick={onWord}>
+                  <FileText className="h-4 w-4" /> Download Word
+                </Button>
+                <Button onClick={() => window.print()}>
+                  <Printer className="h-4 w-4" /> Print / Save as PDF
+                </Button>
+              </>
+            }
+          >
+            <div className="max-h-[65vh] overflow-y-auto rounded-md border">
+              <CostSheet costing={costing} line={sheetLine} pinnedLabel={pinnedLabel} authorName={authorName} />
+            </div>
+            <p className="mt-3 text-xs text-muted-foreground">
+              Both formats hold the figures as saved, not as they would price today. The Word file is editable, so
+              anything not meant for the recipient can be taken out before it is sent.
+            </p>
+          </Dialog>
+
+          <div className="hidden print:block">
+            <CostSheet
+              costing={costing}
+              line={sheetLine}
+              pinnedLabel={pinnedLabel}
+              authorName={authorName}
+              elementId={COST_SHEET_ID}
+            />
+          </div>
+        </>
+      )}
     </div>
   );
 }

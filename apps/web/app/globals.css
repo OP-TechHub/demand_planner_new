@@ -137,20 +137,28 @@
 }
 
 /*
- * Printing an offer sheet. The app chrome (sidebar, top bar, filters) has no
- * place on a document sent to a customer, so printing hides everything and
- * reveals only the sheet — visibility rather than display, so the sheet keeps
- * its layout instead of collapsing with its hidden ancestors.
+ * Printing a sheet meant to leave the building — the customer offer, or a
+ * costing breakdown. The app chrome (sidebar, top bar, filters) has no place on
+ * such a document, so printing hides everything and reveals only the sheet —
+ * visibility rather than display, so the sheet keeps its layout instead of
+ * collapsing with its hidden ancestors.
+ *
+ * Both sheets are rendered `hidden print:block` at page level rather than
+ * inside their dialog: a fixed-position ancestor confines a printed element to
+ * the first page, which would silently truncate anything longer.
  */
 @media print {
   body * {
     visibility: hidden !important;
   }
   #offer-sheet,
-  #offer-sheet * {
+  #offer-sheet *,
+  #cost-sheet,
+  #cost-sheet * {
     visibility: visible !important;
   }
-  #offer-sheet {
+  #offer-sheet,
+  #cost-sheet {
     position: absolute;
     top: 0;
     left: 0;
@@ -158,14 +166,20 @@
     color: #000;
     background: #fff;
   }
-  #offer-sheet table {
+  #offer-sheet table,
+  #cost-sheet table {
     page-break-inside: auto;
   }
-  #offer-sheet tr {
+  #offer-sheet tr,
+  #cost-sheet tr {
     page-break-inside: avoid;
   }
-  #offer-sheet thead {
+  #offer-sheet thead,
+  #cost-sheet thead {
     display: table-header-group;
+  }
+  #cost-sheet h2 {
+    page-break-after: avoid;
   }
   @page {
     margin: 16mm;

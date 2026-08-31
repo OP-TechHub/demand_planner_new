@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Download, Search, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toCsv, downloadCsv } from '@/lib/csv';
-import { gridCsvRows, type GridRow } from '@/lib/grid-csv';
+import { gridCsvRows, type Aggregate, type GridRow } from '@/lib/grid-csv';
 import { Button } from '@/components/ui/button';
 import { OutputGrid, type FmtKey } from './output-grid';
 
@@ -15,6 +15,11 @@ export interface Metric {
   label: string;
   rows: GridRow[];
   format: FmtKey; // resolved client-side (functions aren't serializable across the RSC boundary)
+  /**
+   * 'ratio' for a per-kg rate, whose totals must be weighted averages over each
+   * row's `weights` rather than sums. Defaults to 'sum'.
+   */
+  aggregate?: Aggregate;
   /**
    * Optional component split, offered as a dropdown beside the tabs (e.g. Cost →
    * Barra / Packing / …). Each entry replaces the grid's rows; the parts are
@@ -139,7 +144,7 @@ export function MetricGrid({
           size="sm"
           onClick={() => downloadCsv(
             `${filenameBase}-${m.key}${activePart ? `-${activePart.key}` : ''}${statusFilter && status !== 'combined' ? `-${status}` : ''}.csv`,
-            toCsv(gridCsvRows(firstColLabel, planStartDate, horizon, rows, true, extraCols?.map((c) => c.label) ?? []))
+            toCsv(gridCsvRows(firstColLabel, planStartDate, horizon, rows, true, extraCols?.map((c) => c.label) ?? [], m.aggregate ?? 'sum'))
           )}
         >
           <Download />
@@ -151,7 +156,7 @@ export function MetricGrid({
           No {firstColLabel.toLowerCase()}s in this view.
         </p>
       ) : (
-        <OutputGrid planStartDate={planStartDate} horizon={horizon} rows={rows} format={m.format} firstColLabel={firstColLabel} extraCols={extraCols} onRangeChange={onRangeChange} />
+        <OutputGrid planStartDate={planStartDate} horizon={horizon} rows={rows} format={m.format} aggregate={m.aggregate} firstColLabel={firstColLabel} extraCols={extraCols} onRangeChange={onRangeChange} />
       )}
     </div>
   );

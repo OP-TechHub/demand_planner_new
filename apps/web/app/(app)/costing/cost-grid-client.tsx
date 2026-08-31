@@ -140,6 +140,17 @@ export function CostGridClient({
 
   const brokenCount = rows.filter((r) => !r.result.ok).length;
 
+  /**
+   * SKUs that produced no usable row at all. An export SKU can fail for one
+   * port and cost fine for another, so a SKU only counts as broken when every
+   * one of its rows failed — those are the ones saveCosting would drop.
+   */
+  const brokenSkuIds = useMemo(() => {
+    const anyOk = new Map<string, boolean>();
+    for (const r of rows) anyOk.set(r.sku.id, (anyOk.get(r.sku.id) ?? false) || r.result.ok);
+    return new Set([...anyOk].filter(([, ok]) => !ok).map(([id]) => id));
+  }, [rows]);
+
   function onExport() {
     downloadCsv(
       `costing-${market}-${new Date().toISOString().slice(0, 10)}.csv`,
@@ -147,7 +158,7 @@ export function CostGridClient({
     );
   }
 
-  function onSave(name: string) {
+  function onSave(name: string, skuIds: string[]) {
     startTransition(async () => {
       const res = await saveCosting({
         name,
@@ -155,7 +166,7 @@ export function CostGridClient({
         versionId: version.id,
         bucketId: bucketId || null,
         destinationIds: domestic ? [] : selectedDests,
-        skuIds: visibleSkus.map((s) => s.id),
+        skuIds,
       });
       setSaving(false);
       if (res.error) alert(res.error);
@@ -215,7 +226,16 @@ export function CostGridClient({
 
       <Legend />
 
-      {saving && <SaveDialog onCancel={() => setSaving(false)} onSave={onSave} busy={isPending} />}
+      {saving && (
+        <SaveDialog
+          skus={visibleSkus}
+          brokenSkuIds={brokenSkuIds}
+          authors={authors}
+          onCancel={() => setSaving(false)}
+          onSave={onSave}
+          busy={isPending}
+        />
+      )}
     </div>
   );
 }
@@ -645,11 +665,81 @@ function Legend() {
 // Save dialog
 // ---------------------------------------------------------------------------
 
-function SaveDialog({ onCancel, onSave, busy }: { onCancel: () => void; onSave: (name: string) => void; busy: boolean }) {
+/**
+ * Name the snapshot and choose what goes into it.
+ *
+ * The grid's own filters decide which SKUs are on offer here; the checklist
+ * then narrows that to what the costing is actually for, so a quote for three
+ * items is not saved as a snapshot of all thirty. Everything costable starts
+ * ticked — saving the lot was the old behaviour and stays one click away.
+ */
+function SaveDialog({
+  skus,
+  brokenSkuIds,
+  authors,
+  onCancel,
+  onSave,
+  busy,
+}: {
+  skus: CostSkuRow[];
+  brokenSkuIds: Set<string>;
+  authors: Record<string, string>;
+  onCancel: () => void;
+  onSave: (name: string, skuIds: string[]) => void;
+  busy: boolean;
+}) {
   const [name, setName] = useState('');
+  const [query, setQuery] = useState('');
+  // A SKU with a broken split cannot be costed, so the save would drop it
+  // anyway. Leaving it unticked and labelled says that up front rather than
+  // reporting it afterwards.
+  const costable = useMemo(() => skus.filter((s) => !brokenSkuIds.has(s.id)), [skus, brokenSkuIds]);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(costable.map((s) => s.id)));
+
+  const listed = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return skus;
+    return skus.filter(
+      (s) =>
+        s.name.toLowerCase().includes(q) ||
+        s.category.toLowerCase().includes(q) ||
+        (s.customer ?? '').toLowerCase().includes(q) ||
+        authorOf(s, authors).toLowerCase().includes(q)
+    );
+  }, [skus, query, authors]);
+
+  const toggle = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  // All/None act on what the search is showing, so they stay predictable when
+  // the list is filtered: neither silently reaches past what you can see.
+  const setAllListed = (on: boolean) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const s of listed) {
+        if (brokenSkuIds.has(s.id)) continue;
+        if (on) next.add(s.id);
+        else next.delete(s.id);
+      }
+      return next;
+    });
+
+  const canSave = !!name.trim() && selected.size > 0 && !busy;
+  const submit = () => {
+    if (canSave) onSave(name.trim(), [...selected]);
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onCancel}>
-      <div className="w-full max-w-md rounded-lg border bg-card p-5 shadow-lg" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="flex max-h-[85vh] w-full max-w-lg flex-col rounded-lg border bg-card p-5 shadow-lg"
+        onClick={(e) => e.stopPropagation()}
+      >
         <h2 className="text-lg font-semibold">Save as costing</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           Snapshots these numbers and pins the assumptions they were built on, so reopening it later
@@ -661,14 +751,80 @@ function SaveDialog({ onCancel, onSave, busy }: { onCancel: () => void; onSave: 
           onChange={(e) => setName(e.target.value)}
           placeholder="e.g. Dubai frozen — October"
           className="mt-3 w-full rounded-md border px-3 py-2 text-sm"
-          onKeyDown={(e) => e.key === 'Enter' && name.trim() && onSave(name.trim())}
+          onKeyDown={(e) => e.key === 'Enter' && submit()}
         />
+
+        <div className="mt-4 flex min-h-0 flex-col">
+          <div className="mb-1.5 flex items-center justify-between gap-3">
+            <span className="text-xs font-medium text-muted-foreground">
+              SKUs to include ({selected.size}/{costable.length})
+            </span>
+            <div className="flex gap-3 text-xs">
+              <button type="button" className="text-primary hover:underline" onClick={() => setAllListed(true)}>
+                {query.trim() ? 'All shown' : 'All'}
+              </button>
+              <button
+                type="button"
+                className="text-muted-foreground hover:text-foreground"
+                onClick={() => setAllListed(false)}
+              >
+                None
+              </button>
+            </div>
+          </div>
+
+          {skus.length > 8 && (
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Filter by SKU, customer or category…"
+              className="mb-1.5 w-full rounded-md border px-3 py-1.5 text-xs"
+            />
+          )}
+
+          <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto rounded-md border p-1">
+            {listed.length === 0 ? (
+              <p className="p-3 text-center text-xs text-muted-foreground">Nothing matches that filter.</p>
+            ) : (
+              listed.map((s) => {
+                const broken = brokenSkuIds.has(s.id);
+                return (
+                  <label
+                    key={s.id}
+                    className={cn(
+                      'flex items-center gap-2 rounded px-2 py-1.5 text-sm',
+                      broken ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:bg-muted'
+                    )}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selected.has(s.id)}
+                      disabled={broken}
+                      onChange={() => toggle(s.id)}
+                    />
+                    <span className="min-w-0 flex-1 truncate">
+                      <span className="font-medium">{s.name}</span>
+                      {s.customer && <span className="text-muted-foreground"> · {s.customer}</span>}
+                    </span>
+                    {broken && <span className="shrink-0 text-xs text-destructive">not costed</span>}
+                  </label>
+                );
+              })
+            )}
+          </div>
+
+          <p className="mt-1.5 text-xs text-muted-foreground">
+            Starts from what the grid is showing — change the market, port or search behind this dialog to offer a
+            different set.
+          </p>
+        </div>
+
         <div className="mt-4 flex justify-end gap-2">
           <button onClick={onCancel} className={btnGhost}>
             Cancel
           </button>
-          <button onClick={() => onSave(name.trim())} disabled={!name.trim() || busy} className={btnPrimary}>
-            {busy ? 'Saving…' : 'Save'}
+          <button onClick={submit} disabled={!canSave} className={btnPrimary}>
+            {busy ? 'Saving…' : `Save ${selected.size} SKU${selected.size === 1 ? '' : 's'}`}
           </button>
         </div>
       </div>

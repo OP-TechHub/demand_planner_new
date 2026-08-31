@@ -183,11 +183,36 @@ export async function createScenario(
   return { error: null, scenarioId: sid };
 }
 
+/** One row of the New plan dialog's program picker. */
+export type PickProgramRow = { id: string; item_code: string; item_description: string; customer: string };
+
+/**
+ * The programs of any plan the caller can read — feeds the New plan dialog when
+ * the user switches which plan to seed from. Fetched on demand rather than
+ * shipped for every plan up front, so the page payload stays flat as scenarios
+ * accumulate. RLS decides what is readable; an unreadable plan comes back empty.
+ */
+export async function listPlanPrograms(planId: string): Promise<{ programs: PickProgramRow[]; error: string | null }> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { programs: [], error: 'Your session expired. Sign in again.' };
+  const { data, error } = await supabase
+    .from('programs')
+    .select('id, item_code, item_description, customer')
+    .eq('plan_id', planId)
+    .is('deleted_at', null)
+    .order('sort_order');
+  if (error) return { programs: [], error: error.message };
+  return { programs: (data ?? []) as PickProgramRow[], error: null };
+}
+
 /**
  * Create a fresh plan for a financial year: a new user-owned plan seeded with a
- * chosen subset of the master's programs, starting on the given month. Optionally
- * copies the demand overrides (for the chosen programs) and harvest from master;
- * otherwise the new plan starts from program baselines with empty harvest.
+ * chosen subset of a source plan's programs, starting on the given month. The
+ * source defaults to the master; `sourcePlanId` seeds from an official plan or
+ * one of the caller's own scenarios instead — the same set New scenario offers.
+ * Optionally copies that source's demand overrides (for the chosen programs) and
+ * harvest; otherwise the new plan starts from program baselines with empty harvest.
  */
 export async function createPlan(input: {
   name: string;
@@ -195,6 +220,7 @@ export async function createPlan(input: {
   horizonMonths: number; // plan length in months (1–60)
   programIds: string[];
   copyData: boolean;
+  sourcePlanId?: string;
 }): Promise<ScenarioResult> {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -210,12 +236,22 @@ export async function createPlan(input: {
   const { data: master } = await supabase.from('plans').select('*').eq('type', 'master').is('deleted_at', null).maybeSingle();
   if (!master) return { error: 'No master plan to base this on.' };
 
+  // Where the programs, settings and (optionally) data come from. The new plan
+  // still hangs off the master as its parent so "compare to master" keeps working.
+  // RLS makes sure the caller may actually read the chosen source.
+  let source = master;
+  if (input.sourcePlanId && input.sourcePlanId !== master.id) {
+    const { data: chosen } = await supabase.from('plans').select('*').eq('id', input.sourcePlanId).is('deleted_at', null).maybeSingle();
+    if (!chosen) return { error: 'Source plan not found or not accessible.' };
+    source = chosen;
+  }
+
   const { data: plan, error: se } = await supabase.from('plans').insert({
     org_id: master.org_id, type: 'scenario', parent_plan_id: master.id,
     name: input.name.trim(), description: '', owner_user_id: user.id, is_locked: false, is_sandbox: true,
     plan_start_date: input.planStartDate, horizon_months: horizon,
-    settings_margin_metric: master.settings_margin_metric, settings_allocation_mode: master.settings_allocation_mode,
-    settings_scope: master.settings_scope, settings_lookback_months: master.settings_lookback_months,
+    settings_margin_metric: source.settings_margin_metric, settings_allocation_mode: source.settings_allocation_mode,
+    settings_scope: source.settings_scope, settings_lookback_months: source.settings_lookback_months,
     forked_at: new Date().toISOString(), created_by: user.id, updated_by: user.id,
   }).select('id').maybeSingle();
   if (se || !plan) {
@@ -230,8 +266,8 @@ export async function createPlan(input: {
   };
 
   const idSet = new Set(input.programIds);
-  const { data: masterProgs } = await supabase.from('programs').select('*').eq('plan_id', master.id).is('deleted_at', null);
-  const selected = (masterProgs ?? []).filter((p: any) => idSet.has(p.id));
+  const { data: srcProgs } = await supabase.from('programs').select('*').eq('plan_id', source.id).is('deleted_at', null);
+  const selected = (srcProgs ?? []).filter((p: any) => idSet.has(p.id));
   if (!selected.length) return fail('None of the selected programs were found.');
 
   const progRows = selected.map((p: any) => {
@@ -247,7 +283,7 @@ export async function createPlan(input: {
     const newIdByCode = new Map((newProgs ?? []).map((p: any) => [p.item_code, p.id]));
     const codeByOldId = new Map(selected.map((p: any) => [p.id, p.item_code]));
 
-    const demand = await fetchAllByPlan(supabase, 'demand_plan', 'program_id, month_index, demand_fp', master.id);
+    const demand = await fetchAllByPlan(supabase, 'demand_plan', 'program_id, month_index, demand_fp', source.id);
     const demandRows = demand
       .filter((d: any) => idSet.has(d.program_id) && d.month_index <= horizon)
       .map((d: any) => ({ plan_id: pid, program_id: newIdByCode.get(codeByOldId.get(d.program_id)), month_index: d.month_index, demand_fp: d.demand_fp, created_by: user.id, updated_by: user.id }))
@@ -257,7 +293,7 @@ export async function createPlan(input: {
       if (error) return fail(`copying demand: ${error.message}`);
     }
 
-    const harvest = await fetchAllByPlan(supabase, 'harvest_plan', 'bucket_id, month_index, capacity_kg_wr', master.id);
+    const harvest = await fetchAllByPlan(supabase, 'harvest_plan', 'bucket_id, month_index, capacity_kg_wr', source.id);
     const harvestRows = harvest
       .filter((h: any) => h.month_index <= horizon)
       .map((h: any) => ({ plan_id: pid, bucket_id: h.bucket_id, month_index: h.month_index, capacity_kg_wr: h.capacity_kg_wr, created_by: user.id, updated_by: user.id }));
@@ -268,7 +304,7 @@ export async function createPlan(input: {
 
     // The processing plant's request plan travels with the plan, same as capacity.
     const { data: srcReq } = await supabase
-      .from('harvest_request').select('month_index, quantity_kg_wr').eq('plan_id', master.id);
+      .from('harvest_request').select('month_index, quantity_kg_wr').eq('plan_id', source.id);
     const reqRows = (srcReq ?? [])
       .filter((r: any) => r.month_index <= horizon)
       .map((r: any) => ({ plan_id: pid, month_index: r.month_index, quantity_kg_wr: r.quantity_kg_wr, created_by: user.id, updated_by: user.id }));
@@ -280,7 +316,7 @@ export async function createPlan(input: {
     // POs travel with the plan: without them the clone's demand would be right on
     // day one but drift the moment a PO there was edited. The baseline stash comes
     // too, so deleting a PO in the clone restores the same figure it would have.
-    const poLines = await fetchAllByPlan(supabase, 'po_updates', 'program_id, month_index, quantity_fp, po_ref, received_on, notes', master.id);
+    const poLines = await fetchAllByPlan(supabase, 'po_updates', 'program_id, month_index, quantity_fp, po_ref, received_on, notes', source.id);
     const poRows = poLines
       .filter((r: any) => idSet.has(r.program_id) && r.month_index <= horizon)
       .map((r: any) => ({ plan_id: pid, program_id: newIdByCode.get(codeByOldId.get(r.program_id)), month_index: r.month_index, quantity_fp: r.quantity_fp, po_ref: r.po_ref, received_on: r.received_on, notes: r.notes, created_by: user.id, updated_by: user.id }))
@@ -290,7 +326,7 @@ export async function createPlan(input: {
       if (error) return fail(`copying POs: ${error.message}`);
     }
 
-    const poBase = await fetchAllByPlan(supabase, 'po_demand_baseline', 'program_id, month_index, prev_demand_fp', master.id);
+    const poBase = await fetchAllByPlan(supabase, 'po_demand_baseline', 'program_id, month_index, prev_demand_fp', source.id);
     const poBaseRows = poBase
       .filter((r: any) => idSet.has(r.program_id) && r.month_index <= horizon)
       .map((r: any) => ({ plan_id: pid, program_id: newIdByCode.get(codeByOldId.get(r.program_id)), month_index: r.month_index, prev_demand_fp: r.prev_demand_fp }))

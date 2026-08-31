@@ -1,8 +1,10 @@
 import { createClient } from '@/lib/supabase/server';
 import { getActivePlan, getSelectablePlans } from '@/lib/plan';
 import { computeDiff, type FieldDiff, type CellDiff } from '@/lib/diff';
+import { computeMonthlyCompare } from '@/lib/plan-compare';
 import { monthLabel, type Plan } from '@oceanpick/shared';
 import { ComparePicker, type PickPlan } from './compare-picker';
+import { MonthlyCompare } from './monthly-compare';
 
 /** Short kind label for a plan, for the picker. */
 function kindOf(p: Plan): string {
@@ -40,13 +42,17 @@ export default async function DiffPage({ searchParams }: { searchParams: Promise
   const pick: PickPlan[] = plans.map((p) => ({ id: p.id, name: p.name, label: kindOf(p) }));
 
   const supabase = await createClient();
-  const d = await computeDiff(supabase, planA, planB);
+  const sameplan = planA.id === planB.id;
+  const [d, monthly] = await Promise.all([
+    computeDiff(supabase, planA, planB),
+    sameplan ? Promise.resolve(null) : computeMonthlyCompare(supabase, planA, planB),
+  ]);
   const empty =
     !d.settings.length && !d.programs.length && !d.programsAdded.length && !d.programsRemoved.length &&
     !d.demand.length && !d.harvest.length;
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <div className="mx-auto max-w-6xl space-y-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Compare plans</h1>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -72,6 +78,49 @@ export default async function DiffPage({ searchParams }: { searchParams: Promise
               </tbody>
             </table>
           </Section>
+
+          {monthly && (
+            <Section title="Month on month">
+              {monthly.tooWide ? (
+                <p className="text-sm text-muted-foreground">
+                  These two plans sit too far apart in time to lay out side by side. Compare plans whose windows are
+                  closer together.
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {monthly.overlapMonths === 0 ? (
+                    <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+                      These plans cover <b>no months in common</b> — {planA.name} ends before {planB.name} begins, or the
+                      other way round. Every figure below is therefore one plan against nothing, not a like-for-like
+                      change.
+                    </p>
+                  ) : monthly.windowsDiffer ? (
+                    <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+                      These plans run on different windows, so the months are lined up by <b>calendar month</b>, not by
+                      position. They overlap for {monthly.overlapMonths} month
+                      {monthly.overlapMonths === 1 ? '' : 's'}; outside that a month belongs to only one plan and reads
+                      as <b>—</b> on the other side.
+                    </p>
+                  ) : null}
+                  {monthly.outputsMissing && (
+                    <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+                      Only <b>Harvest</b> and <b>Demand</b> can be compared — one of these plans has no computed results,
+                      so there is no revenue, cost or margin to put beside the other. Open it, hit <b>Recalculate</b>,
+                      then come back.
+                    </p>
+                  )}
+                  <MonthlyCompare data={monthly} aName={planA.name} bName={planB.name} />
+                  <p className="text-xs text-muted-foreground">
+                    <b>Change</b> is B − A, so a positive figure means B is higher; <b>Change %</b> is that against
+                    A&apos;s figure, blank where A was zero (there is no percentage change from nothing), and its totals
+                    are re-derived as total change ÷ total baseline rather than summed, since percentages don&apos;t add.
+                    Programs are matched on <b>item code</b> and buckets on identity, both of which survive a fork — a
+                    program in only one plan is marked as such and shows its whole figure as the change.
+                  </p>
+                </div>
+              )}
+            </Section>
+          )}
 
           {empty ? (
             <div className="rounded-lg border border-dashed bg-muted/30 p-6 text-sm text-muted-foreground">
