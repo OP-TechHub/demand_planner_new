@@ -5,6 +5,7 @@ import { gridCsvRows, type GridRow } from '@/lib/grid-csv';
 import { StalePlanNotice } from '../stale-banner';
 import { ExportCsvButton } from '@/components/export-csv-button';
 import { PrintableGrid } from '@/components/printable-grid';
+import { MonthRangeProvider } from '@/components/month-range';
 import { fetchAllByPlan } from '@/lib/fetch-all';
 import { MAX_LOOKBACK } from '@oceanpick/engine';
 
@@ -165,7 +166,11 @@ export default async function OpenToBuyPage() {
       {!computed ? (
         <NotComputed />
       ) : (
-        <>
+        <MonthRangeProvider
+          planStartDate={plan.plan_start_date}
+          horizon={plan.horizon_months}
+          note="applies to every table below"
+        >
           {/* Total OTB — unallocated + unconfirmed (pipeline) inquiry WR, in one table */}
           <PrintableGrid
             title="Total OTB"
@@ -245,7 +250,7 @@ export default async function OpenToBuyPage() {
               </p>
             )}
           </section>
-        </>
+        </MonthRangeProvider>
       )}
     </div>
   );

@@ -6,6 +6,7 @@ import { monthLabel } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 import { kg, usd, usd0, usd2, num0, pct } from '@/lib/format';
 import { ScrollX } from '@/components/ui/scroll-x';
+import { useMonthRange } from '@/components/month-range';
 import { weightedTotal, type Aggregate, type GridRow } from '@/lib/grid-csv';
 
 export type { GridRow, Aggregate };
@@ -85,8 +86,14 @@ export function OutputGrid({
   /** Optional per-cell CSS `background` (e.g. a fulfilment gradient), keyed `${rowKey}:${month}`. */
   cellBg?: Map<string, string>;
 }) {
-  const [fromMonth, setFromMonth] = useState(1);
-  const [toMonth, setToMonth] = useState(horizon);
+  // A page-level MonthRangeProvider, where there is one, filters every grid on
+  // the page at once; this grid's own selector then has nothing left to do and
+  // is dropped rather than shown as a second, contradictory control.
+  const shared = useMonthRange();
+  const [ownFrom, setOwnFrom] = useState(1);
+  const [ownTo, setOwnTo] = useState(horizon);
+  const fromMonth = shared ? Math.min(shared.from, horizon) : ownFrom;
+  const toMonth = shared ? Math.min(shared.to, horizon) : ownTo;
 
   // Held in a ref so an inline callback from the parent can't re-fire this on
   // every render.
@@ -98,9 +105,11 @@ export function OutputGrid({
   const visibleMonths = months.filter((m) => m >= fromMonth && m <= toMonth);
   const fullRange = fromMonth === 1 && toMonth === horizon;
 
-  // Keep the range coherent: dragging one end past the other pushes the other end.
-  const onFrom = (v: number) => { setFromMonth(v); if (v > toMonth) setToMonth(v); };
-  const onTo = (v: number) => { setToMonth(v); if (v < fromMonth) setFromMonth(v); };
+  // Picking a start month proposes the twelve months from it — a year is how
+  // these grids are read. Only a proposal: the end month can be moved after,
+  // and Reset puts the whole horizon back.
+  const onFrom = (v: number) => { setOwnFrom(v); setOwnTo(Math.min(v + 11, horizon)); };
+  const onTo = (v: number) => { setOwnTo(v); if (v < fromMonth) setOwnFrom(v); };
 
   const fmt = FMT[format];
   const color = colorFor ? COLOR[colorFor] : undefined;
@@ -151,6 +160,7 @@ export function OutputGrid({
 
   return (
     <div className="space-y-2">
+      {!shared && (
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="text-xs font-medium text-muted-foreground">Months</span>
         <select value={fromMonth} onChange={(e) => onFrom(Number(e.target.value))} className={filterCls} aria-label="From month">
@@ -164,7 +174,7 @@ export function OutputGrid({
           <>
             <button
               type="button"
-              onClick={() => { setFromMonth(1); setToMonth(horizon); }}
+              onClick={() => { setOwnFrom(1); setOwnTo(horizon); }}
               className="text-xs font-medium text-primary hover:underline"
             >
               Reset
@@ -173,6 +183,7 @@ export function OutputGrid({
           </>
         )}
       </div>
+      )}
 
       <ScrollX className="max-h-[70vh] rounded-lg border border-border">
         <table className="w-max text-xs">
