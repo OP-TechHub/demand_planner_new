@@ -17,8 +17,9 @@ planner runs the engine.
 
 ```
 CRM page (HTML on Netlify)
-  └─ fetch('/.netlify/functions/dp-skus?customer=Acme')   ← no key in the browser
-       └─ dp-skus.js — holds DP_API_KEY as an env var
+  └─ fetch('/.netlify/functions/dp-skus?customer=Acme',
+           { credentials: 'same-origin' })              ← sends the session cookie
+       └─ dp-skus.js — requireSession() first, then DP_API_KEY from the env
             └─ GET https://<planner>.vercel.app/api/v1/costing/skus
                Authorization: Bearer op_live_…
                  └─ authenticateApiRequest() → org-scoped → engine → JSON
@@ -30,43 +31,149 @@ access to the org's entire costing. The Netlify function is the only place it is
 safe. Going through the function also means no CORS to configure — it is
 server-to-server.
 
+## What to copy
+
+The folder mirrors the CRM repo's layout, so it can be copied across as a tree:
+
+```
+netlify/functions/lib/session.js   sign/verify sessions, hash/check passwords
+netlify/functions/crm-auth.js      sign in, sign out, "who am I"
+netlify/functions/dp-skus.js       the costing proxy
+scripts/hash-password.mjs          generates a hashed CRM_USERS entry
+```
+
 ## Setup
 
-1. **Mint a key** in the planner: Settings → API keys. It is shown once and
-   stored only as a SHA-256 hash; it cannot be recovered, only revoked and
+1. **Mint an API key** in the planner: Settings → API keys. It is shown once and
+   stored only as a SHA-256 hash — it cannot be recovered, only revoked and
    replaced.
-2. **Copy** `dp-skus.js` into the CRM repo at `netlify/functions/dp-skus.js`.
-3. **Set env vars** in Netlify → Site settings → Environment:
-   - `DP_API_BASE` = `https://<your-planner>.vercel.app`
-   - `DP_API_KEY` = the key from step 1
-4. **Decide who may call the function** — see below. It refuses to serve data
-   until you do.
-5. Deploy the CRM.
 
-To revoke the planner's trust later, revoke the key in the planner — no CRM code
-changes needed.
+2. **Copy the four files** above into the CRM repo. No npm install: everything
+   uses Node's built-in `crypto`.
+
+3. **Generate a session secret:**
+   ```bash
+   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+   ```
+
+4. **Hash each user's password**, once per person:
+   ```bash
+   node scripts/hash-password.mjs nimal sales
+   ```
+   It prompts for the password (so it stays out of your shell history) and
+   prints a JSON object to collect into `CRM_USERS`.
+
+5. **Set env vars** in Netlify → Site settings → Environment:
+
+   | Variable | Value |
+   |---|---|
+   | `DP_API_BASE` | `https://<your-planner>.vercel.app` |
+   | `DP_API_KEY` | the key from step 1 |
+   | `CRM_SESSION_SECRET` | the secret from step 3 |
+   | `CRM_USERS` | `[{"username":"nimal","role":"sales","password":"scrypt$…"}]` |
+   | `DP_ALLOWED_ROLES` | optional; defaults to `admin,sales` |
+
+6. **Point the login form at `crm-auth`** instead of comparing the password in
+   page JavaScript (snippet below).
+
+7. Deploy the CRM.
+
+To revoke the planner's trust, revoke the API key in the planner. To sign
+everyone out at once, change `CRM_SESSION_SECRET`. Neither needs a code change.
 
 ## Authenticating the CRM's own users
 
-A Netlify function is **public by default**. Anyone who knows
-`/.netlify/functions/dp-skus` would get the whole costing table, margins
-included — the planner's API key protects the planner, not this function.
+**The problem this solves.** A Netlify function is a public URL. Anyone who
+types `/.netlify/functions/dp-skus` reaches it directly — that request never
+loads your HTML, so it never meets the password gate. A password compared in
+page JavaScript is also readable in the page source, and a role assigned there
+is editable in devtools. So the password moves server-side, and the browser gets
+a **signed cookie it cannot read or forge**.
 
-So `dp-skus.js` **fails closed**: with no credentials configured it returns 401
-rather than quietly serving cost data to the internet. Satisfy it one of two
-ways, depending on how the CRM logs people in:
+`dp-skus.js` **fails closed**: no valid session, no data. Not even when
+`CRM_SESSION_SECRET` is missing — a misconfigured deploy must not become an
+open door.
 
-- **Netlify Identity** — the CRM sends the Identity JWT and the user arrives on
-  `context.clientContext.user`:
-  ```js
-  fetch(url, { headers: { Authorization: 'Bearer ' + user.token.access_token } })
-  ```
-- **Shared secret** — set `CRM_SHARED_SECRET` in the Netlify environment and send
-  it as `X-CRM-Secret`. Only worth doing if that header is added somewhere the
-  browser cannot read it (an edge function or a proxy); putting the secret in
-  page JS just moves the open door rather than closing it.
+### How it works
 
-Tell me which the CRM uses and I will wire the calling side to match.
+```
+login form
+  └─ POST /.netlify/functions/crm-auth  { username, password }
+       └─ password checked against CRM_USERS (scrypt, salted per user)
+            └─ Set-Cookie: crm_session=<payload>.<hmac>
+               HttpOnly · Secure · SameSite=Lax · 12h
+
+any sensitive function
+  └─ requireSession(event, ['admin','sales'])
+       └─ verifies the HMAC, the expiry, and the role
+```
+
+The cookie is **signed, not encrypted** — its payload (username, role, expiry)
+is readable by whoever holds it, but any edit invalidates the signature. So it
+carries identity and nothing secret. `HttpOnly` keeps page JavaScript from
+reading it, which means an XSS bug cannot steal it; `SameSite=Lax` blocks CSRF
+for these GET endpoints without a separate token.
+
+### The page side
+
+Replace the password comparison with:
+
+```js
+// Sign in
+const res = await fetch('/.netlify/functions/crm-auth', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ username, password }),
+});
+if (!res.ok) { /* show "incorrect username or password" */ }
+const { role } = await res.json();   // the cookie is set automatically
+
+// On page load — the only trustworthy source of the current user
+const me = await fetch('/.netlify/functions/crm-auth');
+if (!me.ok) { /* show the login form */ }
+
+// Sign out
+await fetch('/.netlify/functions/crm-auth', { method: 'DELETE' });
+```
+
+Then add `credentials: 'same-origin'` to every call that needs the session:
+
+```js
+fetch('/.netlify/functions/dp-skus?customer=Acme', { credentials: 'same-origin' })
+```
+
+**Use the role for menus, not for security.** Hiding a button is a courtesy to
+the user; the function checking the role is what actually stops anyone. Both,
+always — the server check is the one that counts.
+
+### Reuse it for the other functions
+
+`requireSession` is not costing-specific. Your Crisp, Shopify and Supabase
+functions have the same open-URL exposure today, and two lines close it:
+
+```js
+const { requireSession } = require('./lib/session');
+
+exports.handler = async (event) => {
+  const auth = requireSession(event);          // any signed-in user
+  // const auth = requireSession(event, ['admin']);   // or restrict by role
+  if (auth.error) return auth.error;
+  // auth.user is { username, role, exp }
+};
+```
+
+### Known limits
+
+- **No brute-force throttling.** Serverless functions have no shared memory to
+  count attempts in, so this does not lock an account after N failures. Long
+  passwords are the mitigation — `hash-password.mjs` refuses anything under 12
+  characters. Netlify's rate limiting can be layered on top.
+- **No password self-service.** Changing a password means regenerating the hash
+  and updating `CRM_USERS`. Fine for a team of this size; it would not scale to
+  hundreds of users.
+- **Sessions cannot be revoked individually.** Rotating
+  `CRM_SESSION_SECRET` signs out everyone. There is no per-user session store
+  to revoke from, which is the trade for having no database.
 
 ## Endpoints
 

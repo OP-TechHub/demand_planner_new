@@ -18,7 +18,7 @@ import {
 import { toAssumptions, toBucket } from '@/lib/costing-adapt';
 import { cn } from '@/lib/utils';
 import { downloadDoc, slugify } from '@/lib/doc-export';
-import { COST_SHEET_ID } from '@/components/cost-sheet-parts';
+import { BaseCostToggle, COST_SHEET_ID } from '@/components/cost-sheet-parts';
 import { ScrollX } from '@/components/ui/scroll-x';
 import { SkuCostSheet } from './sku-cost-sheet';
 import { archiveCostSku, saveCostSku, saveSkuBucketYield, type SkuFormState } from './actions';
@@ -734,6 +734,10 @@ function SkuDialog({
   const [state, action, pending] = useActionState<SkuFormState, FormData>(saveCostSku, { error: null, ok: false });
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [downloadOpen, setDownloadOpen] = useState(false);
+  // Whether the printed / Word sheet carries the base cost build-up. On by
+  // default, off in one click for a copy that is going to a customer. Only
+  // reachable when this user may see the base cost at all.
+  const [includeBaseCost, setIncludeBaseCost] = useState(true);
   // Which size grade to cost at. '' is the flat reference model, which is what
   // this dialog used to do unconditionally — so the default preserves every
   // number it produced before, and picking a grade is an explicit act.
@@ -1357,7 +1361,18 @@ function SkuDialog({
                 <>
                   {/* Click-away, behind the menu but above the form. */}
                   <div className="fixed inset-0 z-10" onClick={() => setDownloadOpen(false)} />
-                  <div className="absolute bottom-full right-0 z-20 mb-1 w-56 overflow-hidden rounded-md border bg-popover shadow-lg">
+                  <div className="absolute bottom-full right-0 z-20 mb-1 w-72 overflow-hidden rounded-md border bg-popover shadow-lg">
+                    {canViewBaseCost && (
+                      /*
+                        stopPropagation on input: the form's onInput discards the
+                        preview on any change, and the document is rendered FROM
+                        the preview — without this, ticking the box would close
+                        this menu and take the sheet with it.
+                      */
+                      <div className="border-b p-2" onInput={(e) => e.stopPropagation()}>
+                        <BaseCostToggle include={includeBaseCost} onChange={setIncludeBaseCost} />
+                      </div>
+                    )}
                     <button
                       type="button"
                       onClick={printSheet}
@@ -1373,7 +1388,7 @@ function SkuDialog({
                       <FileText className="h-3.5 w-3.5" /> Download as Word
                     </button>
                     <p className="border-t bg-muted/40 px-3 py-1.5 text-[11px] text-muted-foreground">
-                      The full cost build-up for this SKU, at current assumptions.
+                      The cost build-up for this SKU, at current assumptions.
                     </p>
                   </div>
                 </>
@@ -1414,7 +1429,7 @@ function SkuDialog({
             gradeLabel={preview.gradeLabel}
             pctFish={preview.pctFish}
             pctMarinade={preview.pctMarinade}
-            showBaseCost={canViewBaseCost}
+            showBaseCost={canViewBaseCost && includeBaseCost}
             domestic={preview.domestic}
             domesticWholeFish={preview.domesticWholeFish}
             exportOut={preview.export}

@@ -16,6 +16,7 @@ import { Dialog } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { ScrollX } from '@/components/ui/scroll-x';
 import { cn } from '@/lib/utils';
+import { BaseCostToggle } from '@/components/cost-sheet-parts';
 import { CostSheet, COST_SHEET_ID } from './cost-sheet';
 
 export interface RepricedLine {
@@ -53,6 +54,11 @@ export function CostingDetail({
   const [state, setState] = useState<CostProductState | 'all'>('all');
   // The line whose breakdown sheet is open, for print / Word / preview.
   const [sheetLine, setSheetLine] = useState<CostCostingLine | null>(null);
+  // Whether this sheet carries the base cost build-up. Starts on, so a reader
+  // who is allowed the detail keeps getting it, and comes off in one click for
+  // a copy that is going outside. Only reachable when showBaseCost is true.
+  const [includeBaseCost, setIncludeBaseCost] = useState(true);
+  const sheetBaseCost = showBaseCost && includeBaseCost;
 
   const overrides = Object.entries(costing.assumption_overrides ?? {});
   const states = useMemo(
@@ -267,12 +273,17 @@ export function CostingDetail({
               </>
             }
           >
+            {showBaseCost && (
+              <div className="mb-3">
+                <BaseCostToggle include={includeBaseCost} onChange={setIncludeBaseCost} />
+              </div>
+            )}
             <div className="max-h-[65vh] overflow-y-auto rounded-md border">
-              <CostSheet costing={costing} line={sheetLine} pinnedLabel={pinnedLabel} authorName={authorName} showBaseCost={showBaseCost} />
+              <CostSheet costing={costing} line={sheetLine} pinnedLabel={pinnedLabel} authorName={authorName} showBaseCost={sheetBaseCost} />
             </div>
             <p className="mt-3 text-xs text-muted-foreground">
               Both formats hold the figures as saved, not as they would price today. The Word file is editable, so
-              anything not meant for the recipient can be taken out before it is sent.
+              anything else not meant for the recipient can be taken out before it is sent.
             </p>
           </Dialog>
 
@@ -282,7 +293,7 @@ export function CostingDetail({
               line={sheetLine}
               pinnedLabel={pinnedLabel}
               authorName={authorName}
-              showBaseCost={showBaseCost}
+              showBaseCost={sheetBaseCost}
               elementId={COST_SHEET_ID}
             />
           </div>

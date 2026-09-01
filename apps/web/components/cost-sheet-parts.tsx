@@ -15,6 +15,44 @@ import type { CSSProperties } from 'react';
 /** The id the print rules in globals.css reveal, and the Word export reads. */
 export const COST_SHEET_ID = 'cost-sheet';
 
+/**
+ * Whether to keep the whole-fish build-up in a document that is about to
+ * leave the building.
+ *
+ * Only shown to someone who can see the base cost in the first place — for
+ * everyone else the rows are already gone and there is nothing to decide. It
+ * governs the on-screen preview as well as the printed and Word copies, so
+ * what you are looking at is what the recipient gets.
+ *
+ * Tailwind here, not inline styles: this is app furniture around the document,
+ * never part of it.
+ */
+export function BaseCostToggle({
+  include,
+  onChange,
+}: {
+  include: boolean;
+  onChange: (include: boolean) => void;
+}) {
+  return (
+    <label className="flex items-start gap-2 rounded-md bg-muted/40 px-3 py-2 text-xs print:hidden">
+      <input
+        type="checkbox"
+        checked={include}
+        onChange={(e) => onChange(e.target.checked)}
+        className="mt-0.5 h-3.5 w-3.5 cursor-pointer accent-primary"
+      />
+      <span>
+        <span className="font-medium">Include the base cost build-up</span>
+        <span className="block text-[11px] text-muted-foreground">
+          Effective feed cost, FCR, feed per kg of fish and other direct costs. Untick before sending
+          this to a customer — the whole-fish cost and every price stay either way.
+        </span>
+      </span>
+    </label>
+  );
+}
+
 /** Number out of an unknown, without turning a missing value into a zero. */
 export const num = (v: unknown): number | null =>
   typeof v === 'number' && Number.isFinite(v) ? v : null;

@@ -5,6 +5,8 @@ import { computeMonthlyCompare } from '@/lib/plan-compare';
 import { monthLabel, type Plan } from '@oceanpick/shared';
 import { ComparePicker, type PickPlan } from './compare-picker';
 import { MonthlyCompare } from './monthly-compare';
+import { AnnualCompare } from './annual-compare';
+import { bySummaryPeriod } from '@/lib/annual-summary';
 
 /** Short kind label for a plan, for the picker. */
 function kindOf(p: Plan): string {
@@ -43,10 +45,21 @@ export default async function DiffPage({ searchParams }: { searchParams: Promise
 
   const supabase = await createClient();
   const sameplan = planA.id === planB.id;
-  const [d, monthly] = await Promise.all([
+  const [d, monthly, summaryA, summaryB] = await Promise.all([
     computeDiff(supabase, planA, planB),
     sameplan ? Promise.resolve(null) : computeMonthlyCompare(supabase, planA, planB),
+    supabase.from('plan_summary').select('*').eq('plan_id', planA.id),
+    supabase.from('plan_summary').select('*').eq('plan_id', planB.id),
   ]);
+  // The annual figures only exist once a plan has been computed; a plan that
+  // never was would otherwise read as a column of zeroes rather than as absent.
+  const annualMissing = [
+    !summaryA.data?.length ? planA.name : null,
+    !summaryB.data?.length ? planB.name : null,
+  ].filter(Boolean) as string[];
+  // FY1 is the plan's own first year, so two plans that start in different
+  // years line up column-by-column but not calendar-by-calendar.
+  const annualYearsDiffer = planA.plan_start_date.slice(0, 7) !== planB.plan_start_date.slice(0, 7);
   const empty =
     !d.settings.length && !d.programs.length && !d.programsAdded.length && !d.programsRemoved.length &&
     !d.demand.length && !d.harvest.length;
@@ -77,6 +90,45 @@ export default async function DiffPage({ searchParams }: { searchParams: Promise
                 ))}
               </tbody>
             </table>
+          </Section>
+
+          <Section title="Annual summary">
+            {annualMissing.length === 2 ? (
+              <p className="text-sm text-muted-foreground">
+                Neither plan has computed results, so there are no annual figures to compare. Open each plan, hit{' '}
+                <b>Recalculate</b>, then come back.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {annualMissing.length === 1 && (
+                  <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+                    <b>{annualMissing[0]}</b> has no computed results, so its side reads as <b>—</b> throughout and every
+                    change below is the whole of the other plan&apos;s figure. Open it, hit <b>Recalculate</b>, then come
+                    back.
+                  </p>
+                )}
+                {annualYearsDiffer && (
+                  <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+                    These plans start in different months ({planA.plan_start_date.slice(0, 7)} and{' '}
+                    {planB.plan_start_date.slice(0, 7)}), so <b>FY1 means a different year on each side</b>. The columns
+                    line up each plan&apos;s own first year against the other&apos;s, not calendar year against calendar
+                    year.
+                  </p>
+                )}
+                <AnnualCompare
+                  a={bySummaryPeriod(summaryA.data)}
+                  b={bySummaryPeriod(summaryB.data)}
+                  aName={planA.name}
+                  bName={planB.name}
+                />
+                <p className="text-xs text-muted-foreground">
+                  The same rows as the <b>Annual Summary</b> page, with <b>A</b> = {planA.name} and <b>B</b> ={' '}
+                  {planB.name}. <b>Δ</b> is B − A, so a positive figure means B is higher; on <b>GP %</b> it is a
+                  movement in percentage points, and no <b>Δ %</b> is shown for it since a percentage of a percentage
+                  reads as neither. <b>Δ %</b> is blank where A was zero — there is no percentage change from nothing.
+                </p>
+              </div>
+            )}
           </Section>
 
           {monthly && (
