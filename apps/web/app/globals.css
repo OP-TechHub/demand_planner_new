@@ -154,11 +154,14 @@
   #offer-sheet,
   #offer-sheet *,
   #cost-sheet,
-  #cost-sheet * {
+  #cost-sheet *,
+  .print-sheet,
+  .print-sheet * {
     visibility: visible !important;
   }
   #offer-sheet,
-  #cost-sheet {
+  #cost-sheet,
+  .print-sheet {
     position: absolute;
     top: 0;
     left: 0;
@@ -167,15 +170,18 @@
     background: #fff;
   }
   #offer-sheet table,
-  #cost-sheet table {
+  #cost-sheet table,
+  .print-sheet table {
     page-break-inside: auto;
   }
   #offer-sheet tr,
-  #cost-sheet tr {
+  #cost-sheet tr,
+  .print-sheet tr {
     page-break-inside: avoid;
   }
   #offer-sheet thead,
-  #cost-sheet thead {
+  #cost-sheet thead,
+  .print-sheet thead {
     display: table-header-group;
   }
   #cost-sheet h2 {

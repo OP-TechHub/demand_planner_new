@@ -38,6 +38,12 @@ export function BucketsClient({
   const capacityOf = (r: BucketRow) =>
     r.monthly.slice(fromMonth - 1, toMonth).reduce((s, v) => s + v, 0);
 
+  // An archived bucket's capacity is no longer allocatable, so it would inflate
+  // a total that reads as "what this plan has to sell".
+  const liveRows = rows.filter((r) => !r.bucket.is_archived);
+  const totalCapacity = liveRows.reduce((s, r) => s + capacityOf(r), 0);
+  const hasArchived = liveRows.length !== rows.length;
+
   const nextOrder = (Math.max(0, ...rows.map((r) => r.bucket.sort_order)) || 0) + 10;
 
   function onArchive(b: Bucket, archived: boolean) {
@@ -125,6 +131,22 @@ export function BucketsClient({
               </tr>
             ); })}
           </tbody>
+          {rows.length > 0 && (
+            <tfoot className="border-t-2 bg-muted/40 font-medium">
+              <tr>
+                <td className="px-3 py-2" />
+                <td className="px-3 py-2">
+                  Total
+                  {hasArchived && <span className="ml-1.5 text-xs font-normal text-muted-foreground">(excludes archived)</span>}
+                </td>
+                {/* A bucket can be used on any of a program's three paths, so these
+                    don't add up to a program count — no total to show. */}
+                <td className="px-3 py-2" />
+                <td className="px-3 py-2 text-right tabular-nums">{totalCapacity.toLocaleString()}</td>
+                {canEdit && <td className="px-3 py-2" />}
+              </tr>
+            </tfoot>
+          )}
         </table>
         {rows.length === 0 && (
           <div className="p-8 text-center text-sm text-muted-foreground">No buckets yet.</div>
