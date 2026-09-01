@@ -158,7 +158,16 @@ export const can = {
  * Sections whose edit access can be granted per user. Admins always have all;
  * everyone else edits only the sections they've been granted (empty = view-only).
  */
-export const EDITABLE_SECTIONS = ['programs', 'demand_plan', 'harvest_plan', 'buckets', 'inquiry', 'harvest_request'] as const;
+export const EDITABLE_SECTIONS = [
+  'programs',
+  'demand_plan',
+  'harvest_plan',
+  'buckets',
+  'inquiry',
+  'harvest_request',
+  'base_cost_view',
+  'base_cost_edit',
+] as const;
 export type EditableSection = (typeof EDITABLE_SECTIONS)[number];
 
 /**
@@ -181,7 +190,36 @@ export const SECTION_LABEL: Record<EditableSection, string> = {
   buckets: 'Buckets',
   inquiry: 'New Inquiry',
   harvest_request: 'Harvest Request Plan',
+  base_cost_view: 'Base cost — view',
+  base_cost_edit: 'Base cost — edit',
 };
+
+/**
+ * What the fish costs to grow — the feed price, clearing, import tax, FCR, FX
+ * and the other-direct-cost components. Commercially sensitive (they are
+ * supplier prices and a tax position), so unlike the rest of the assumptions
+ * they are hidden from everyone by default and released per user by an admin.
+ *
+ * Two grants rather than one, because the people who need to SEE the number to
+ * sanity-check a quote are usually not the people allowed to CHANGE it.
+ */
+export const BASE_COST_VIEW = 'base_cost_view';
+export const BASE_COST_EDIT = 'base_cost_edit';
+
+/** May this user see the base fish cost and the ODC components? */
+export function canViewBaseCost(role: UserRole, editSections: string[] | null | undefined): boolean {
+  if (role === 'admin') return true;
+  const granted = editSections ?? [];
+  // Edit implies view: granting the right to change a number you cannot read
+  // would be nonsense, and it spares an admin from having to tick both.
+  return granted.includes(BASE_COST_VIEW) || granted.includes(BASE_COST_EDIT);
+}
+
+/** May this user change them — i.e. publish a version that alters them? */
+export function canEditBaseCost(role: UserRole, editSections: string[] | null | undefined): boolean {
+  if (role === 'admin') return true;
+  return (editSections ?? []).includes(BASE_COST_EDIT);
+}
 
 /** Can this user edit a given section? Admin ⇒ everything; others ⇒ granted only. */
 export function canEditSection(

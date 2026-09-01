@@ -17,12 +17,20 @@ export function CostSheet({
   line,
   pinnedLabel,
   authorName,
+  showBaseCost,
   elementId,
 }: {
   costing: CostCosting;
   line: CostCostingLine;
   pinnedLabel: string;
   authorName: string;
+  /**
+   * Whether the reader may see what the fish costs to grow. The whole-fish
+   * cost itself stays — it is what the quote is built on — but the three lines
+   * it decomposes into are base-cost figures, and the page has already stripped
+   * them out of the stored outputs when this is false.
+   */
+  showBaseCost: boolean;
   /**
    * Set to COST_SHEET_ID on the copy that print and the Word export read.
    * The on-screen preview renders the same sheet without an id, so the two
@@ -79,10 +87,14 @@ export function CostSheet({
       <h2 style={S.h2}>Whole fish, ex-farm</h2>
       <table style={S.table}>
         <tbody>
-          <Row label="Effective feed cost (USD/kg feed)" value={num(wf.effectiveFeedCostUsd)} fmt={(n) => n.toFixed(2)} />
-          <Row label="FCR used" value={num(wf.fcrUsed)} fmt={(n) => n.toFixed(2)} />
-          <Row label="Feed cost per kg fish (USD)" value={num(wf.feedCostPerKgFishUsd)} fmt={(n) => n.toFixed(2)} />
-          <Row label="Other direct costs (USD)" value={num(wf.odcUsd)} fmt={(n) => n.toFixed(2)} />
+          {showBaseCost && (
+            <>
+              <Row label="Effective feed cost (USD/kg feed)" value={num(wf.effectiveFeedCostUsd)} fmt={(n) => n.toFixed(2)} />
+              <Row label="FCR used" value={num(wf.fcrUsed)} fmt={(n) => n.toFixed(2)} />
+              <Row label="Feed cost per kg fish (USD)" value={num(wf.feedCostPerKgFishUsd)} fmt={(n) => n.toFixed(2)} />
+              <Row label="Other direct costs (USD)" value={num(wf.odcUsd)} fmt={(n) => n.toFixed(2)} />
+            </>
+          )}
           <Row
             label={`Whole fish cost (${line.currency})`}
             value={domestic ? num(wf.wholeFishLkr) : num(wf.wholeFishUsd)}

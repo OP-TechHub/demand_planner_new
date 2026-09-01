@@ -24,6 +24,8 @@ export function AssumptionsClient({
   destinations,
   rates,
   isAdmin,
+  canViewBaseCost,
+  canEditBaseCost,
 }: {
   version: CostAssumptionVersion;
   versions: CostAssumptionVersion[];
@@ -32,6 +34,14 @@ export function AssumptionsClient({
   destinations: CostDestinationRow[];
   rates: RateMap;
   isAdmin: boolean;
+  /**
+   * Base-cost grants. When canViewBaseCost is false the two protected sections
+   * are not rendered AND the numbers behind them never arrived — the server
+   * sent a masked version/odc that prices identically. Don't start displaying
+   * version.feed_cost_per_kg here on the strength of the flag alone.
+   */
+  canViewBaseCost: boolean;
+  canEditBaseCost: boolean;
 }) {
   const router = useRouter();
   const [state, action, pending] = useActionState<SaveState, FormData>(publishAssumptionVersion, {
@@ -85,8 +95,17 @@ export function AssumptionsClient({
       {!isAdmin && (
         <Banner tone="muted">
           <Lock className="mr-1.5 inline h-3.5 w-3.5" />
-          Only an admin can change these. You can still override any of them inside your own costing
-          — the deviation gets stamped on it so reviewers can see it.
+          {canEditBaseCost
+            ? 'You can change the base fish cost and the other direct costs. The rest is admin-maintained — override any of it inside your own costing instead, where the deviation gets stamped on it.'
+            : 'Only an admin can change these. You can still override any of them inside your own costing — the deviation gets stamped on it so reviewers can see it.'}
+        </Banner>
+      )}
+
+      {!canViewBaseCost && (
+        <Banner tone="muted">
+          <Lock className="mr-1.5 inline h-3.5 w-3.5" />
+          The base fish cost and the other direct costs are restricted. Everything below is priced on
+          them, but the figures themselves stay hidden — ask an admin if you need to see them.
         </Banner>
       )}
 
@@ -96,16 +115,17 @@ export function AssumptionsClient({
       <form action={action} className="space-y-4">
         <input type="hidden" name="from_version_id" value={version.id} />
 
+        {canViewBaseCost && (
         <Section
           title="Base fish cost"
           hint="Feed, clearing and FCR are shared by both markets. Import tax is the only line that differs."
         >
-          <Field label="Feed cost" unit="USD / kg feed" name="feed_cost_per_kg" value={version.feed_cost_per_kg} step="0.01" disabled={!isAdmin} onChange={onNum('feed_cost_per_kg')} />
-          <Field label="Clearing cost" unit="USD / kg — added after tax, not taxed" name="clearing_cost_per_kg" value={version.clearing_cost_per_kg} step="0.01" disabled={!isAdmin} onChange={onNum('clearing_cost_per_kg')} />
-          <Field label="Import tax — domestic" unit="fraction, e.g. 0.35 for 35%" name="import_tax_pct_domestic" value={version.import_tax_pct_domestic} step="0.0001" disabled={!isAdmin} onChange={onNum('import_tax_pct_domestic')} />
-          <Field label="Import tax — export" unit="0 on duty drawback" name="import_tax_pct_export" value={version.import_tax_pct_export} step="0.0001" disabled={!isAdmin} onChange={onNum('import_tax_pct_export')} />
-          <Field label="FCR" unit="kg feed per kg live fish" name="fcr_reference" value={version.fcr_reference} step="0.01" disabled={!isAdmin} onChange={onNum('fcr_reference')} />
-          <Field label="FX rate" unit="LKR per 1 USD" name="fx_rate" value={version.fx_rate} step="0.01" disabled={!isAdmin} onChange={onNum('fx_rate')} />
+          <Field label="Feed cost" unit="USD / kg feed" name="feed_cost_per_kg" value={version.feed_cost_per_kg} step="0.01" disabled={!canEditBaseCost} onChange={onNum('feed_cost_per_kg')} />
+          <Field label="Clearing cost" unit="USD / kg — added after tax, not taxed" name="clearing_cost_per_kg" value={version.clearing_cost_per_kg} step="0.01" disabled={!canEditBaseCost} onChange={onNum('clearing_cost_per_kg')} />
+          <Field label="Import tax — domestic" unit="fraction, e.g. 0.35 for 35%" name="import_tax_pct_domestic" value={version.import_tax_pct_domestic} step="0.0001" disabled={!canEditBaseCost} onChange={onNum('import_tax_pct_domestic')} />
+          <Field label="Import tax — export" unit="0 on duty drawback" name="import_tax_pct_export" value={version.import_tax_pct_export} step="0.0001" disabled={!canEditBaseCost} onChange={onNum('import_tax_pct_export')} />
+          <Field label="FCR" unit="kg feed per kg live fish" name="fcr_reference" value={version.fcr_reference} step="0.01" disabled={!canEditBaseCost} onChange={onNum('fcr_reference')} />
+          <Field label="FX rate" unit="LKR per 1 USD" name="fx_rate" value={version.fx_rate} step="0.01" disabled={!canEditBaseCost} onChange={onNum('fx_rate')} />
 
           <div className="col-span-full mt-1 grid grid-cols-2 gap-3 rounded-md bg-muted/40 p-3 text-xs sm:grid-cols-4">
             <Readout label="Effective feed" value={`$${preview.effectiveFeed.toFixed(4)}`} hint="feed × (1+tax) + clearing" />
@@ -114,7 +134,9 @@ export function AssumptionsClient({
             <Readout label="Whole fish — export" value={`$${preview.export.wholeFishUsd.toFixed(4)}`} />
           </div>
         </Section>
+        )}
 
+        {canViewBaseCost && (
         <Section title="Other direct costs" hint="Each entered in its own currency. Per-fish components divide by the fish's median weight when a size grade is selected; per-kg ones stay flat.">
           <div className="col-span-full overflow-x-auto">
             <table className="w-full text-xs">
@@ -131,11 +153,11 @@ export function AssumptionsClient({
                   <tr key={c.id} className="border-t">
                     <td className="py-1.5 pr-3">{c.name}</td>
                     <td className="py-1.5 pr-3 text-right">
-                      <input name={`odc_${c.id}`} defaultValue={c.value} type="number" step="0.0001" min="0" disabled={!isAdmin} className={cn(inputCls, 'w-28 text-right')} />
+                      <input name={`odc_${c.id}`} defaultValue={c.value} type="number" step="0.0001" min="0" disabled={!canEditBaseCost} className={cn(inputCls, 'w-28 text-right')} />
                     </td>
                     <td className="py-1.5 pr-3 text-muted-foreground">{c.currency}</td>
                     <td className="py-1.5">
-                      <select name={`odc_basis_${c.id}`} defaultValue={c.basis} disabled={!isAdmin} className={inputCls}>
+                      <select name={`odc_basis_${c.id}`} defaultValue={c.basis} disabled={!canEditBaseCost} className={inputCls}>
                         <option value="per_kg">per kg</option>
                         <option value="per_fish">per fish</option>
                       </select>
@@ -146,6 +168,7 @@ export function AssumptionsClient({
             </table>
           </div>
         </Section>
+        )}
 
         <Section title="Per-kg adders" hint="Entered per market. Cold holding sits inside ex-factory; freight comes after it, on the way to FINAL.">
           <Field label="Transport — domestic" unit="LKR / kg, factory → customer" name="domestic_transport_lkr" value={version.domestic_transport_lkr} step="0.01" disabled={!isAdmin} onChange={onNum('domestic_transport_lkr')} />
@@ -209,7 +232,7 @@ export function AssumptionsClient({
           </div>
         </Section>
 
-        {isAdmin && (
+        {(isAdmin || canEditBaseCost) && (
           <div className="sticky bottom-4 flex flex-wrap items-center gap-2 rounded-lg border bg-card p-3 shadow-sm">
             <input name="label" placeholder="Name this version, e.g. 'Nov FX + feed'" className={cn(inputCls, 'flex-1 min-w-[200px]')} />
             <input name="notes" placeholder="Why it changed (optional)" className={cn(inputCls, 'flex-1 min-w-[200px]')} />

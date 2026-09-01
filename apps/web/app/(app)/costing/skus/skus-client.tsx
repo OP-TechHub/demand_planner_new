@@ -2,7 +2,7 @@
 
 import { useActionState, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Download, FileText, Lock, Pencil, Plus, Printer } from 'lucide-react';
+import { Download, FileText, Lock, Pencil, Plus, Printer, X } from 'lucide-react';
 import { computeCost, type DomesticOutput, type ExportOutput, type WholeFishCost } from '@oceanpick/engine';
 import {
   COST_CATEGORIES,
@@ -37,6 +37,7 @@ export function SkusClient({
   currentUserId,
   authors,
   isAdmin,
+  canViewBaseCost,
 }: {
   skus: CostSkuRow[];
   buckets: CostSizeBucket[];
@@ -49,6 +50,12 @@ export function SkusClient({
   currentUserId: string | null;
   authors: Record<string, string>;
   isAdmin: boolean;
+  /**
+   * Whether this user may see what the fish costs to grow. False means
+   * `version` and `odc` are the masked pair — identical prices, no supplier
+   * numbers — so the printed sheet drops the whole-fish build-up.
+   */
+  canViewBaseCost: boolean;
 }) {
   const [editing, setEditing] = useState<CostSkuRow | null | undefined>(undefined);
   const [query, setQuery] = useState('');
@@ -144,6 +151,7 @@ export function SkusClient({
           rates={rates}
           allSkus={skus}
           categories={categories}
+          canViewBaseCost={canViewBaseCost}
           onClose={() => setEditing(undefined)}
         />
       )}
@@ -705,6 +713,7 @@ function SkuDialog({
   rates,
   allSkus,
   categories,
+  canViewBaseCost,
   onClose,
 }: {
   sku: CostSkuRow | null;
@@ -717,6 +726,7 @@ function SkuDialog({
   rates: Record<string, { sea: number; air: number }>;
   allSkus: CostSkuRow[];
   categories: string[];
+  canViewBaseCost: boolean;
   onClose: () => void;
 }) {
   const router = useRouter();
@@ -879,18 +889,34 @@ function SkuDialog({
 
   return (
     <>
-      <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4" onClick={onClose}>
+      {/*
+        The backdrop deliberately does NOT close this dialog. It is a long form
+        that takes real work to fill in, and a stray click on the margin around
+        it used to throw all of that away with no warning and no undo. Leaving
+        is an explicit act: the ✕ in the header, or Cancel at the foot.
+      */}
+      <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4">
       <form
         ref={formRef}
         action={action}
-        onClick={(e) => e.stopPropagation()}
         onInput={invalidatePreview}
         // Remount when the copy source changes, so the uncontrolled numeric
         // fields pick up the new defaults instead of keeping the old ones.
         key={src?.id ?? 'new'}
         className="my-8 w-full max-w-2xl space-y-4 rounded-lg border bg-card p-5 shadow-lg"
       >
-        <h2 className="text-lg font-semibold">{sku ? sku.name : 'New SKU'}</h2>
+        <div className="flex items-start justify-between gap-4">
+          <h2 className="text-lg font-semibold">{sku ? sku.name : 'New SKU'}</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            title="Close without saving"
+            className="-mr-1 -mt-1 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
         {!sku && src && (
           <p className="rounded-md bg-primary/5 px-3 py-2 text-xs text-primary">
             Starting from <strong className="font-medium">{src.name}</strong> — every field below is
@@ -1388,6 +1414,7 @@ function SkuDialog({
             gradeLabel={preview.gradeLabel}
             pctFish={preview.pctFish}
             pctMarinade={preview.pctMarinade}
+            showBaseCost={canViewBaseCost}
             domestic={preview.domestic}
             domesticWholeFish={preview.domesticWholeFish}
             exportOut={preview.export}

@@ -56,6 +56,40 @@ The engine output per item per month: `demand_fp`, `available_fp`,
 the **last recompute** — edits made since aren't included until the plan is
 recalculated. Same optional query params as `/demand`.
 
+### `GET /costing/skus`
+Priced SKUs from the costing module: **cost before margin, the margin, and the
+selling price**. Built for the CRM. Prices are computed per request by the
+costing engine — there is no stored price to read.
+
+```bash
+curl "https://<domain>/api/v1/costing/skus?customer=Acme&market=export" \
+  -H "Authorization: Bearer op_live_xxx"
+```
+```json
+{ "data": [
+  { "sku_id": "…", "name": "Barramundi Fillet Skin-On 200-300g",
+    "customer": "Acme Foods", "market": "export", "currency": "USD",
+    "state": "frozen", "destination": { "id": "…", "name": "Dubai" },
+    "cost": 8.42, "margin_pct": 0.22, "selling_price": 10.79,
+    "contribution_per_kg": 2.37, "pricing_mode": "margin",
+    "freight_per_kg": 0.41 }
+], "meta": { "assumptions_version": 7, "count": 61, "skipped": [] } }
+```
+
+Query: `market` (domestic|export, default both), `destination` (export only, id
+or name), `customer`, `q`, `status` (default `active`), `bucket`, `version`.
+Unknown values 400 rather than defaulting — a typo'd destination silently priced
+for every port would put the wrong number in front of a customer.
+
+One row per SKU per state per destination, because the price genuinely differs
+between glazed/unglazed and between ports. `freight_per_kg` (export only) lets a
+caller build CIF as `selling_price + freight_per_kg`. Cost inputs (feed, FCR, whole-fish,
+ODC) are **not** exposed. Full guide: [crm-integration/](crm-integration/README.md).
+
+### `GET /costing/skus/{id}`
+One SKU, priced across every state, market and destination it sells in. Status
+filters are ignored; an id from another org returns 404.
+
 ---
 
 ## The one you'll use most: `POST /match`

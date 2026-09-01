@@ -2,7 +2,9 @@
 
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
-import type { CostAssumptionVersion } from '@oceanpick/shared';
+import { createServiceClient } from '@/lib/supabase/service';
+import { isBaseCostField } from '@/lib/costing-base-cost';
+import { canEditBaseCost, type CostAssumptionVersion, type UserRole } from '@oceanpick/shared';
 
 /** Numeric assumption fields an admin may edit on a version. */
 const NUMERIC_FIELDS = [
@@ -26,6 +28,32 @@ const NUMERIC_FIELDS = [
 ] as const;
 
 export type SaveState = { error: string | null; ok: boolean };
+
+interface Access {
+  isAdmin: boolean;
+  /** Admin, or a user an admin has granted 'base_cost_edit'. */
+  canEditBase: boolean;
+  orgId: string | null;
+}
+
+/** The caller's role, org and base-cost grants, in one query. */
+async function getAccess(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string
+): Promise<Access> {
+  const { data } = await supabase
+    .from('users')
+    .select('role, org_id, edit_sections')
+    .eq('id', userId)
+    .maybeSingle();
+  const row = data as { role: string; org_id: string; edit_sections: string[] | null } | null;
+  const role = (row?.role ?? 'viewer') as UserRole;
+  return {
+    isAdmin: role === 'admin',
+    canEditBase: canEditBaseCost(role, row?.edit_sections),
+    orgId: row?.org_id ?? null,
+  };
+}
 
 /**
  * Is the caller an admin?
@@ -52,6 +80,12 @@ async function requireAdmin(
  * that reopening a costing shows what was quoted (Decisions §4). Changing an
  * assumption mints a new version and makes it current; older versions stay
  * readable forever.
+ *
+ * Two kinds of caller reach this: an admin, who may change anything, and a user
+ * granted 'base_cost_edit', who may change only the base fish cost and the ODC
+ * components. The grantee's other fields are taken from the source version
+ * whatever the form posted — their inputs are disabled on screen, but a
+ * disabled input is a UI state, not a permission.
  */
 export async function publishAssumptionVersion(_prev: SaveState, fd: FormData): Promise<SaveState> {
   const fromId = String(fd.get('from_version_id') ?? '').trim();
@@ -73,13 +107,26 @@ export async function publishAssumptionVersion(_prev: SaveState, fd: FormData): 
   if (!base) return { error: 'That assumptions version no longer exists.', ok: false };
   const from = base as CostAssumptionVersion;
 
-  const denied = await requireAdmin(supabase, user.id);
-  if (denied) return { error: denied, ok: false };
+  const access = await getAccess(supabase, user.id);
+  if (!access.isAdmin && !access.canEditBase) {
+    return {
+      error: 'Only an admin can change the company assumptions. Override them inside your own costing instead.',
+      ok: false,
+    };
+  }
+  // A grantee's writes go in under the service role (RLS reserves this table
+  // for admins), so the org has to be checked here rather than by a policy.
+  if (!access.isAdmin && access.orgId !== from.org_id) {
+    return { error: 'That assumptions version belongs to another organisation.', ok: false };
+  }
+  // Admins keep writing as themselves; only the narrower path needs the wider key.
+  const db = access.isAdmin ? supabase : createServiceClient();
 
   const next: Record<string, unknown> = {};
   for (const field of NUMERIC_FIELDS) {
     const raw = fd.get(field);
-    if (raw == null) {
+    // Outside the base-cost sections a grantee changes nothing, posted or not.
+    if (raw == null || (!access.isAdmin && !isBaseCostField(field))) {
       next[field] = from[field];
       continue;
     }
@@ -134,9 +181,9 @@ export async function publishAssumptionVersion(_prev: SaveState, fd: FormData): 
    * refusing the publish.
    */
   const rollback = async (message: string): Promise<SaveState> => {
-    if (newVersionId) await supabase.from('cost_assumption_versions').delete().eq('id', newVersionId);
+    if (newVersionId) await db.from('cost_assumption_versions').delete().eq('id', newVersionId);
     if (prevCurrentId) {
-      await supabase
+      await db
         .from('cost_assumption_versions')
         .update({ is_current: true, updated_by: user.id })
         .eq('id', prevCurrentId);
@@ -149,14 +196,14 @@ export async function publishAssumptionVersion(_prev: SaveState, fd: FormData): 
   let newVersionId: string | null = null;
 
   // Clear the current flag first: a partial unique index allows only one.
-  const { error: clearError } = await supabase
+  const { error: clearError } = await db
     .from('cost_assumption_versions')
     .update({ is_current: false, updated_by: user.id })
     .eq('org_id', from.org_id)
     .eq('is_current', true);
   if (clearError) return rollback(clearError.message);
 
-  const { data: created, error } = await supabase
+  const { data: created, error } = await db
     .from('cost_assumption_versions')
     .insert({
       ...next,
@@ -182,7 +229,7 @@ export async function publishAssumptionVersion(_prev: SaveState, fd: FormData): 
 
   const odcRows = (odc ?? []) as { id: string; name: string; value: number; currency: string; basis: string; sort_order: number }[];
   if (odcRows.length) {
-    const { error: odcError } = await supabase.from('cost_odc_components').insert(
+    const { error: odcError } = await db.from('cost_odc_components').insert(
       odcRows.map((c) => {
         const raw = fd.get(`odc_${c.id}`);
         const edited = raw == null ? c.value : Number(String(raw).trim());
@@ -202,10 +249,12 @@ export async function publishAssumptionVersion(_prev: SaveState, fd: FormData): 
 
   const rateRows = (rates ?? []) as { destination_id: string; sea_rate_per_20ft: number; air_rate_per_lot: number }[];
   if (rateRows.length) {
-    const { error: rateError } = await supabase.from('cost_destination_rates').insert(
+    const { error: rateError } = await db.from('cost_destination_rates').insert(
       rateRows.map((r) => {
-        const sea = Number(String(fd.get(`sea_${r.destination_id}`) ?? r.sea_rate_per_20ft).trim());
-        const air = Number(String(fd.get(`air_${r.destination_id}`) ?? r.air_rate_per_lot).trim());
+        const posted = (key: string, fallback: number) =>
+          access.isAdmin ? (fd.get(key) ?? fallback) : fallback;
+        const sea = Number(String(posted(`sea_${r.destination_id}`, r.sea_rate_per_20ft)).trim());
+        const air = Number(String(posted(`air_${r.destination_id}`, r.air_rate_per_lot)).trim());
         return {
           version_id: newId,
           destination_id: r.destination_id,
