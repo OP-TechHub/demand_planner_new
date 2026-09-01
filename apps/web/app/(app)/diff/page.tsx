@@ -6,7 +6,8 @@ import { monthLabel, type Plan } from '@oceanpick/shared';
 import { ComparePicker, type PickPlan } from './compare-picker';
 import { MonthlyCompare } from './monthly-compare';
 import { AnnualCompare } from './annual-compare';
-import { bySummaryPeriod } from '@/lib/annual-summary';
+import { bySummaryPeriod, withSideProducts } from '@/lib/annual-summary';
+import { sideProductTotals } from '@/lib/side-products';
 
 /** Short kind label for a plan, for the picker. */
 function kindOf(p: Plan): string {
@@ -45,11 +46,17 @@ export default async function DiffPage({ searchParams }: { searchParams: Promise
 
   const supabase = await createClient();
   const sameplan = planA.id === planB.id;
-  const [d, monthly, summaryA, summaryB] = await Promise.all([
+  // The by-product and other-product rows aren't in `plan_summary` — they're
+  // computed on read, per plan: by-product revenue follows each plan's own
+  // allocated whole round, while the other-product lines are org-wide and so
+  // read the same on both sides.
+  const [d, monthly, summaryA, summaryB, sideA, sideB] = await Promise.all([
     computeDiff(supabase, planA, planB),
     sameplan ? Promise.resolve(null) : computeMonthlyCompare(supabase, planA, planB),
     supabase.from('plan_summary').select('*').eq('plan_id', planA.id),
     supabase.from('plan_summary').select('*').eq('plan_id', planB.id),
+    sideProductTotals(supabase, planA.id, planA.horizon_months),
+    sideProductTotals(supabase, planB.id, planB.horizon_months),
   ]);
   // The annual figures only exist once a plan has been computed; a plan that
   // never was would otherwise read as a column of zeroes rather than as absent.
@@ -116,16 +123,19 @@ export default async function DiffPage({ searchParams }: { searchParams: Promise
                   </p>
                 )}
                 <AnnualCompare
-                  a={bySummaryPeriod(summaryA.data)}
-                  b={bySummaryPeriod(summaryB.data)}
+                  a={withSideProducts(bySummaryPeriod(summaryA.data), summaryA.data?.length ? sideA : null)}
+                  b={withSideProducts(bySummaryPeriod(summaryB.data), summaryB.data?.length ? sideB : null)}
                   aName={planA.name}
                   bName={planB.name}
                 />
                 <p className="text-xs text-muted-foreground">
                   The same rows as the <b>Annual Summary</b> page, with <b>A</b> = {planA.name} and <b>B</b> ={' '}
-                  {planB.name}. <b>Δ</b> is B − A, so a positive figure means B is higher; on <b>GP %</b> it is a
-                  movement in percentage points, and no <b>Δ %</b> is shown for it since a percentage of a percentage
-                  reads as neither. <b>Δ %</b> is blank where A was zero — there is no percentage change from nothing.
+                  {planB.name}, including the secondary and other-product rows and the <b>Total</b> that carries them.
+                  By-product revenue follows each plan&apos;s own allocated whole round, so it moves with the plan;
+                  other products are org-wide, so that row reads the same on both sides and never shows a change.{' '}
+                  <b>Δ</b> is B − A, so a positive figure means B is higher; on the <b>GP %</b> rows it is a movement in
+                  percentage points, and no <b>Δ %</b> is shown for them since a percentage of a percentage reads as
+                  neither. <b>Δ %</b> is blank where A was zero — there is no percentage change from nothing.
                 </p>
               </div>
             )}
