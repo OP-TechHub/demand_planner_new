@@ -18,6 +18,7 @@ import { toCsv, downloadCsv } from '@/lib/csv';
 import { ScrollX } from '@/components/ui/scroll-x';
 import { cn } from '@/lib/utils';
 import { OVERRIDABLE, OVERRIDE_LABEL, PERCENT_FIELDS, type OverridableField } from '@/lib/costing-adapt';
+import { isBaseCostField } from '@/lib/costing-base-cost';
 import { downloadDoc, slugify } from '@/lib/doc-export';
 import { COST_SHEET_ID } from '@/components/cost-sheet-parts';
 import { SkuCostSheet } from './skus/sku-cost-sheet';
@@ -55,6 +56,7 @@ export function CostGridClient({
   yields,
   authors,
   isAdmin,
+  canViewBaseCost,
 }: {
   version: CostAssumptionVersion;
   odc: CostOdcComponentRow[];
@@ -65,6 +67,13 @@ export function CostGridClient({
   yields: YieldMap;
   authors: Record<string, string>;
   isAdmin: boolean;
+  /**
+   * Whether this user may see what the fish costs to grow. False means the
+   * `version` and `odc` above are a masked pair that price identically but
+   * say nothing about the feed price, the tax position or the ODC line items —
+   * so don't render them, and don't offer them as overrides.
+   */
+  canViewBaseCost: boolean;
 }) {
   const router = useRouter();
   const [market, setMarket] = useState<CostMarket>('domestic');
@@ -278,7 +287,7 @@ export function CostGridClient({
               </div>
 
               <div className="mt-3 max-h-[70vh] overflow-y-auto rounded-md border">
-                <SkuCostSheet {...sheetProps(sheetRow, version, authors, bucket?.label ?? null)} />
+                <SkuCostSheet {...sheetProps(sheetRow, version, authors, bucket?.label ?? null, canViewBaseCost)} />
               </div>
 
               <p className="mt-3 text-xs text-muted-foreground">
@@ -295,7 +304,7 @@ export function CostGridClient({
             as-is by the Word export.
           */}
           <div className="hidden print:block">
-            <SkuCostSheet {...sheetProps(sheetRow, version, authors, bucket?.label ?? null)} elementId={COST_SHEET_ID} />
+            <SkuCostSheet {...sheetProps(sheetRow, version, authors, bucket?.label ?? null, canViewBaseCost)} elementId={COST_SHEET_ID} />
           </div>
         </>
       )}
@@ -306,6 +315,7 @@ export function CostGridClient({
           brokenSkuIds={brokenSkuIds}
           authors={authors}
           version={version}
+          canViewBaseCost={canViewBaseCost}
           onCancel={() => setSaving(false)}
           onSave={onSave}
           busy={isPending}
@@ -326,7 +336,8 @@ function sheetProps(
   row: Row,
   version: CostAssumptionVersion,
   authors: Record<string, string>,
-  bucketLabel: string | null
+  bucketLabel: string | null,
+  showBaseCost: boolean
 ) {
   const out = row.result.ok ? row.result.value : null;
   // Read the market off the row's own output, not off the page's market
@@ -346,6 +357,7 @@ function sheetProps(
     gradeLabel: bucketLabel,
     pctFish: row.sku.pct_fish,
     pctMarinade: row.sku.pct_marinade,
+    showBaseCost,
     domestic: out && isDomestic ? (out.result as DomesticOutput) : null,
     domesticWholeFish: out && isDomestic ? out.wholeFish : null,
     exportOut: out && !isDomestic ? (out.result as ExportOutput) : null,
@@ -817,6 +829,7 @@ function SaveDialog({
   brokenSkuIds,
   authors,
   version,
+  canViewBaseCost,
   onCancel,
   onSave,
   busy,
@@ -825,6 +838,7 @@ function SaveDialog({
   brokenSkuIds: Set<string>;
   authors: Record<string, string>;
   version: CostAssumptionVersion;
+  canViewBaseCost: boolean;
   onCancel: () => void;
   onSave: (
     name: string,
@@ -840,7 +854,14 @@ function SaveDialog({
   const [overrides, setOverrides] = useState<Partial<Record<OverridableField, string>>>({});
   const [showOverrides, setShowOverrides] = useState(false);
 
-  const overrideCount = OVERRIDABLE.filter((f) => {
+  // You can only deviate from a number you are allowed to read: the field's
+  // placeholder is the company value, and the base-cost ones are restricted.
+  const overridable = useMemo(
+    () => (canViewBaseCost ? OVERRIDABLE : OVERRIDABLE.filter((f) => !isBaseCostField(f))),
+    [canViewBaseCost]
+  );
+
+  const overrideCount = overridable.filter((f) => {
     const raw = overrides[f]?.trim();
     return raw !== undefined && raw !== '' && Number(raw) !== (version[f] as number);
   }).length;
@@ -848,7 +869,7 @@ function SaveDialog({
   /** Blank and unchanged fields are dropped; the server re-checks all of this. */
   const numericOverrides = (): Partial<Record<OverridableField, number>> => {
     const out: Partial<Record<OverridableField, number>> = {};
-    for (const f of OVERRIDABLE) {
+    for (const f of overridable) {
       const raw = overrides[f]?.trim();
       if (!raw) continue;
       const n = Number(raw);
@@ -1010,7 +1031,7 @@ function SaveDialog({
                 what you changed.
               </p>
               <div className="mt-2 grid max-h-56 gap-2 overflow-y-auto rounded-md border p-2 sm:grid-cols-2">
-                {OVERRIDABLE.map((f) => {
+                {overridable.map((f) => {
                   const inherited = version[f] as number;
                   const raw = overrides[f] ?? '';
                   const changed = raw.trim() !== '' && Number(raw) !== inherited;

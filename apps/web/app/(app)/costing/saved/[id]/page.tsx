@@ -8,7 +8,17 @@ import type {
   CostCostingLine,
   CostProductState,
 } from '@oceanpick/shared';
-import { applyOverrides, loadCostingContext, toAssumptions, toBucket, toDestination, toSku } from '@/lib/costing';
+import {
+  applyOverrides,
+  getBaseCostAccess,
+  loadCostingContext,
+  stripBaseCostOutputs,
+  stripBaseCostOverrides,
+  toAssumptions,
+  toBucket,
+  toDestination,
+  toSku,
+} from '@/lib/costing';
 import { CostingDetail, type RepricedLine } from './costing-detail';
 
 /**
@@ -34,10 +44,11 @@ export default async function SavedCostingPage({ params }: { params: Promise<{ i
   const lines = (lineRows ?? []) as CostCostingLine[];
   const destinations = (destRows ?? []) as CostCostingDestination[];
 
-  const [{ data: pinnedRow }, { data: authorRow }, current] = await Promise.all([
+  const [{ data: pinnedRow }, { data: authorRow }, current, baseCost] = await Promise.all([
     supabase.from('cost_assumption_versions').select('*').eq('id', costing.version_id).maybeSingle(),
     supabase.from('users').select('full_name').eq('id', costing.created_by).maybeSingle(),
     loadCostingContext(),
+    getBaseCostAccess(),
   ]);
 
   const pinned = pinnedRow as CostAssumptionVersion | null;
@@ -45,10 +56,21 @@ export default async function SavedCostingPage({ params }: { params: Promise<{ i
 
   const repriced = current ? reprice(costing, lines, current) : new Map<string, number>();
 
+  // The reprice above uses the real assumptions — it runs here, on the server.
+  // What goes to the browser is the costing without its base-cost content: the
+  // stored whole-fish build-up on each line, and any override of a base-cost
+  // field, both of which state the numbers outright.
+  const shown = baseCost.canView
+    ? costing
+    : { ...costing, assumption_overrides: stripBaseCostOverrides(costing.assumption_overrides) };
+  const shownLines = baseCost.canView
+    ? lines
+    : lines.map((l) => ({ ...l, outputs: stripBaseCostOutputs(l.outputs) }) as CostCostingLine);
+
   return (
     <CostingDetail
-      costing={costing}
-      lines={lines}
+      costing={shown}
+      lines={shownLines}
       destinations={destinations}
       pinnedLabel={pinned ? `v${pinned.version_no}${pinned.label ? ` · ${pinned.label}` : ''}` : 'unknown version'}
       pinnedIsCurrent={pinned?.is_current ?? false}
@@ -57,6 +79,7 @@ export default async function SavedCostingPage({ params }: { params: Promise<{ i
       }
       authorName={authorName}
       repriced={Object.fromEntries(repriced) as Record<string, RepricedLine>}
+      showBaseCost={baseCost.canView}
     />
   );
 }

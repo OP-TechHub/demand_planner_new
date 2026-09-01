@@ -71,6 +71,50 @@ This is why assumptions are versioned rather than a single editable set — retr
 - **All costings are visible to all users.**
 - **Only the creator can edit their own.** Admins may delete an orphaned costing.
 
+### The base fish cost is the exception
+
+Two sections of the Assumptions screen — **Base fish cost** (feed, clearing,
+import tax, FCR, FX) and **Other direct costs** (the ODC components) — are
+commercially sensitive: they are supplier prices and a tax position. They are
+**hidden from everyone by default**, and an admin releases them per user in
+Admin → Users with two grants:
+
+- `base_cost_view` — see the two sections, and the whole-fish build-up on a
+  cost sheet ("Effective feed cost", "FCR used", "Feed cost per kg fish",
+  "Other direct costs").
+- `base_cost_edit` — additionally publish an assumptions version that changes
+  them. Implies view. Everything *else* on the Assumptions screen stays
+  admin-only, so a grantee's publish takes every other field from the version
+  it was based on, whatever the form posted.
+
+Costs and prices built on those numbers stay visible to everyone — the grid's
+whole-fish column, every FINAL, every selling price. Only the inputs are held
+back.
+
+**Enforced by not sending them.** The grid, the SKU dialog and the sheet
+previews all price in the browser, so a user without the grant is served an
+*algebraically equivalent* set of assumptions instead of the real one
+(`apps/web/lib/costing-base-cost.ts`): the effective feed cost is folded into
+one feed-plus-tax pair, and the ODC table collapses to a per-kg and a per-fish
+total. Prices come out identical to the last decimal — pinned by
+`packages/engine/test/costing-base-cost-mask.test.ts` — while the feed price,
+the tax rate and the individual components never reach the page.
+
+Two limits worth stating plainly:
+
+- **The aggregates are derivable.** The whole-fish cost is on screen and the
+  per-grade FCR is in Size grades, so someone determined can work back to the
+  effective feed cost. Hiding the line items is the achievable goal; hiding
+  their sum is not, while the cost itself is shown.
+- **RLS is unchanged.** `cost_assumption_versions` and `cost_odc_components`
+  are still readable by any active user of the org at the database level, so an
+  account querying Supabase directly with its own token can still read them.
+  Closing that means restricting those policies and moving every costing screen
+  onto the service-role loader.
+
+The `/api/v1/costing` endpoints are unaffected: they return final costs and
+prices per SKU, never the assumptions or the whole-fish build-up.
+
 ---
 
 ## 6. Size buckets and yield

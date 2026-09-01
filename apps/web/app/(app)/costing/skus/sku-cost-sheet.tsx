@@ -30,6 +30,7 @@ export function SkuCostSheet({
   exportOut,
   exportWholeFish,
   destinationName,
+  showBaseCost,
   elementId,
 }: {
   skuName: string;
@@ -56,6 +57,13 @@ export function SkuCostSheet({
   gradeLabel?: string | null;
   pctFish: number;
   pctMarinade: number;
+  /**
+   * Whether the reader may see what the fish costs to grow. When false the
+   * whole-fish build-up collapses to its total: the effective feed cost, the
+   * feed cost per kg of fish and the ODC total are the base-cost figures, and
+   * they only reach people an admin has granted base-cost view.
+   */
+  showBaseCost: boolean;
   domestic: DomesticOutput | null;
   domesticWholeFish: WholeFishCost | null;
   exportOut: ExportOutput | null;
@@ -109,6 +117,7 @@ export function SkuCostSheet({
           absorbed={absorbed}
           pctFish={pctFish}
           pctMarinade={pctMarinade}
+          showBaseCost={showBaseCost}
           /*
             A glazed SKU ships as one thing: the glazed pack. Its unglazed twin
             is the same pack read net of its ice, not a product anyone can
@@ -149,6 +158,7 @@ export function SkuCostSheet({
           absorbed={absorbed}
           pctFish={pctFish}
           pctMarinade={pctMarinade}
+          showBaseCost={showBaseCost}
           /*
             One frozen row, not two: the glazed pack when the SKU is glazed,
             the plain one when it is not. Fresh is kept separately — it is a
@@ -229,6 +239,7 @@ function MarketSection({
   isDomestic,
   chain,
   wholeFish,
+  showBaseCost,
   glazePct,
   absorbed,
   pctFish,
@@ -240,6 +251,7 @@ function MarketSection({
   isDomestic: boolean;
   chain: CostChain;
   wholeFish: WholeFishCost | null;
+  showBaseCost: boolean;
   glazePct: number;
   absorbed: boolean;
   pctFish: number;
@@ -264,10 +276,14 @@ function MarketSection({
           <h3 style={S.h3}>Whole fish, ex-farm</h3>
           <table style={S.table}>
             <tbody>
-              <Row label="Effective feed cost (USD/kg feed)" value={wholeFish.effectiveFeedCostUsd} fmt={(n) => n.toFixed(2)} />
-              <Row label="FCR used" value={wholeFish.fcrUsed} fmt={(n) => n.toFixed(2)} />
-              <Row label="Feed cost per kg fish (USD)" value={wholeFish.feedCostPerKgFishUsd} fmt={(n) => n.toFixed(2)} />
-              <Row label="Other direct costs (USD)" value={wholeFish.odcUsd} fmt={(n) => n.toFixed(2)} />
+              {showBaseCost && (
+                <>
+                  <Row label="Effective feed cost (USD/kg feed)" value={wholeFish.effectiveFeedCostUsd} fmt={(n) => n.toFixed(2)} />
+                  <Row label="FCR used" value={wholeFish.fcrUsed} fmt={(n) => n.toFixed(2)} />
+                  <Row label="Feed cost per kg fish (USD)" value={wholeFish.feedCostPerKgFishUsd} fmt={(n) => n.toFixed(2)} />
+                  <Row label="Other direct costs (USD)" value={wholeFish.odcUsd} fmt={(n) => n.toFixed(2)} />
+                </>
+              )}
               <Row
                 label={`Whole fish cost (${currency})`}
                 value={isDomestic ? wholeFish.wholeFishLkr : wholeFish.wholeFishUsd}

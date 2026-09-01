@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/server';
 import { getProfile } from '@/lib/plan';
+import { getBaseCostAccess, stripBaseCostOverrides } from '@/lib/costing';
 import type { CostAssumptionVersion, CostCosting } from '@oceanpick/shared';
 import { SavedList, type SavedRow } from './saved-list';
 
@@ -13,7 +14,7 @@ import { SavedList, type SavedRow } from './saved-list';
  */
 export default async function SavedCostingsPage() {
   const supabase = await createClient();
-  const [{ data: costings }, { data: versions }, profile] = await Promise.all([
+  const [{ data: costings }, { data: versions }, profile, baseCost] = await Promise.all([
     supabase
       .from('cost_costings')
       .select('*')
@@ -21,6 +22,7 @@ export default async function SavedCostingsPage() {
       .order('created_at', { ascending: false }),
     supabase.from('cost_assumption_versions').select('*'),
     getProfile(),
+    getBaseCostAccess(),
   ]);
 
   const rows = (costings ?? []) as CostCosting[];
@@ -57,7 +59,11 @@ export default async function SavedCostingsPage() {
   const names = new Map(((users ?? []) as { id: string; full_name: string }[]).map((u) => [u.id, u.full_name]));
 
   const list: SavedRow[] = rows.map((c) => ({
-    costing: c,
+    // Each row carries its whole costing, overrides and all — so a base-cost
+    // deviation someone else saved would otherwise state the number here.
+    costing: baseCost.canView
+      ? c
+      : { ...c, assumption_overrides: stripBaseCostOverrides(c.assumption_overrides) },
     versionLabel: (() => {
       const v = versionById.get(c.version_id);
       return v ? `v${v.version_no}${v.label ? ` · ${v.label}` : ''}` : 'unknown version';

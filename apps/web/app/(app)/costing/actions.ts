@@ -4,6 +4,8 @@ import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import {
   applyOverrides,
+  getBaseCostAccess,
+  isBaseCostField,
   loadCostingContext,
   toAssumptions,
   toBucket,
@@ -26,10 +28,17 @@ import type { CostMarket, CostProductState } from '@oceanpick/shared';
  * light the "custom assumptions" badge on a costing that deviates from nothing,
  * and worse, would freeze that field against a later official change while
  * claiming to be a deliberate choice.
+ *
+ * Base-cost fields are refused outright from a caller without the grant. You
+ * cannot deviate from a number you are not allowed to read, and the browser
+ * does not offer those fields — but the action is a public endpoint, and an
+ * override reaches the engine, so a crafted request would otherwise move the
+ * prices in a saved quote.
  */
 function cleanOverrides(
   raw: Record<string, number> | undefined,
-  version: Record<string, unknown>
+  version: Record<string, unknown>,
+  canViewBaseCost: boolean
 ): { overrides: Record<string, number>; error: string | null } {
   const out: Record<string, number> = {};
   if (!raw) return { overrides: out, error: null };
@@ -37,6 +46,12 @@ function cleanOverrides(
   for (const field of OVERRIDABLE) {
     const v = raw[field];
     if (v == null) continue;
+    if (!canViewBaseCost && isBaseCostField(field)) {
+      return {
+        overrides: {},
+        error: 'The base fish cost and the other direct costs are restricted — ask an admin for access to override them.',
+      };
+    }
     if (!Number.isFinite(v) || v < 0) {
       return { overrides: {}, error: `${field.replace(/_/g, ' ')} must be a number of 0 or more.` };
     }
@@ -101,7 +116,8 @@ export async function saveCosting(input: SaveCostingInput): Promise<{ error: str
   // would make the badge a lie and the snapshot unreproducible.
   const { overrides, error: overrideError } = cleanOverrides(
     input.overrides,
-    ctx.version as unknown as Record<string, unknown>
+    ctx.version as unknown as Record<string, unknown>,
+    (await getBaseCostAccess()).canView
   );
   if (overrideError) return { error: overrideError };
 

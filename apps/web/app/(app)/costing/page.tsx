@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { getProfile } from '@/lib/plan';
-import { loadCostingContext } from '@/lib/costing';
+import { forClient, getBaseCostAccess, loadCostingContext } from '@/lib/costing';
 import { CostingSetupNotice } from './setup-notice';
 import { CostGridClient } from './cost-grid-client';
 
@@ -14,9 +14,10 @@ import { CostGridClient } from './cost-grid-client';
  */
 export default async function CostingPage() {
   const supabase = await createClient();
-  const [ctx, profile, { data: users }] = await Promise.all([
+  const [ctx, profile, baseCost, { data: users }] = await Promise.all([
     loadCostingContext(),
     getProfile(),
+    getBaseCostAccess(),
     supabase.from('users').select('id, full_name'),
   ]);
   if (!ctx) return <CostingSetupNotice />;
@@ -33,10 +34,15 @@ export default async function CostingPage() {
   );
   const yields = Object.fromEntries(ctx.yields.entries());
 
+  // The grid prices in the browser, so hiding the base fish cost means sending
+  // an equivalent-but-masked set of assumptions rather than simply not drawing
+  // the numbers — they'd still be in the page payload.
+  const { version, odc } = forClient(ctx, baseCost);
+
   return (
     <CostGridClient
-      version={ctx.version}
-      odc={ctx.odc}
+      version={version}
+      odc={odc}
       buckets={ctx.buckets}
       destinations={ctx.destinations}
       rates={rates}
@@ -44,6 +50,7 @@ export default async function CostingPage() {
       yields={yields}
       authors={authors}
       isAdmin={(profile?.role ?? 'viewer') === 'admin'}
+      canViewBaseCost={baseCost.canView}
     />
   );
 }

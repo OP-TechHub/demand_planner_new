@@ -32,6 +32,7 @@ export function CostingDetail({
   currentLabel,
   authorName,
   repriced,
+  showBaseCost,
 }: {
   costing: CostCosting;
   lines: CostCostingLine[];
@@ -41,6 +42,12 @@ export function CostingDetail({
   currentLabel: string | null;
   authorName: string;
   repriced: Record<string, RepricedLine>;
+  /**
+   * Whether the reader may see what the fish costs to grow. False also means
+   * the page stripped those figures out of `lines` and `costing` before they
+   * were sent — this flag only decides what the sheet draws.
+   */
+  showBaseCost: boolean;
 }) {
   const [showReprice, setShowReprice] = useState(false);
   const [state, setState] = useState<CostProductState | 'all'>('all');
@@ -261,7 +268,7 @@ export function CostingDetail({
             }
           >
             <div className="max-h-[65vh] overflow-y-auto rounded-md border">
-              <CostSheet costing={costing} line={sheetLine} pinnedLabel={pinnedLabel} authorName={authorName} />
+              <CostSheet costing={costing} line={sheetLine} pinnedLabel={pinnedLabel} authorName={authorName} showBaseCost={showBaseCost} />
             </div>
             <p className="mt-3 text-xs text-muted-foreground">
               Both formats hold the figures as saved, not as they would price today. The Word file is editable, so
@@ -275,6 +282,7 @@ export function CostingDetail({
               line={sheetLine}
               pinnedLabel={pinnedLabel}
               authorName={authorName}
+              showBaseCost={showBaseCost}
               elementId={COST_SHEET_ID}
             />
           </div>

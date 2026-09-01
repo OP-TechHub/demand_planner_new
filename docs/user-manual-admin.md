@@ -39,6 +39,28 @@ Set a user's role in **Admin → Users**.
   approve them. (The very first account created becomes the admin automatically.)
 - **Roles** — assign admin / planner / contributor / viewer.
 - **Activate / deactivate** — deactivate to revoke access without deleting history.
+- **Access** — per-user grants for anyone who is not an admin. Ticking a box
+  takes effect on their next page load; each change is written to the audit log.
+  - **Can edit buckets** — as before.
+  - **Can view base cost** — shows the two restricted sections of Costing →
+    Assumptions: **Base fish cost** (feed, clearing, import tax, FCR, FX) and
+    **Other direct costs** (fingerling, transport, ice, vaccine, …). It also
+    restores the whole-fish build-up at the top of a printed cost sheet.
+  - **Can edit base cost** — the above, plus the right to publish a new
+    assumptions version that changes those two sections. Everything else on the
+    Assumptions screen stays admin-only, so a grantee's publish leaves the
+    adders, margins, freight table and size grades exactly as they were.
+
+**What "restricted" means.** Without a grant, a user never sees what the fish
+costs to grow — not the feed price, not the tax position, not the individual
+ODC components — anywhere in the app, including the page source. What they do
+still see is everything built on those numbers: the whole-fish cost in the grid,
+every FINAL, every selling price and margin. That is deliberate — a costing is
+unusable otherwise — but it does mean the aggregate can be worked backwards from
+what is on screen. The grants protect the line items, not their sum.
+
+A user without the grant also cannot override those fields inside their own
+costing; the override list simply omits them.
 
 ---
 

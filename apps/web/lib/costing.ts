@@ -8,7 +8,10 @@
 // and by the build: importing this from a client component pulls in
 // `next/headers` and fails the compile immediately, which is how the split into
 // costing-adapt.ts was found in the first place.
+import { canEditBaseCost, canViewBaseCost, type UserRole } from '@oceanpick/shared';
 import { createClient } from '@/lib/supabase/server';
+import { getProfile } from '@/lib/plan';
+import { maskBaseCost } from '@/lib/costing-base-cost';
 import type {
   CostAssumptionVersion,
   CostDestinationRate,
@@ -20,6 +23,44 @@ import type {
 } from '@oceanpick/shared';
 
 export * from '@/lib/costing-adapt';
+export * from '@/lib/costing-base-cost';
+
+/** What the signed-in user may do with the base fish cost and the ODC table. */
+export interface BaseCostAccess {
+  canView: boolean;
+  canEdit: boolean;
+}
+
+/**
+ * Resolve the caller's base-cost grants once per request.
+ *
+ * Every costing screen needs this — the ones that show the numbers, and the
+ * ones that merely have to avoid shipping them to the browser — so it reads
+ * the request-cached profile rather than re-querying `users`.
+ */
+export async function getBaseCostAccess(): Promise<BaseCostAccess> {
+  const profile = await getProfile();
+  const role = (profile?.role ?? 'viewer') as UserRole;
+  return {
+    canView: canViewBaseCost(role, profile?.edit_sections),
+    canEdit: canEditBaseCost(role, profile?.edit_sections),
+  };
+}
+
+/**
+ * The assumptions to hand a client component, masked unless the caller is
+ * allowed to see them. Every page that passes `version` and `odc` into the
+ * browser goes through here — that is the whole enforcement point, since the
+ * grid and the SKU dialog cost in the browser.
+ */
+export function forClient(
+  ctx: Pick<CostingContext, 'version' | 'odc'>,
+  access: BaseCostAccess
+): { version: CostAssumptionVersion; odc: CostOdcComponentRow[] } {
+  return access.canView
+    ? { version: ctx.version, odc: ctx.odc }
+    : maskBaseCost(ctx.version, ctx.odc);
+}
 
 /** Everything a costing screen needs, in one round of queries. */
 export interface CostingContext {
