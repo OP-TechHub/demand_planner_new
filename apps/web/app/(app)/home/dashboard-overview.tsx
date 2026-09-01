@@ -43,7 +43,10 @@ export function DashboardOverview({
   const months = useMemo(() => Array.from({ length: horizon }, (_, i) => i + 1), [horizon]);
   const [from, setFrom] = useState(1);
   const [to, setTo] = useState(horizon);
-  const onFrom = (v: number) => { setFrom(v); if (v > to) setTo(v); };
+  // Picking a start month proposes the twelve months from it, as the grids and
+  // the Open to buy filter do. Only a proposal: the end month can be moved
+  // after, and Reset puts the whole horizon back.
+  const onFrom = (v: number) => { setFrom(v); setTo(Math.min(v + 11, horizon)); };
   const onTo = (v: number) => { setTo(v); if (v < from) setFrom(v); };
   const full = from === 1 && to === horizon;
 
@@ -121,7 +124,9 @@ export function DashboardOverview({
             Reset
           </button>
         )}
-        <span className="text-xs text-muted-foreground">{slice.length} of {horizon} months</span>
+        <span className="text-xs text-muted-foreground">
+          {full ? `All ${horizon} months` : `${rangeText} · ${slice.length} of ${horizon} months`}
+        </span>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
