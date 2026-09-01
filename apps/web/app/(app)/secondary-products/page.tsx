@@ -4,6 +4,7 @@ import { NotComputed } from '@/components/output-grid';
 import { StalePlanNotice } from '../stale-banner';
 import { fetchAllByPlan } from '@/lib/fetch-all';
 import { SecondaryProductsClient, type SecondaryDef, type SourceOption } from './secondary-products-client';
+import { OtherProductsClient, type OtherProduct } from './other-products-client';
 
 /**
  * Secondary products — the by-products recovered while processing a main product.
@@ -23,7 +24,7 @@ export default async function SecondaryProductsPage() {
   const supabase = await createClient();
   const horizon = plan.horizon_months;
 
-  const [{ data: defs }, { data: progs }, rr, profile] = await Promise.all([
+  const [{ data: defs }, { data: progs }, rr, profile, { data: others }, { data: otherMonths }] = await Promise.all([
     supabase
       .from('secondary_products')
       .select('id, basis, source_item_code, name, yield_pct, price_per_kg, sort_order, is_archived')
@@ -34,6 +35,13 @@ export default async function SecondaryProductsPage() {
       .eq('plan_id', plan.id).is('deleted_at', null).order('sort_order'),
     fetchAllByPlan(supabase, 'rolling_results', 'program_id, month_index, rolling_wr', plan.id),
     getProfile(),
+    // Other products are org-wide, like the by-product definitions: no plan_id,
+    // so they survive a scenario fork with no clone logic.
+    supabase
+      .from('other_products')
+      .select('id, name, unit_label, unit_cost, unit_revenue, sort_order, is_archived')
+      .order('sort_order'),
+    supabase.from('other_product_months').select('product_id, month_index, quantity'),
   ]);
 
   const programs = (progs ?? []) as { id: string; item_code: string; item_description: string }[];
@@ -76,6 +84,21 @@ export default async function SecondaryProductsPage() {
     item_description: programs.find((p) => p.item_code === code)?.item_description ?? code,
   }));
 
+  const otherProducts: OtherProduct[] = ((others ?? []) as OtherProduct[]).map((p) => ({
+    ...p,
+    unit_cost: Number(p.unit_cost),
+    unit_revenue: Number(p.unit_revenue),
+  }));
+  // Months a product has nothing planned in are absent from the table, so each
+  // series starts at zero and only the stored months are written into it.
+  const otherQuantities: Record<string, number[]> = {};
+  for (const p of otherProducts) otherQuantities[p.id] = new Array<number>(horizon).fill(0);
+  for (const m of (otherMonths ?? []) as { product_id: string; month_index: number; quantity: number }[]) {
+    const arr = otherQuantities[m.product_id];
+    const i = m.month_index - 1;
+    if (arr && i >= 0 && i < horizon) arr[i] = Number(m.quantity);
+  }
+
   const computed = rr.length > 0;
   const canEdit = (profile?.role ?? 'viewer') === 'admin';
 
@@ -104,6 +127,17 @@ export default async function SecondaryProductsPage() {
           canEdit={canEdit}
         />
       )}
+
+      <div className="border-t pt-6">
+        <OtherProductsClient
+          orgId={plan.org_id}
+          planStartDate={plan.plan_start_date}
+          horizon={horizon}
+          products={otherProducts}
+          quantities={otherQuantities}
+          canEdit={canEdit}
+        />
+      </div>
     </div>
   );
 }

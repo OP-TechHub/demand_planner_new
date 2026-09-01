@@ -5,15 +5,21 @@ import { NotComputed } from '@/components/output-grid';
 import { StalePlanNotice } from '../stale-banner';
 import { ExportCsvButton } from '@/components/export-csv-button';
 import {
-  SUMMARY_METRICS, SUMMARY_PERIODS, bySummaryPeriod, summaryCell,
+  SUMMARY_METRICS, SUMMARY_PERIODS, bySummaryPeriod, summaryCell, withSideProducts,
 } from '@/lib/annual-summary';
+import { sideProductTotals } from '@/lib/side-products';
 
 export default async function AnnualSummaryPage() {
   const plan = await getActivePlan();
   if (!plan) return <NoPlan />;
   const supabase = await createClient();
-  const { data: rows } = await supabase.from('plan_summary').select('*').eq('plan_id', plan.id);
-  const byPeriod = bySummaryPeriod(rows);
+  // Secondary and other products sit outside `plan_summary` — the engine only
+  // knows about programs — so they are added on read.
+  const [{ data: rows }, side] = await Promise.all([
+    supabase.from('plan_summary').select('*').eq('plan_id', plan.id),
+    sideProductTotals(supabase, plan.id, plan.horizon_months),
+  ]);
+  const byPeriod = withSideProducts(bySummaryPeriod(rows), side);
   const csvRows: (string | number | null)[][] = [
     ['Metric', ...SUMMARY_PERIODS.map(([, label]) => label)],
     ...SUMMARY_METRICS.map((m) => [m.label, ...SUMMARY_PERIODS.map(([p]) => summaryCell(m, byPeriod, p))]),
@@ -56,6 +62,18 @@ export default async function AnnualSummaryPage() {
             </tbody>
           </table>
         </div>
+      )}
+      {rows && rows.length > 0 && (
+        <p className="text-xs text-muted-foreground">
+          <b>Revenue (programs)</b>, <b>Cost (programs)</b>, <b>Gross Margin (programs)</b> and <b>GP % (programs)</b>{' '}
+          cover the programs <b>only</b> — they do not include secondary or other products — and are the figures that
+          reproduce the V30 workbook. Beneath them sit the rest of the business, taken from the{' '}
+          <b>Secondary products</b> page: by-products recovered while processing (feedstock whole round × recovery rate
+          × price), which carry no cost of their own, so every dollar they earn is a dollar of margin; and{' '}
+          <b>other products</b> — traded lines outside the harvest plan — at their typed-in quantity × per-unit revenue
+          and cost. The <b>Total</b> rows add all three together and are the plan&apos;s whole figure. Both are read
+          live rather than stored with the computed results, so they are up to date without a Recalculate.
+        </p>
       )}
     </div>
   );
