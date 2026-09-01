@@ -62,6 +62,14 @@ what is on screen. The grants protect the line items, not their sum.
 A user without the grant also cannot override those fields inside their own
 costing; the override list simply omits them.
 
+**Sending a sheet out.** Anyone who *can* see the build-up gets a tick box —
+**"Include the base cost build-up"** — on every screen that prints or exports a
+cost sheet: the grid's Cost breakdown dialog, the SKU editor's Download menu,
+and a saved costing's Breakdown dialog. It is on by default; untick it before
+printing or downloading a copy for a customer and those four lines come off the
+preview, the PDF and the Word file together. The whole-fish cost and every price
+stay on the sheet either way.
+
 ---
 
 ## 3. Plans (Admin → Plans)

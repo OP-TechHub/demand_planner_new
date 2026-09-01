@@ -115,6 +115,24 @@ Two limits worth stating plainly:
 The `/api/v1/costing` endpoints are unaffected: they return final costs and
 prices per SKU, never the assumptions or the whole-fish build-up.
 
+### Sending a cost sheet out
+
+Seeing the build-up and *sending* it are different decisions. Wherever a sheet
+can be printed or exported to Word — the grid's breakdown, the SKU editor's
+download menu, a saved costing's line — a reader who holds the grant gets a
+**"Include the base cost build-up"** tick box. It governs the on-screen preview
+as well as the printed and Word copies, so what is on screen is what the
+recipient gets.
+
+It defaults to **on**: unticking is a deliberate act for a document going
+outside, and leaving it on changes nothing for the internal reader who has
+always had the detail. Whichever way it is set, the whole-fish cost and every
+price, margin and downstream figure stay on the sheet — only the four lines
+that decompose the whole-fish cost come out.
+
+Users without the grant never see the box, because those lines were never on
+their sheet to begin with.
+
 ---
 
 ## 6. Size buckets and yield

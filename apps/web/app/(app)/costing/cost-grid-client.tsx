@@ -20,7 +20,7 @@ import { cn } from '@/lib/utils';
 import { OVERRIDABLE, OVERRIDE_LABEL, PERCENT_FIELDS, type OverridableField } from '@/lib/costing-adapt';
 import { isBaseCostField } from '@/lib/costing-base-cost';
 import { downloadDoc, slugify } from '@/lib/doc-export';
-import { COST_SHEET_ID } from '@/components/cost-sheet-parts';
+import { BaseCostToggle, COST_SHEET_ID } from '@/components/cost-sheet-parts';
 import { SkuCostSheet } from './skus/sku-cost-sheet';
 import { saveCosting } from './actions';
 
@@ -86,6 +86,9 @@ export function CostGridClient({
   const [saving, setSaving] = useState(false);
   // The row whose breakdown document is open, for preview / print / Word.
   const [sheetRow, setSheetRow] = useState<Row | null>(null);
+  // Whether that document carries the base cost build-up — see BaseCostToggle.
+  const [includeBaseCost, setIncludeBaseCost] = useState(true);
+  const sheetBaseCost = canViewBaseCost && includeBaseCost;
   const [isPending, startTransition] = useTransition();
 
   const domestic = market === 'domestic';
@@ -286,8 +289,14 @@ export function CostGridClient({
                 </div>
               </div>
 
+              {canViewBaseCost && (
+                <div className="mt-3">
+                  <BaseCostToggle include={includeBaseCost} onChange={setIncludeBaseCost} />
+                </div>
+              )}
+
               <div className="mt-3 max-h-[70vh] overflow-y-auto rounded-md border">
-                <SkuCostSheet {...sheetProps(sheetRow, version, authors, bucket?.label ?? null, canViewBaseCost)} />
+                <SkuCostSheet {...sheetProps(sheetRow, version, authors, bucket?.label ?? null, sheetBaseCost)} />
               </div>
 
               <p className="mt-3 text-xs text-muted-foreground">
@@ -304,7 +313,7 @@ export function CostGridClient({
             as-is by the Word export.
           */}
           <div className="hidden print:block">
-            <SkuCostSheet {...sheetProps(sheetRow, version, authors, bucket?.label ?? null, canViewBaseCost)} elementId={COST_SHEET_ID} />
+            <SkuCostSheet {...sheetProps(sheetRow, version, authors, bucket?.label ?? null, sheetBaseCost)} elementId={COST_SHEET_ID} />
           </div>
         </>
       )}
