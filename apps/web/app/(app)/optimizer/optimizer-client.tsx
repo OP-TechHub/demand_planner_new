@@ -27,50 +27,111 @@ export function OptimizerClient({
     for (let i = 0; i < months; i++) if (programs.some((p) => p.demand[i]! > 0)) return i;
     return 0;
   }, [months, programs]);
-  const [m, setM] = useState(firstActive);
 
-  const rows = programs.filter((p) => (p.demand[m] ?? 0) > 0);
-  const totalDemand = programs.reduce((s, p) => s + (p.demand[m] ?? 0), 0);
-  const totalFulfilled = programs.reduce((s, p) => s + (p.rolling[m] ?? 0), 0);
-  const totalMargin = programs.reduce((s, p) => s + (p.margin[m] ?? 0), 0);
+  // Month INDEXES (0-based), inclusive at both ends. Opens on the first month
+  // with demand, as it always has — one month is still the view that shows a
+  // constraint most plainly, and the range is there to widen it.
+  const [from, setFrom] = useState(firstActive);
+  const [to, setTo] = useState(firstActive);
+
+  // Keep the range coherent: pushing one end past the other carries the other with it.
+  const onFrom = (v: number) => { setFrom(v); if (v > to) setTo(v); };
+  const onTo = (v: number) => { setTo(v); if (v < from) setFrom(v); };
+
+  const span = to - from + 1;
+  const oneMonth = span === 1;
+  const fullRange = from === 0 && to === months - 1;
+  /** Every figure on this page is its monthly series added up over the range. */
+  const over = (arr: number[]) => {
+    let s = 0;
+    for (let i = from; i <= to; i++) s += arr[i] ?? 0;
+    return s;
+  };
+  const periodLabel = oneMonth
+    ? monthLabel(planStartDate, from + 1)
+    : `${monthLabel(planStartDate, from + 1)} – ${monthLabel(planStartDate, to + 1)}`;
+
+  const rows = programs.filter((p) => over(p.demand) > 0);
+  const totalDemand = programs.reduce((s, p) => s + over(p.demand), 0);
+  const totalFulfilled = programs.reduce((s, p) => s + over(p.rolling), 0);
+  const totalMargin = programs.reduce((s, p) => s + over(p.margin), 0);
+  const totalCapacity = buckets.reduce((s, b) => s + over(b.capacity), 0);
+  const totalUsed = buckets.reduce((s, b) => s + over(b.used), 0);
+  const totalLeft = buckets.reduce((s, b) => s + over(b.left), 0);
 
   return (
     <div className="mx-auto max-w-4xl space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold tracking-tight">Fulfilment Optimizer</h1>
-        <div className="flex items-center gap-3 text-sm">
-          <label className="flex items-center gap-1">
-            Month
-            <select value={m} onChange={(e) => setM(Number(e.target.value))} className="rounded-md border px-2 py-1 outline-none focus:ring-2 focus:ring-primary">
-              {Array.from({ length: months }, (_, i) => <option key={i} value={i}>{monthLabel(planStartDate, i + 1)}</option>)}
-            </select>
-          </label>
-          <span className="text-muted-foreground">Scope: {scope.replace(/_/g, ' ')}</span>
-        </div>
+        <span className="text-sm text-muted-foreground">Scope: {scope.replace(/_/g, ' ')}</span>
       </div>
 
-      <Section title="This month’s harvest (kg WR)">
+      <div className="flex flex-wrap items-center gap-1.5 text-sm">
+        <span className="text-xs font-medium text-muted-foreground">Months</span>
+        <select value={from} onChange={(e) => onFrom(Number(e.target.value))} aria-label="From month" className={selectCls}>
+          {Array.from({ length: months }, (_, i) => <option key={i} value={i}>{monthLabel(planStartDate, i + 1)}</option>)}
+        </select>
+        <span className="text-xs text-muted-foreground">to</span>
+        <select value={to} onChange={(e) => onTo(Number(e.target.value))} aria-label="To month" className={selectCls}>
+          {Array.from({ length: months }, (_, i) => <option key={i} value={i}>{monthLabel(planStartDate, i + 1)}</option>)}
+        </select>
+        {!fullRange && (
+          <button type="button" onClick={() => { setFrom(0); setTo(months - 1); }} className="text-xs font-medium text-primary hover:underline">
+            Full horizon
+          </button>
+        )}
+        {!oneMonth && (
+          <button type="button" onClick={() => setTo(from)} className="text-xs font-medium text-primary hover:underline">
+            Single month
+          </button>
+        )}
+        <span className="text-xs text-muted-foreground">
+          {oneMonth ? periodLabel : `${periodLabel} · ${span} of ${months} months`}
+        </span>
+      </div>
+
+      <Section title={`Harvest — ${periodLabel} (kg WR)`}>
         <table className="w-full text-sm">
           <thead className="text-left text-xs uppercase tracking-wide text-muted-foreground">
             <tr><th className="py-1">Bucket</th><th className="py-1 text-right">Capacity</th><th className="py-1 text-right">Used</th><th className="py-1 text-right">Left</th><th className="py-1 text-right">Util</th></tr>
           </thead>
           <tbody>
-            {buckets.map((b) => (
-              <tr key={b.name} className="border-t">
-                <td className="py-1 font-medium">{b.name}</td>
-                <td className="py-1 text-right tabular-nums">{num(b.capacity[m] ?? 0)}</td>
-                <td className="py-1 text-right tabular-nums">{num(b.used[m] ?? 0)}</td>
-                <td className="py-1 text-right tabular-nums">{num(b.left[m] ?? 0)}</td>
-                <td className="py-1 text-right tabular-nums text-muted-foreground">{pctOf(b.used[m] ?? 0, b.capacity[m] ?? 0)}</td>
-              </tr>
-            ))}
+            {buckets.map((b) => {
+              const cap = over(b.capacity), used = over(b.used), left = over(b.left);
+              return (
+                <tr key={b.name} className="border-t">
+                  <td className="py-1 font-medium">{b.name}</td>
+                  <td className="py-1 text-right tabular-nums">{num(cap)}</td>
+                  <td className="py-1 text-right tabular-nums">{num(used)}</td>
+                  <td className="py-1 text-right tabular-nums">{num(left)}</td>
+                  <td className="py-1 text-right tabular-nums text-muted-foreground">{pctOf(used, cap)}</td>
+                </tr>
+              );
+            })}
           </tbody>
+          {buckets.length > 0 && (
+            <tfoot className="border-t-2 font-medium">
+              <tr>
+                <td className="py-1">Total</td>
+                <td className="py-1 text-right tabular-nums">{num(totalCapacity)}</td>
+                <td className="py-1 text-right tabular-nums">{num(totalUsed)}</td>
+                <td className="py-1 text-right tabular-nums">{num(totalLeft)}</td>
+                <td className="py-1 text-right tabular-nums text-muted-foreground">{pctOf(totalUsed, totalCapacity)}</td>
+              </tr>
+            </tfoot>
+          )}
         </table>
+        {!oneMonth && (
+          <p className="mt-2 text-xs text-muted-foreground">
+            Capacity, use and spare added up across the {span} months — a bucket that is tight in one month and idle the
+            next reads as comfortable here, so narrow the range to find the pinch.
+          </p>
+        )}
       </Section>
 
-      <Section title="This month’s demand fulfilment">
+      <Section title={`Demand fulfilment — ${periodLabel}`}>
         {rows.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No in-scope demand this month.</p>
+          <p className="text-sm text-muted-foreground">No in-scope demand in this period.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -83,7 +144,7 @@ export function OptimizerClient({
               </thead>
               <tbody>
                 {rows.map((p) => {
-                  const dem = p.demand[m] ?? 0, own = p.own[m] ?? 0, roll = p.rolling[m] ?? 0;
+                  const dem = over(p.demand), own = over(p.own), roll = over(p.rolling);
                   const borrowed = Math.max(0, roll - own);
                   const full = dem > 0 ? roll / dem : 0;
                   return (
@@ -112,6 +173,8 @@ export function OptimizerClient({
     </div>
   );
 }
+
+const selectCls = 'rounded-md border px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-primary';
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
