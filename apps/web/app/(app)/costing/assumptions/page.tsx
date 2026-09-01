@@ -1,5 +1,5 @@
 import { getProfile } from '@/lib/plan';
-import type { CostOdcComponentRow } from '@oceanpick/shared';
+import { canEditAssumptions, type CostOdcComponentRow, type UserRole } from '@oceanpick/shared';
 import { forClient, getBaseCostAccess, loadCostingContext, maskBaseCost } from '@/lib/costing';
 import { CostingSetupNotice } from '../setup-notice';
 import { AssumptionsClient } from './assumptions-client';
@@ -8,7 +8,9 @@ import { AssumptionsClient } from './assumptions-client';
  * The official farm economics: feed, FCR, FX, ODC, adders, margins, and the
  * destination freight table.
  *
- * Admin-maintained (Decisions §4/§5). Most of it is readable by everyone — a
+ * Admin-maintained by default (Decisions §4/§5), but an admin can hand the
+ * upkeep to a named user: 'base_cost_edit' for the two protected sections,
+ * 'assumptions_edit' for everything else. Most of it is readable by everyone — a
  * costing is unreadable without knowing what it was built on — but the two
  * sections that say what the fish costs to grow ("Base fish cost" and "Other
  * direct costs") are commercially sensitive and hidden unless an admin has
@@ -56,6 +58,7 @@ export default async function AssumptionsPage({
       isAdmin={(profile?.role ?? 'viewer') === 'admin'}
       canViewBaseCost={baseCost.canView}
       canEditBaseCost={baseCost.canEdit}
+      canEditAssumptions={canEditAssumptions((profile?.role ?? 'viewer') as UserRole, profile?.edit_sections)}
     />
   );
 }

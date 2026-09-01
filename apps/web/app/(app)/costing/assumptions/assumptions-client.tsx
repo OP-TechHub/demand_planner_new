@@ -26,6 +26,7 @@ export function AssumptionsClient({
   isAdmin,
   canViewBaseCost,
   canEditBaseCost,
+  canEditAssumptions,
 }: {
   version: CostAssumptionVersion;
   versions: CostAssumptionVersion[];
@@ -42,6 +43,12 @@ export function AssumptionsClient({
    */
   canViewBaseCost: boolean;
   canEditBaseCost: boolean;
+  /**
+   * The other half of the screen — adders, margins, weights, freight rates and
+   * the size grades. Independent of the base-cost grants: a user can hold
+   * either, both, or neither, and an admin holds all of them.
+   */
+  canEditAssumptions: boolean;
 }) {
   const router = useRouter();
   const [state, action, pending] = useActionState<SaveState, FormData>(publishAssumptionVersion, {
@@ -69,6 +76,20 @@ export function AssumptionsClient({
 
   const isHistoric = !version.is_current;
 
+  /**
+   * What this user may change, said plainly — the two grants are independent,
+   * so there are four states and a disabled input on its own doesn't explain
+   * which one you're in. An admin, and anyone holding both grants, can edit the
+   * whole screen and needs no notice at all.
+   */
+  const lockNotice = isAdmin || (canEditAssumptions && canEditBaseCost)
+    ? null
+    : canEditBaseCost
+      ? 'You can change the base fish cost and the other direct costs. The rest is admin-maintained — override any of it inside your own costing instead, where the deviation gets stamped on it.'
+      : canEditAssumptions
+        ? 'You can change the adders, margins, weights, freight rates and size grades. What the fish costs to grow is admin-maintained — override it inside your own costing instead, where the deviation gets stamped on it.'
+        : 'Only an admin can change these. You can still override any of them inside your own costing — the deviation gets stamped on it so reviewers can see it.';
+
   return (
     <div className="mx-auto max-w-5xl space-y-4">
       <header className="flex flex-wrap items-start justify-between gap-3">
@@ -86,18 +107,17 @@ export function AssumptionsClient({
         <Banner tone="warning">
           You&apos;re viewing version {version.version_no}, which isn&apos;t the current one. Costings
           built today use the current version.
-          {isAdmin && (
+          {/* Whoever may publish may also put an older version back — see makeVersionCurrent. */}
+          {(canEditAssumptions || canEditBaseCost) && (
             <MakeCurrentButton id={version.id} onDone={() => router.refresh()} />
           )}
         </Banner>
       )}
 
-      {!isAdmin && (
+      {lockNotice && (
         <Banner tone="muted">
           <Lock className="mr-1.5 inline h-3.5 w-3.5" />
-          {canEditBaseCost
-            ? 'You can change the base fish cost and the other direct costs. The rest is admin-maintained — override any of it inside your own costing instead, where the deviation gets stamped on it.'
-            : 'Only an admin can change these. You can still override any of them inside your own costing — the deviation gets stamped on it so reviewers can see it.'}
+          {lockNotice}
         </Banner>
       )}
 
@@ -171,25 +191,25 @@ export function AssumptionsClient({
         )}
 
         <Section title="Per-kg adders" hint="Entered per market. Cold holding sits inside ex-factory; freight comes after it, on the way to FINAL.">
-          <Field label="Transport — domestic" unit="LKR / kg, factory → customer" name="domestic_transport_lkr" value={version.domestic_transport_lkr} step="0.01" disabled={!isAdmin} onChange={onNum('domestic_transport_lkr')} />
-          <Field label="Cold holding — domestic" unit="LKR / kg" name="domestic_cold_hold_lkr" value={version.domestic_cold_hold_lkr} step="0.01" disabled={!isAdmin} onChange={onNum('domestic_cold_hold_lkr')} />
-          <Field label="Freight to port — export" unit="USD / kg, factory → port" name="export_freight_to_port_usd" value={version.export_freight_to_port_usd} step="0.01" disabled={!isAdmin} onChange={onNum('export_freight_to_port_usd')} />
-          <Field label="Cold chain — export" unit="USD / kg" name="export_cold_chain_usd" value={version.export_cold_chain_usd} step="0.01" disabled={!isAdmin} onChange={onNum('export_cold_chain_usd')} />
+          <Field label="Transport — domestic" unit="LKR / kg, factory → customer" name="domestic_transport_lkr" value={version.domestic_transport_lkr} step="0.01" disabled={!canEditAssumptions} onChange={onNum('domestic_transport_lkr')} />
+          <Field label="Cold holding — domestic" unit="LKR / kg" name="domestic_cold_hold_lkr" value={version.domestic_cold_hold_lkr} step="0.01" disabled={!canEditAssumptions} onChange={onNum('domestic_cold_hold_lkr')} />
+          <Field label="Freight to port — export" unit="USD / kg, factory → port" name="export_freight_to_port_usd" value={version.export_freight_to_port_usd} step="0.01" disabled={!canEditAssumptions} onChange={onNum('export_freight_to_port_usd')} />
+          <Field label="Cold chain — export" unit="USD / kg" name="export_cold_chain_usd" value={version.export_cold_chain_usd} step="0.01" disabled={!canEditAssumptions} onChange={onNum('export_cold_chain_usd')} />
 
           <HaulageCheck draft={draft} version={version} />
         </Section>
 
         <Section title="Margins and the value chain" hint="Rack and FOB are gross margins: price = cost ÷ (1 − margin). The importer and distributor figures are markups on top, and model their economics — they never appear on a customer quote.">
-          <Field label="Domestic rack margin" unit="gross margin" name="rack_margin_pct" value={version.rack_margin_pct} step="0.0001" disabled={!isAdmin} onChange={onNum('rack_margin_pct')} />
-          <Field label="FOB margin" unit="our gross margin on FINAL" name="fob_margin_pct" value={version.fob_margin_pct} step="0.0001" disabled={!isAdmin} onChange={onNum('fob_margin_pct')} />
-          <Field label="Importer clearing" unit="markup on CIF" name="importer_clearing_pct" value={version.importer_clearing_pct} step="0.0001" disabled={!isAdmin} onChange={onNum('importer_clearing_pct')} />
-          <Field label="Importer markup" unit="to distributor" name="importer_markup_pct" value={version.importer_markup_pct} step="0.0001" disabled={!isAdmin} onChange={onNum('importer_markup_pct')} />
-          <Field label="Distributor markup" unit="to T3 / foodservice" name="distributor_markup_pct" value={version.distributor_markup_pct} step="0.0001" disabled={!isAdmin} onChange={onNum('distributor_markup_pct')} />
+          <Field label="Domestic rack margin" unit="gross margin" name="rack_margin_pct" value={version.rack_margin_pct} step="0.0001" disabled={!canEditAssumptions} onChange={onNum('rack_margin_pct')} />
+          <Field label="FOB margin" unit="our gross margin on FINAL" name="fob_margin_pct" value={version.fob_margin_pct} step="0.0001" disabled={!canEditAssumptions} onChange={onNum('fob_margin_pct')} />
+          <Field label="Importer clearing" unit="markup on CIF" name="importer_clearing_pct" value={version.importer_clearing_pct} step="0.0001" disabled={!canEditAssumptions} onChange={onNum('importer_clearing_pct')} />
+          <Field label="Importer markup" unit="to distributor" name="importer_markup_pct" value={version.importer_markup_pct} step="0.0001" disabled={!canEditAssumptions} onChange={onNum('importer_markup_pct')} />
+          <Field label="Distributor markup" unit="to T3 / foodservice" name="distributor_markup_pct" value={version.distributor_markup_pct} step="0.0001" disabled={!canEditAssumptions} onChange={onNum('distributor_markup_pct')} />
         </Section>
 
         <Section title="Destination freight" hint="Rates are per shipment. Changing a fill weight reprices every port at once.">
-          <Field label="Container fill weight" unit="kg per 20ft reefer" name="container_fill_kg" value={version.container_fill_kg} step="1" disabled={!isAdmin} onChange={onNum('container_fill_kg')} />
-          <Field label="Air lot weight" unit="kg per air consignment" name="air_lot_kg" value={version.air_lot_kg} step="1" disabled={!isAdmin} onChange={onNum('air_lot_kg')} />
+          <Field label="Container fill weight" unit="kg per 20ft reefer" name="container_fill_kg" value={version.container_fill_kg} step="1" disabled={!canEditAssumptions} onChange={onNum('container_fill_kg')} />
+          <Field label="Air lot weight" unit="kg per air consignment" name="air_lot_kg" value={version.air_lot_kg} step="1" disabled={!canEditAssumptions} onChange={onNum('air_lot_kg')} />
 
           <div className="col-span-full overflow-x-auto">
             <table className="w-full text-xs">
@@ -213,10 +233,10 @@ export function AssumptionsClient({
                     <tr key={d.id} className="border-t">
                       <td className="py-1.5 pr-3">{d.name}</td>
                       <td className="py-1.5 pr-3 text-right">
-                        <input name={`sea_${d.id}`} defaultValue={r.sea} type="number" step="1" min="0" disabled={!isAdmin} onChange={onNum(`sea_${d.id}`)} className={cn(inputCls, 'w-24 text-right')} />
+                        <input name={`sea_${d.id}`} defaultValue={r.sea} type="number" step="1" min="0" disabled={!canEditAssumptions} onChange={onNum(`sea_${d.id}`)} className={cn(inputCls, 'w-24 text-right')} />
                       </td>
                       <td className="py-1.5 pr-3 text-right">
-                        <input name={`air_${d.id}`} defaultValue={r.air} type="number" step="1" min="0" disabled={!isAdmin} onChange={onNum(`air_${d.id}`)} className={cn(inputCls, 'w-24 text-right')} />
+                        <input name={`air_${d.id}`} defaultValue={r.air} type="number" step="1" min="0" disabled={!canEditAssumptions} onChange={onNum(`air_${d.id}`)} className={cn(inputCls, 'w-24 text-right')} />
                       </td>
                       <td className="py-1.5 pr-3 text-right tabular-nums text-muted-foreground">
                         {fill > 0 ? (sea / fill).toFixed(3) : '—'}
@@ -232,7 +252,7 @@ export function AssumptionsClient({
           </div>
         </Section>
 
-        {(isAdmin || canEditBaseCost) && (
+        {(canEditAssumptions || canEditBaseCost) && (
           <div className="sticky bottom-4 flex flex-wrap items-center gap-2 rounded-lg border bg-card p-3 shadow-sm">
             <input name="label" placeholder="Name this version, e.g. 'Nov FX + feed'" className={cn(inputCls, 'flex-1 min-w-[200px]')} />
             <input name="notes" placeholder="Why it changed (optional)" className={cn(inputCls, 'flex-1 min-w-[200px]')} />
@@ -247,14 +267,14 @@ export function AssumptionsClient({
         )}
       </form>
 
-      <SizeGrades buckets={buckets} isAdmin={isAdmin} />
+      <SizeGrades buckets={buckets} canEdit={canEditAssumptions} />
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
 
-function SizeGrades({ buckets, isAdmin }: { buckets: CostSizeBucket[]; isAdmin: boolean }) {
+function SizeGrades({ buckets, canEdit }: { buckets: CostSizeBucket[]; canEdit: boolean }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
 
@@ -288,14 +308,14 @@ function SizeGrades({ buckets, isAdmin }: { buckets: CostSizeBucket[]; isAdmin: 
                 <td className="py-1.5 pr-3">{b.label}</td>
                 <td className="py-1.5 pr-3 text-right">
                   <input
-                    type="number" step="1" min={b.min_g} max={b.max_g} defaultValue={b.median_g} disabled={!isAdmin || pending}
+                    type="number" step="1" min={b.min_g} max={b.max_g} defaultValue={b.median_g} disabled={!canEdit || pending}
                     onBlur={(e) => { const v = Number(e.target.value); if (v !== b.median_g) save(b.id, { median_g: v }); }}
                     className={cn(inputCls, 'w-24 text-right')}
                   />
                 </td>
                 <td className="py-1.5 text-right">
                   <input
-                    type="number" step="0.01" min="0.01" defaultValue={b.fcr} disabled={!isAdmin || pending}
+                    type="number" step="0.01" min="0.01" defaultValue={b.fcr} disabled={!canEdit || pending}
                     onBlur={(e) => { const v = Number(e.target.value); if (v !== b.fcr) save(b.id, { fcr: v }); }}
                     className={cn(inputCls, 'w-20 text-right')}
                   />
