@@ -4,6 +4,7 @@ import { OutputGrid, NotComputed } from '@/components/output-grid';
 import { gridCsvRows, type GridRow } from '@/lib/grid-csv';
 import { StalePlanNotice } from '../stale-banner';
 import { ExportCsvButton } from '@/components/export-csv-button';
+import { PrintableGrid } from '@/components/printable-grid';
 import { fetchAllByPlan } from '@/lib/fetch-all';
 import { MAX_LOOKBACK } from '@oceanpick/engine';
 
@@ -116,6 +117,14 @@ export default async function OpenToBuyPage() {
     }
   }
 
+  // The same OTB figures with the size buckets collapsed away — one line per
+  // component, so the month totals can be read without scanning seven rows.
+  const monthSum = (by: Map<string, number>, m: number) =>
+    (buckets ?? []).reduce((s, b) => s + (by.get(`${b.id}:${m}`) ?? 0), 0);
+  const otbTotalRows: GridRow[] = [
+    { key: 'total', label: 'Total OTB', values: months.map((m) => monthSum(uwByBM, m) + monthSum(pwByBM, m)) },
+  ];
+
   // Inquiry fulfilment: each pipeline program's demand vs what the plan can fulfil,
   // per month — coloured green (fulfilled) to red (short), proportionally.
   const pipeRows = (pipePrograms ?? []) as { id: string; item_code: string; item_description: string; customer: string }[];
@@ -158,18 +167,43 @@ export default async function OpenToBuyPage() {
       ) : (
         <>
           {/* Total OTB — unallocated + unconfirmed (pipeline) inquiry WR, in one table */}
-          <section className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold">Total OTB</h2>
-              <ExportCsvButton filename="total-otb.csv" rows={gridCsvRows('Bucket', plan.plan_start_date, plan.horizon_months, otbRows)} />
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Everything still available to sell (kg WR) per bucket × month: <b>unallocated WR</b> plus the WR held by
-              <b> unconfirmed inquiries</b> (pipeline programs — confirming one promotes it to active and drops it out of OTB).
-              Hover a value for the split.
-            </p>
-            <OutputGrid planStartDate={plan.plan_start_date} horizon={plan.horizon_months} rows={otbRows} format="num0" firstColLabel="Bucket" cellTitle={otbTitles} />
-          </section>
+          <PrintableGrid
+            title="Total OTB"
+            planName={plan.name}
+            planStartDate={plan.plan_start_date}
+            horizon={plan.horizon_months}
+            rows={otbRows}
+            firstColLabel="Bucket"
+            cellTitle={otbTitles}
+            csvFilename="total-otb.csv"
+            csvRows={gridCsvRows('Bucket', plan.plan_start_date, plan.horizon_months, otbRows)}
+            description={
+              <>
+                Everything still available to sell (kg WR) per bucket × month: <b>unallocated WR</b> plus the WR held by
+                <b> unconfirmed inquiries</b> (pipeline programs — confirming one promotes it to active and drops it out of OTB).
+                Hover a value for the split. <b>Print / PDF</b> covers the months on screen; <b>Export CSV</b> covers the whole horizon.
+              </>
+            }
+          />
+
+          {/* Total OTB, no bucket breakdown — the same figures on one line */}
+          <PrintableGrid
+            title="Total OTB — all buckets"
+            planName={plan.name}
+            planStartDate={plan.plan_start_date}
+            horizon={plan.horizon_months}
+            rows={otbTotalRows}
+            firstColLabel="Open to buy"
+            showColumnTotals={false}
+            csvFilename="total-otb-all-buckets.csv"
+            csvRows={gridCsvRows('Open to buy', plan.plan_start_date, plan.horizon_months, otbTotalRows)}
+            description={
+              <>
+                The table above with the size buckets collapsed away — everything still available to sell (kg WR) per
+                month across every bucket. <b>Print / PDF</b> covers the months on screen.
+              </>
+            }
+          />
 
           {/* Unallocated WR */}
           <section className="space-y-3">
