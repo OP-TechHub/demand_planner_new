@@ -3,7 +3,7 @@
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Clock } from 'lucide-react';
-import { BASE_COST_EDIT, BASE_COST_VIEW, type UserRole } from '@oceanpick/shared';
+import { ASSUMPTIONS_EDIT, BASE_COST_EDIT, BASE_COST_VIEW, type UserRole } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 import { Select } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
@@ -61,6 +61,13 @@ function AccessCell({
         checked={canEditBase}
         disabled={busy}
         onChange={(on) => onToggle(BASE_COST_EDIT, on)}
+      />
+      <Grant
+        label="Can edit assumptions"
+        checked={held.includes(ASSUMPTIONS_EDIT)}
+        disabled={busy}
+        title="The rest of the Assumptions screen — adders, margins, weights, freight rates and size grades"
+        onChange={(on) => onToggle(ASSUMPTIONS_EDIT, on)}
       />
     </div>
   );
@@ -233,6 +240,13 @@ export function UsersClient({ users, meId }: { users: AdminUser[]; meId: string 
         build-up printed on a cost sheet. It is hidden from everyone by default; grant view to show it, and edit to
         let someone publish a new assumptions version that changes it. The costs and prices built on it stay visible
         either way.
+      </p>
+      <p className="text-xs text-muted-foreground">
+        <b>Assumptions</b> is the rest of that screen — the adders (transport, cold holding, freight to port, cold
+        chain), the margins, the container and air lot weights, the destination freight rates and the size grades.
+        Everyone can already read these; the grant is about who maintains them. It publishes a new version the same
+        way, so costings already sent keep the numbers they were built on, and it carries the right to put an older
+        version back. The two grants are independent — hand out either, both, or neither.
       </p>
     </div>
   );

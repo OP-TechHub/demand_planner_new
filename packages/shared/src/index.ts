@@ -167,6 +167,7 @@ export const EDITABLE_SECTIONS = [
   'harvest_request',
   'base_cost_view',
   'base_cost_edit',
+  'assumptions_edit',
 ] as const;
 export type EditableSection = (typeof EDITABLE_SECTIONS)[number];
 
@@ -192,6 +193,7 @@ export const SECTION_LABEL: Record<EditableSection, string> = {
   harvest_request: 'Harvest Request Plan',
   base_cost_view: 'Base cost — view',
   base_cost_edit: 'Base cost — edit',
+  assumptions_edit: 'Assumptions — edit',
 };
 
 /**
@@ -219,6 +221,34 @@ export function canViewBaseCost(role: UserRole, editSections: string[] | null | 
 export function canEditBaseCost(role: UserRole, editSections: string[] | null | undefined): boolean {
   if (role === 'admin') return true;
   return (editSections ?? []).includes(BASE_COST_EDIT);
+}
+
+/**
+ * The REST of the Assumptions screen — everything the base-cost grants don't
+ * already cover: the adders (transport, cold holding, freight to port, cold
+ * chain), the margins, container fill and air lot weights, the destination
+ * freight rates, and the size-grade medians and FCRs.
+ *
+ * Deliberately one grant rather than several. These are not secret the way the
+ * fish cost is — everyone can already read them — so this is about who
+ * maintains them, and in practice that is one person per company, not one per
+ * section.
+ */
+export const ASSUMPTIONS_EDIT = 'assumptions_edit';
+
+/** May this user change the non-base-cost assumptions? */
+export function canEditAssumptions(role: UserRole, editSections: string[] | null | undefined): boolean {
+  if (role === 'admin') return true;
+  return (editSections ?? []).includes(ASSUMPTIONS_EDIT);
+}
+
+/**
+ * May this user publish a new assumptions version at all — i.e. is any part of
+ * the screen theirs to change? Publishing always mints a whole version; which
+ * FIELDS of it they may actually move is the two checks above.
+ */
+export function canPublishAssumptions(role: UserRole, editSections: string[] | null | undefined): boolean {
+  return canEditAssumptions(role, editSections) || canEditBaseCost(role, editSections);
 }
 
 /** Can this user edit a given section? Admin ⇒ everything; others ⇒ granted only. */

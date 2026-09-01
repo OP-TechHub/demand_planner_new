@@ -4,7 +4,9 @@ import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { isBaseCostField } from '@/lib/costing-base-cost';
-import { canEditBaseCost, type CostAssumptionVersion, type UserRole } from '@oceanpick/shared';
+import {
+  canEditAssumptions, canEditBaseCost, type CostAssumptionVersion, type UserRole,
+} from '@oceanpick/shared';
 
 /** Numeric assumption fields an admin may edit on a version. */
 const NUMERIC_FIELDS = [
@@ -33,10 +35,14 @@ interface Access {
   isAdmin: boolean;
   /** Admin, or a user an admin has granted 'base_cost_edit'. */
   canEditBase: boolean;
+  /** Admin, or a user an admin has granted 'assumptions_edit' — everything else. */
+  canEditRest: boolean;
+  /** Either grant is enough to mint a version; the two above say which fields move. */
+  canPublish: boolean;
   orgId: string | null;
 }
 
-/** The caller's role, org and base-cost grants, in one query. */
+/** The caller's role, org and assumption grants, in one query. */
 async function getAccess(
   supabase: Awaited<ReturnType<typeof createClient>>,
   userId: string
@@ -48,28 +54,41 @@ async function getAccess(
     .maybeSingle();
   const row = data as { role: string; org_id: string; edit_sections: string[] | null } | null;
   const role = (row?.role ?? 'viewer') as UserRole;
+  const isAdmin = role === 'admin';
+  const canEditBase = canEditBaseCost(role, row?.edit_sections);
+  const canEditRest = canEditAssumptions(role, row?.edit_sections);
   return {
-    isAdmin: role === 'admin',
-    canEditBase: canEditBaseCost(role, row?.edit_sections),
+    isAdmin,
+    canEditBase,
+    canEditRest,
+    canPublish: isAdmin || canEditBase || canEditRest,
     orgId: row?.org_id ?? null,
   };
 }
 
 /**
- * Is the caller an admin?
+ * The caller, refused unless some part of the assumptions is theirs to change.
  *
- * RLS already refuses a non-admin write, so this is about the message rather
- * than the permission: without it the user gets a raw policy-violation string
- * from Postgres, which reads like a bug in the app rather than a rule.
+ * RLS reserves these tables for admins, so a grantee's writes go in under the
+ * service role and the org has to be checked here rather than by a policy —
+ * hence returning the org alongside the verdict.
  */
-async function requireAdmin(
+async function requireAssumptionsEditor(
   supabase: Awaited<ReturnType<typeof createClient>>,
-  userId: string
-): Promise<string | null> {
-  const { data } = await supabase.from('users').select('role').eq('id', userId).maybeSingle();
-  return (data as { role: string } | null)?.role === 'admin'
-    ? null
-    : 'Only an admin can change the company assumptions. Override them inside your own costing instead.';
+  userId: string,
+  orgId: string
+): Promise<{ access: Access; error: string | null }> {
+  const access = await getAccess(supabase, userId);
+  if (!access.canPublish) {
+    return {
+      access,
+      error: 'Only an admin can change the company assumptions. Override them inside your own costing instead.',
+    };
+  }
+  if (!access.isAdmin && access.orgId !== orgId) {
+    return { access, error: 'Those assumptions belong to another organisation.' };
+  }
+  return { access, error: null };
 }
 
 /**
@@ -81,11 +100,15 @@ async function requireAdmin(
  * assumption mints a new version and makes it current; older versions stay
  * readable forever.
  *
- * Two kinds of caller reach this: an admin, who may change anything, and a user
+ * Three kinds of caller reach this: an admin, who may change anything; a user
  * granted 'base_cost_edit', who may change only the base fish cost and the ODC
- * components. The grantee's other fields are taken from the source version
- * whatever the form posted — their inputs are disabled on screen, but a
- * disabled input is a UI state, not a permission.
+ * components; and a user granted 'assumptions_edit', who may change everything
+ * BUT those — the adders, margins, weights and freight rates. The two grants
+ * are independent and compose: hold both and you can move the whole screen.
+ *
+ * Whatever a caller may not change is taken from the source version regardless
+ * of what the form posted. Their inputs are disabled on screen, but a disabled
+ * input is a UI state, not a permission.
  */
 export async function publishAssumptionVersion(_prev: SaveState, fd: FormData): Promise<SaveState> {
   const fromId = String(fd.get('from_version_id') ?? '').trim();
@@ -107,26 +130,19 @@ export async function publishAssumptionVersion(_prev: SaveState, fd: FormData): 
   if (!base) return { error: 'That assumptions version no longer exists.', ok: false };
   const from = base as CostAssumptionVersion;
 
-  const access = await getAccess(supabase, user.id);
-  if (!access.isAdmin && !access.canEditBase) {
-    return {
-      error: 'Only an admin can change the company assumptions. Override them inside your own costing instead.',
-      ok: false,
-    };
-  }
-  // A grantee's writes go in under the service role (RLS reserves this table
-  // for admins), so the org has to be checked here rather than by a policy.
-  if (!access.isAdmin && access.orgId !== from.org_id) {
-    return { error: 'That assumptions version belongs to another organisation.', ok: false };
-  }
-  // Admins keep writing as themselves; only the narrower path needs the wider key.
+  const { access, error: denied } = await requireAssumptionsEditor(supabase, user.id, from.org_id);
+  if (denied) return { error: denied, ok: false };
+  // Admins keep writing as themselves; only the narrower paths need the wider key.
   const db = access.isAdmin ? supabase : createServiceClient();
+
+  /** Whichever half of the screen this field belongs to, may the caller move it? */
+  const mayEdit = (field: string) => (isBaseCostField(field) ? access.canEditBase : access.canEditRest);
 
   const next: Record<string, unknown> = {};
   for (const field of NUMERIC_FIELDS) {
     const raw = fd.get(field);
-    // Outside the base-cost sections a grantee changes nothing, posted or not.
-    if (raw == null || (!access.isAdmin && !isBaseCostField(field))) {
+    // A field outside the caller's grant is carried forward, posted or not.
+    if (raw == null || !mayEdit(field)) {
       next[field] = from[field];
       continue;
     }
@@ -231,9 +247,13 @@ export async function publishAssumptionVersion(_prev: SaveState, fd: FormData): 
   if (odcRows.length) {
     const { error: odcError } = await db.from('cost_odc_components').insert(
       odcRows.map((c) => {
-        const raw = fd.get(`odc_${c.id}`);
+        // The ODC table belongs to the base-cost half, so an assumptions-only
+        // grantee carries it forward untouched. They never see it on screen —
+        // it is masked out of their payload entirely — but the check is here
+        // rather than resting on that.
+        const raw = access.canEditBase ? fd.get(`odc_${c.id}`) : null;
         const edited = raw == null ? c.value : Number(String(raw).trim());
-        const basisRaw = fd.get(`odc_basis_${c.id}`);
+        const basisRaw = access.canEditBase ? fd.get(`odc_basis_${c.id}`) : null;
         return {
           version_id: newId,
           name: c.name,
@@ -251,8 +271,9 @@ export async function publishAssumptionVersion(_prev: SaveState, fd: FormData): 
   if (rateRows.length) {
     const { error: rateError } = await db.from('cost_destination_rates').insert(
       rateRows.map((r) => {
+        // Freight rates sit in the non-base-cost half of the screen.
         const posted = (key: string, fallback: number) =>
-          access.isAdmin ? (fd.get(key) ?? fallback) : fallback;
+          access.canEditRest ? (fd.get(key) ?? fallback) : fallback;
         const sea = Number(String(posted(`sea_${r.destination_id}`, r.sea_rate_per_20ft)).trim());
         const air = Number(String(posted(`air_${r.destination_id}`, r.air_rate_per_lot)).trim());
         return {
@@ -271,16 +292,19 @@ export async function publishAssumptionVersion(_prev: SaveState, fd: FormData): 
   return { error: null, ok: true };
 }
 
-/** Make an older version current again — an undo for a bad publish. */
+/**
+ * Make an older version current again — an undo for a bad publish.
+ *
+ * Open to anyone who may publish, not admins only: publishing already decides
+ * which version is current, so withholding the undo would leave a grantee able
+ * to make the mistake and unable to fix it.
+ */
 export async function makeVersionCurrent(id: string): Promise<{ error: string | null }> {
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return { error: 'Your session expired.' };
-
-  const denied = await requireAdmin(supabase, user.id);
-  if (denied) return { error: denied };
 
   const { data: v } = await supabase
     .from('cost_assumption_versions')
@@ -290,14 +314,18 @@ export async function makeVersionCurrent(id: string): Promise<{ error: string | 
   if (!v) return { error: 'No such version.' };
 
   const orgId = (v as { org_id: string }).org_id;
-  const { error: clearError } = await supabase
+  const { access, error: denied } = await requireAssumptionsEditor(supabase, user.id, orgId);
+  if (denied) return { error: denied };
+  const db = access.isAdmin ? supabase : createServiceClient();
+
+  const { error: clearError } = await db
     .from('cost_assumption_versions')
     .update({ is_current: false, updated_by: user.id })
     .eq('org_id', orgId)
     .eq('is_current', true);
   if (clearError) return { error: clearError.message };
 
-  const { error } = await supabase
+  const { error } = await db
     .from('cost_assumption_versions')
     .update({ is_current: true, updated_by: user.id })
     .eq('id', id);
@@ -311,7 +339,14 @@ export async function makeVersionCurrent(id: string): Promise<{ error: string | 
   return { error: null };
 }
 
-/** Update a size grade's median weight or FCR (Decisions §6 — placeholders). */
+/**
+ * Update a size grade's median weight or FCR (Decisions §6 — placeholders).
+ *
+ * Part of the non-base-cost half of the screen, so an 'assumptions_edit'
+ * grantee maintains these too. Unlike the version fields these are edited in
+ * place rather than versioned — a size grade is a description of the fish, not
+ * a number a costing was quoted on.
+ */
 export async function saveSizeBucket(
   id: string,
   patch: { median_g?: number; fcr?: number }
@@ -321,8 +356,21 @@ export async function saveSizeBucket(
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return { error: 'Your session expired.' };
-  const denied = await requireAdmin(supabase, user.id);
-  if (denied) return { error: denied };
+
+  const { data: b } = await supabase
+    .from('cost_size_buckets')
+    .select('org_id')
+    .eq('id', id)
+    .maybeSingle();
+  if (!b) return { error: 'No such size grade.' };
+  const access = await getAccess(supabase, user.id);
+  if (!access.canEditRest) {
+    return { error: 'You don’t have access to change the size grades — ask an admin.' };
+  }
+  if (!access.isAdmin && access.orgId !== (b as { org_id: string }).org_id) {
+    return { error: 'That size grade belongs to another organisation.' };
+  }
+  const db = access.isAdmin ? supabase : createServiceClient();
 
   const clean: Record<string, number> = {};
   if (patch.median_g != null) {
@@ -335,7 +383,7 @@ export async function saveSizeBucket(
   }
   if (Object.keys(clean).length === 0) return { error: null };
 
-  const { error } = await supabase.from('cost_size_buckets').update(clean).eq('id', id);
+  const { error } = await db.from('cost_size_buckets').update(clean).eq('id', id);
   if (error) return { error: error.message };
   revalidatePath('/costing/assumptions');
   revalidatePath('/costing');
