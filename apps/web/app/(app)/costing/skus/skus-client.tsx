@@ -12,7 +12,9 @@ import {
   type CostOdcComponentRow,
   type CostPricingMode,
   type CostProductForm,
+  type CostMarinadeLineInput,
   type CostSizeBucket,
+  type CostSkuMarinadeLine,
   type CostSkuRow,
 } from '@oceanpick/shared';
 import { toAssumptions, toBucket } from '@/lib/costing-adapt';
@@ -21,14 +23,18 @@ import { downloadDoc, slugify } from '@/lib/doc-export';
 import { BaseCostToggle, COST_SHEET_ID } from '@/components/cost-sheet-parts';
 import { ScrollX } from '@/components/ui/scroll-x';
 import { SkuCostSheet } from './sku-cost-sheet';
+import { MarinadeBuilder } from './marinade-builder';
 import { archiveCostSku, saveCostSku, saveSkuBucketYield, type SkuFormState } from './actions';
 
 type YieldMap = Record<string, Record<string, number>>;
+/** skuId -> its marinade ingredients, in entry order. */
+type MarinadeMap = Record<string, CostSkuMarinadeLine[]>;
 
 export function SkusClient({
   skus,
   buckets,
   yields,
+  marinadeLines,
   orgId,
   version,
   odc,
@@ -42,6 +48,7 @@ export function SkusClient({
   skus: CostSkuRow[];
   buckets: CostSizeBucket[];
   yields: YieldMap;
+  marinadeLines: MarinadeMap;
   orgId: string;
   version: CostAssumptionVersion;
   odc: CostOdcComponentRow[];
@@ -79,6 +86,28 @@ export function SkusClient({
     () => [...new Set([...COST_CATEGORIES, ...skus.map((s) => s.category).filter(Boolean)])],
     [skus]
   );
+
+  /**
+   * Every marinade ingredient anyone has priced, with the price most recently
+   * entered for it. Offered as you type in the marinade builder, so the second
+   * SKU to use chilli powder doesn't have to look its price up again.
+   *
+   * Last one wins rather than an average: prices move, and the newest entry is
+   * the best guess at today's. Names are matched case-insensitively but shown
+   * as first spelt, so "Lime" and "lime" don't become two ingredients.
+   */
+  const knownIngredients = useMemo(() => {
+    const byKey = new Map<string, { name: string; price: number }>();
+    for (const lines of Object.values(marinadeLines)) {
+      for (const l of lines) {
+        const key = l.ingredient.trim().toLowerCase();
+        if (!key) continue;
+        const seen = byKey.get(key);
+        byKey.set(key, { name: seen?.name ?? l.ingredient.trim(), price: l.price_lkr_per_kg });
+      }
+    }
+    return [...byKey.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }, [marinadeLines]);
 
   /**
    * Where a recipe came from. A null creator means it arrived with the seed —
@@ -151,6 +180,8 @@ export function SkusClient({
           rates={rates}
           allSkus={skus}
           categories={categories}
+          marinadeLines={marinadeLines}
+          knownIngredients={knownIngredients}
           canViewBaseCost={canViewBaseCost}
           onClose={() => setEditing(undefined)}
         />
@@ -713,6 +744,8 @@ function SkuDialog({
   rates,
   allSkus,
   categories,
+  marinadeLines,
+  knownIngredients,
   canViewBaseCost,
   onClose,
 }: {
@@ -726,6 +759,8 @@ function SkuDialog({
   rates: Record<string, { sea: number; air: number }>;
   allSkus: CostSkuRow[];
   categories: string[];
+  marinadeLines: MarinadeMap;
+  knownIngredients: { name: string; price: number }[];
   canViewBaseCost: boolean;
   onClose: () => void;
 }) {
@@ -773,6 +808,34 @@ function SkuDialog({
   // section, so they should be on screen without a click. For an existing SKU,
   // open only if it actually overrides something.
   const [showOverrides, setShowOverrides] = useState(sku ? hasOverride(sku) : true);
+
+  /**
+   * The marinade ingredient recipe, if this SKU is costed from one.
+   *
+   * Null means the marinade cost was typed straight into the box, which stays
+   * a perfectly good way to enter it — and is what every SKU without a marinade
+   * does. When a recipe IS present it owns the field: the number in the box is
+   * its output, so typing over it by hand would leave the two disagreeing with
+   * no way to tell which was meant.
+   */
+  const recipeOf = (row: CostSkuRow | null): Recipe | null =>
+    row && row.marinade_total_dose_g != null
+      ? {
+          lines: (marinadeLines[row.id] ?? []).map((l) => ({
+            ingredient: l.ingredient,
+            qty_g: l.qty_g,
+            price_lkr_per_kg: l.price_lkr_per_kg,
+          })),
+          totalDoseG: row.marinade_total_dose_g,
+        }
+      : null;
+
+  const [recipe, setRecipe] = useState<Recipe | null>(() => recipeOf(src));
+  const [builderOpen, setBuilderOpen] = useState(false);
+  // Controlled, unlike its numeric neighbours, because the builder writes into
+  // it. An uncontrolled input set from React fires no input event, so the
+  // preview would not know it had gone stale.
+  const [marinadeUsd, setMarinadeUsd] = useState(String(src?.marinade_usd_per_kg ?? 0));
 
   /**
    * Cost and price this SKU from what is on screen right now, without saving.
@@ -889,6 +952,10 @@ function SkuDialog({
     setGlazePctValue(source.glaze_pct ? String(source.glaze_pct) : '');
     setCategoryChoice(categories.includes(source.category) ? source.category : (categories[0] ?? 'Whole'));
     setName(`${source.name} (copy)`);
+    // The marinade recipe is part of "its settings" — copying a marinated SKU
+    // and finding an empty ingredient list would be the surprise here.
+    setRecipe(recipeOf(source));
+    setMarinadeUsd(String(source.marinade_usd_per_kg ?? 0));
   }
 
   return (
@@ -929,6 +996,22 @@ function SkuDialog({
         )}
         {sku && <input type="hidden" name="id" value={sku.id} />}
         <input type="hidden" name="org_id" value={orgId} />
+        {/*
+          The marinade recipe rides along with the form rather than saving on
+          its own. A brand-new SKU has no id for its ingredients to belong to
+          until the insert returns, so the two have to be one atomic act — and
+          it means closing the dialog without saving discards the recipe too,
+          which is what Cancel is expected to do.
+
+          An empty string is meaningful: it says "this SKU has no recipe", which
+          is how a recipe is removed. Omitting the field entirely would instead
+          mean "leave whatever is stored alone".
+        */}
+        <input
+          type="hidden"
+          name="marinade_recipe"
+          value={recipe ? JSON.stringify({ total_dose_g: recipe.totalDoseG, lines: recipe.lines }) : ''}
+        />
 
         {state.error && (
           <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -1110,13 +1193,22 @@ function SkuDialog({
             hint="fraction — 0.18 = 18% of finished weight"
           />
           {/* Always USD, in BOTH markets — domestic converts at the FX rate.
-              Surprising enough to say on every field rather than once. */}
-          <Field
-            label="Marinade cost"
-            name="marinade_usd_per_kg"
-            defaultValue={src?.marinade_usd_per_kg ?? 0}
-            step="0.01"
-            hint="USD per kg of marinade"
+              Surprising enough to say on every field rather than once. The
+              ingredients behind it, when there are any, are entered in LKR and
+              converted once by the builder. */}
+          <MarinadeCostField
+            value={marinadeUsd}
+            setValue={(v) => {
+              setMarinadeUsd(v);
+              invalidatePreview();
+            }}
+            recipe={recipe}
+            fxRate={version.fx_rate}
+            onOpenBuilder={() => setBuilderOpen(true)}
+            onClearRecipe={() => {
+              setRecipe(null);
+              invalidatePreview();
+            }}
           />
           <Field
             label="Processing cost"
@@ -1403,6 +1495,30 @@ function SkuDialog({
       </div>
 
       {/*
+        Also a sibling of the form, not a child of it: a dialog nested inside a
+        <form> puts its buttons in that form, where Enter in any ingredient box
+        would submit the SKU from behind the layer the user is looking at.
+      */}
+      {builderOpen && (
+        <MarinadeBuilder
+          initialLines={recipe?.lines ?? []}
+          initialTotalDoseG={recipe?.totalDoseG ?? null}
+          fxRate={version.fx_rate}
+          knownIngredients={knownIngredients}
+          onCancel={() => setBuilderOpen(false)}
+          onApply={(lines, totalDoseG, usdPerKg) => {
+            setRecipe({ lines, totalDoseG });
+            setMarinadeUsd(String(usdPerKg));
+            // Setting these from React fires no input event, so the form never
+            // hears about it and would keep showing a preview costed at the old
+            // marinade figure.
+            invalidatePreview();
+            setBuilderOpen(false);
+          }}
+        />
+      )}
+
+      {/*
         The document itself, a SIBLING of the overlay above rather than a child.
         That is the whole point: the overlay is `fixed` and scrolls its own
         content, and an element printed from inside a fixed, overflowing
@@ -1535,6 +1651,82 @@ function OverrideField({
             follows {show(inherited)} ·{' '}
             <button type="button" onClick={() => change(String(inherited))} className="underline hover:text-foreground">
               override
+            </button>
+          </>
+        )}
+      </span>
+    </label>
+  );
+}
+
+/** A marinade recipe as the dialog holds it, before it belongs to a SKU. */
+interface Recipe {
+  lines: CostMarinadeLineInput[];
+  totalDoseG: number;
+}
+
+/**
+ * Marinade cost, either typed or built from ingredients.
+ *
+ * With a recipe attached the box is read-only and shows the recipe's answer.
+ * That is the point of having one: the figure is derived, and letting it be
+ * typed over would leave a stored number that its own ingredients contradict,
+ * with nothing on screen to say which was meant. "Enter it directly" detaches
+ * the recipe and hands the box back, so nobody is trapped in the builder.
+ */
+function MarinadeCostField({
+  value,
+  setValue,
+  recipe,
+  fxRate,
+  onOpenBuilder,
+  onClearRecipe,
+}: {
+  value: string;
+  setValue: (v: string) => void;
+  recipe: Recipe | null;
+  fxRate: number;
+  onOpenBuilder: () => void;
+  onClearRecipe: () => void;
+}) {
+  const built = recipe != null;
+  const totalLkr = recipe
+    ? recipe.lines.reduce((s, l) => s + (l.qty_g * l.price_lkr_per_kg) / 1000, 0)
+    : 0;
+
+  return (
+    <label className="block">
+      <span className="text-xs font-medium">Marinade cost</span>
+      <input
+        name="marinade_usd_per_kg"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        readOnly={built}
+        type="number"
+        step="0.01"
+        min="0"
+        className={cn(inputCls, 'mt-1 w-full', built && 'border-primary bg-primary/5')}
+      />
+      <span className="mt-0.5 block text-[10px] text-muted-foreground">
+        {built ? (
+          <>
+            <span className="text-primary">
+              {recipe.lines.length} ingredient{recipe.lines.length === 1 ? '' : 's'}
+            </span>{' '}
+            · LKR {totalLkr.toFixed(2)} ÷ {recipe.totalDoseG} g, at FX {fxRate} ·{' '}
+            <button type="button" onClick={onOpenBuilder} className="underline hover:text-foreground">
+              edit
+            </button>{' '}
+            ·{' '}
+            <button type="button" onClick={onClearRecipe} className="underline hover:text-foreground">
+              enter it directly
+            </button>
+          </>
+        ) : (
+          <>
+            USD per kg of marinade ·{' '}
+            <button type="button" onClick={onOpenBuilder} className="underline hover:text-foreground">
+              build it from ingredients
             </button>
           </>
         )}

@@ -19,6 +19,7 @@ import type {
   CostOdcComponentRow,
   CostSizeBucket,
   CostSkuBucketYield,
+  CostSkuMarinadeLine,
   CostSkuRow,
 } from '@oceanpick/shared';
 
@@ -74,6 +75,8 @@ export interface CostingContext {
   skus: CostSkuRow[];
   /** skuId -> bucketId -> yield */
   yields: Map<string, Record<string, number>>;
+  /** skuId -> its marinade recipe, in entry order. Absent means it has none. */
+  marinadeLines: Map<string, CostSkuMarinadeLine[]>;
 }
 
 /**
@@ -100,11 +103,13 @@ export async function loadCostingContext(versionId?: string | null): Promise<Cos
     ? (allVersions.find((v) => v.id === versionId) ?? allVersions.find((v) => v.is_current) ?? allVersions[0]!)
     : (allVersions.find((v) => v.is_current) ?? allVersions[0]!);
 
-  const [{ data: odc }, { data: rates }, { data: yields }] = await Promise.all([
+  const [{ data: odc }, { data: rates }, { data: yields }, { data: marinade }] = await Promise.all([
     supabase.from('cost_odc_components').select('*').eq('version_id', version.id).order('sort_order'),
     supabase.from('cost_destination_rates').select('*').eq('version_id', version.id),
     // 34 SKUs x 7 buckets = 238 rows, comfortably under PostgREST's 1000 cap.
     supabase.from('cost_sku_bucket_yields').select('*'),
+    // Only marinated SKUs carry any, a dozen rows each at the outside.
+    supabase.from('cost_sku_marinade_lines').select('*').order('sort_order'),
   ]);
 
   const rateMap = new Map<string, CostDestinationRate>();
@@ -117,6 +122,13 @@ export async function loadCostingContext(versionId?: string | null): Promise<Cos
     yieldMap.set(y.sku_id, existing);
   }
 
+  const marinadeMap = new Map<string, CostSkuMarinadeLine[]>();
+  for (const l of (marinade ?? []) as CostSkuMarinadeLine[]) {
+    const existing = marinadeMap.get(l.sku_id);
+    if (existing) existing.push(l);
+    else marinadeMap.set(l.sku_id, [l]);
+  }
+
   return {
     version,
     versions: allVersions,
@@ -126,5 +138,6 @@ export async function loadCostingContext(versionId?: string | null): Promise<Cos
     rates: rateMap,
     skus: (skus ?? []) as CostSkuRow[],
     yields: yieldMap,
+    marinadeLines: marinadeMap,
   };
 }

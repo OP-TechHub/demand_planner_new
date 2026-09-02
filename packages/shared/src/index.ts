@@ -502,6 +502,12 @@ export interface CostSkuRow {
   pricing_mode: CostPricingMode;
   market_price_lkr: number | null;
   market_price_usd: number | null;
+  /**
+   * Grams of marinade that the ingredient recipe's total cost is divided by.
+   * Null means marinade_usd_per_kg was typed directly rather than built from
+   * ingredients — which is the case for every SKU that has no marinade at all.
+   */
+  marinade_total_dose_g: number | null;
   override_rack_margin_pct: number | null;
   override_fob_margin_pct: number | null;
   override_transport_lkr: number | null;
@@ -521,6 +527,46 @@ export interface CostSkuBucketYield {
   sku_id: string;
   bucket_id: string;
   yield_pct: number;
+}
+
+/**
+ * One ingredient in a SKU's marinade, priced in LKR.
+ *
+ * Fish never appears here: the engine already carries it as whole-fish cost ÷
+ * yield, so pricing it again in the marinade would count it twice.
+ */
+export interface CostSkuMarinadeLine {
+  id: string;
+  sku_id: string;
+  sort_order: number;
+  ingredient: string;
+  qty_g: number;
+  price_lkr_per_kg: number;
+}
+
+/** An ingredient row as the SKU form posts it — no id yet, no SKU to belong to. */
+export interface CostMarinadeLineInput {
+  ingredient: string;
+  qty_g: number;
+  price_lkr_per_kg: number;
+}
+
+/**
+ * The marinade chain, from ingredients to the USD figure the engine consumes.
+ *
+ * Total dose is a parameter rather than the sum of the doses: a batch loses
+ * weight to cooking, so the marinade retained in the finished product weighs
+ * less than what went in, and dividing by the input weight under-recovers.
+ */
+export function marinadeCostFromLines(
+  lines: CostMarinadeLineInput[],
+  totalDoseG: number,
+  fxRate: number
+): { totalLkr: number; lkrPerKg: number; usdPerKg: number } | null {
+  const totalLkr = lines.reduce((sum, l) => sum + (l.qty_g * l.price_lkr_per_kg) / 1000, 0);
+  if (!(totalDoseG > 0) || !(fxRate > 0)) return null;
+  const lkrPerKg = (totalLkr / totalDoseG) * 1000;
+  return { totalLkr, lkrPerKg, usdPerKg: lkrPerKg / fxRate };
 }
 
 export interface CostCosting {

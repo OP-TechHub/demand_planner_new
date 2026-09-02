@@ -39,6 +39,10 @@ export default async function CostingSkusPage() {
       skus={ctx.skus}
       buckets={ctx.buckets}
       yields={Object.fromEntries(ctx.yields.entries())}
+      // The ingredients behind each marinade cost. Loaded for every SKU, not
+      // just the one being edited, because the builder offers every ingredient
+      // anyone has already priced as you type.
+      marinadeLines={Object.fromEntries(ctx.marinadeLines.entries())}
       orgId={ctx.version.org_id}
       // Passed so the editor can show what each override would inherit if left
       // blank — a new SKU shouldn't be a guess about what the defaults are.

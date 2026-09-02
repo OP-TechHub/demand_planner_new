@@ -5,6 +5,60 @@ import { createClient } from '@/lib/supabase/server';
 
 export type SkuFormState = { error: string | null; ok: boolean };
 
+/** A marinade recipe as the dialog posts it: ingredients plus their divisor. */
+interface MarinadeRecipe {
+  total_dose_g: number;
+  lines: { ingredient: string; qty_g: number; price_lkr_per_kg: number }[];
+}
+
+/**
+ * Read the marinade recipe out of the form.
+ *
+ * Three outcomes, and the distinction between the last two matters:
+ *   - a recipe          — replace whatever is stored
+ *   - null              — the field was posted empty: this SKU has no recipe,
+ *                         so clear any ingredients it used to have
+ *   - undefined         — the field was absent entirely: leave the stored
+ *                         recipe alone (no caller does this today, but a
+ *                         partial form should never silently delete rows)
+ *
+ * Re-validated here rather than trusted: it arrives as a JSON string in a
+ * hidden input, which is to say from the browser, which is to say from anyone.
+ */
+function marinadeRecipe(fd: FormData): MarinadeRecipe | null | undefined | 'invalid' {
+  const raw = fd.get('marinade_recipe');
+  if (raw == null) return undefined;
+  const s = String(raw).trim();
+  if (s === '') return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(s);
+  } catch {
+    return 'invalid';
+  }
+  if (typeof parsed !== 'object' || parsed === null) return 'invalid';
+
+  const { total_dose_g: dose, lines } = parsed as Record<string, unknown>;
+  if (typeof dose !== 'number' || !Number.isFinite(dose) || dose <= 0) return 'invalid';
+  if (!Array.isArray(lines) || lines.length === 0) return 'invalid';
+  // A recipe is a dozen rows in practice. The cap is only here so a crafted
+  // payload can't turn one save into an unbounded insert.
+  if (lines.length > 200) return 'invalid';
+
+  const clean: MarinadeRecipe['lines'] = [];
+  for (const l of lines) {
+    if (typeof l !== 'object' || l === null) return 'invalid';
+    const { ingredient, qty_g: qty, price_lkr_per_kg: price } = l as Record<string, unknown>;
+    const name = String(ingredient ?? '').trim().slice(0, 200);
+    if (!name) return 'invalid';
+    if (typeof qty !== 'number' || !Number.isFinite(qty) || qty < 0) return 'invalid';
+    if (typeof price !== 'number' || !Number.isFinite(price) || price < 0) return 'invalid';
+    clean.push({ ingredient: name, qty_g: qty, price_lkr_per_kg: price });
+  }
+  return { total_dose_g: dose, lines: clean };
+}
+
 /** Optional number field: blank means "inherit the global value". */
 function optionalNumber(fd: FormData, key: string): number | null | undefined {
   const raw = fd.get(key);
@@ -70,6 +124,11 @@ export async function saveCostSku(_prev: SkuFormState, fd: FormData): Promise<Sk
   // it has been filled in.
   const categoryOther = String(fd.get('category_other') ?? '').trim();
   const category = categoryOther || String(fd.get('category') ?? '').trim();
+
+  const recipe = marinadeRecipe(fd);
+  if (recipe === 'invalid') {
+    return { error: 'The marinade ingredients could not be read. Reopen the marinade cost builder and apply it again.', ok: false };
+  }
 
   const numeric = {
     marinade_usd_per_kg: requiredNumber(fd, 'marinade_usd_per_kg') ?? 0,
@@ -141,6 +200,10 @@ export async function saveCostSku(_prev: SkuFormState, fd: FormData): Promise<Sk
     raw_material_basis: String(fd.get('raw_material_basis') ?? 'full_fish'),
     market_price_lkr: targetLkr ?? null,
     market_price_usd: targetUsd ?? null,
+    // The divisor lives on the SKU so the recipe can be replayed; null says the
+    // marinade cost was typed rather than built. `undefined` is dropped from
+    // the payload by the spread below, leaving what is stored untouched.
+    ...(recipe === undefined ? {} : { marinade_total_dose_g: recipe === null ? null : recipe.total_dose_g }),
     ...Object.fromEntries(Object.entries(overrides).map(([k, v]) => [k, v === undefined ? null : v])),
   };
 
@@ -156,6 +219,9 @@ export async function saveCostSku(_prev: SkuFormState, fd: FormData): Promise<Sk
       .update({ ...payload, updated_by: user.id })
       .eq('id', id);
     if (error) return { error: friendly(error.message), ok: false };
+
+    const recipeError = await writeMarinadeLines(supabase, id, recipe);
+    if (recipeError) return { error: recipeError, ok: false };
   } else {
     if (!orgId) return { error: 'Missing organization.', ok: false };
     // Land it at the END of the list. The dialog has no sort-order field, and
@@ -176,6 +242,9 @@ export async function saveCostSku(_prev: SkuFormState, fd: FormData): Promise<Sk
       .single();
     if (error || !created) return { error: friendly(error?.message ?? 'Could not save.'), ok: false };
 
+    const recipeError = await writeMarinadeLines(supabase, (created as { id: string }).id, recipe);
+    if (recipeError) return { error: recipeError, ok: false };
+
     // Seed per-bucket yields at the flat value, so a new SKU behaves like the
     // seeded ones the moment size grades are switched on (Decisions §6).
     const { data: buckets } = await supabase.from('cost_size_buckets').select('id').eq('org_id', orgId);
@@ -190,6 +259,45 @@ export async function saveCostSku(_prev: SkuFormState, fd: FormData): Promise<Sk
   revalidatePath('/costing');
   revalidatePath('/costing/skus');
   return { error: null, ok: true };
+}
+
+/**
+ * Replace a SKU's marinade ingredients with what the form posted.
+ *
+ * Delete-then-insert rather than a diff: the rows carry no meaning of their own
+ * beyond their order, so matching them up to preserve ids would be bookkeeping
+ * that buys nothing. Returns an error message, or null on success.
+ *
+ * Not a transaction — PostgREST has no way to make it one — so a failed insert
+ * after a successful delete leaves the recipe empty while the SKU still claims
+ * a total dose. The message says so rather than reporting a save that half
+ * happened, and reopening the builder is enough to put it back.
+ */
+async function writeMarinadeLines(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  skuId: string,
+  recipe: MarinadeRecipe | null | undefined | 'invalid'
+): Promise<string | null> {
+  if (recipe === undefined || recipe === 'invalid') return null;
+
+  const { error: delError } = await supabase.from('cost_sku_marinade_lines').delete().eq('sku_id', skuId);
+  if (delError) return `The SKU was saved, but its marinade ingredients could not be updated: ${delError.message}`;
+
+  if (recipe === null) return null;
+
+  const { error: insError } = await supabase.from('cost_sku_marinade_lines').insert(
+    recipe.lines.map((l, i) => ({
+      sku_id: skuId,
+      sort_order: i * 10,
+      ingredient: l.ingredient,
+      qty_g: l.qty_g,
+      price_lkr_per_kg: l.price_lkr_per_kg,
+    }))
+  );
+  if (insError) {
+    return `The SKU was saved, but its marinade ingredients were not — reopen it and apply the marinade builder again. (${insError.message})`;
+  }
+  return null;
 }
 
 /** Set one SKU's yield for one size grade (Decisions §6). */
