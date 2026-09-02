@@ -9,7 +9,10 @@ import { NextResponse, type NextRequest } from 'next/server';
  */
 type CookiesToSet = Parameters<SetAllCookies>[0];
 
-const PUBLIC_ROUTES = ['/login', '/signup', '/auth', '/forgot-password'];
+// /offline is the service worker's navigation fallback (public/sw.js). It holds
+// no data and is cached at install time, so it must render for anyone —
+// redirecting it to /login would cache a login page as the offline screen.
+const PUBLIC_ROUTES = ['/login', '/signup', '/auth', '/forgot-password', '/offline'];
 
 export async function updateSession(request: NextRequest) {
   // API routes authenticate themselves (API key for /api/v1, the caller's own

@@ -30,6 +30,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { InstallAppButton } from '@/components/pwa/install-app-button';
 import type { UserRole } from '@oceanpick/shared';
 
 type Item = { label: string; href: string; icon: LucideIcon };
@@ -149,6 +150,12 @@ export function AppSidebar({ role }: { role: UserRole }) {
             </ul>
           </div>
         ))}
+      </div>
+
+      {/* Renders nothing unless the browser offers an install prompt and we
+          aren't already running installed, so the footer collapses away. */}
+      <div className="shrink-0 px-3 pb-3 empty:hidden">
+        <InstallAppButton />
       </div>
     </nav>
   );
