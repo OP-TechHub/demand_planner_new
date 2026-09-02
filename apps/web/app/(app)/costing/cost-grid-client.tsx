@@ -537,11 +537,11 @@ function Grid({
   }
 
   return (
-    <ScrollX className="rounded-lg border bg-card">
+    <ScrollX className="max-h-[70vh] rounded-lg border bg-card">
       <table className="w-full border-collapse text-right text-xs tabular-nums">
         <thead>
-          <tr className="border-b bg-muted/40 text-[10px] uppercase tracking-wide text-muted-foreground">
-            <th className={cn(thBase, 'sticky left-0 z-10 bg-muted/40 text-left')}>SKU</th>
+          <tr className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            <th className={cn(thBase, 'left-0 z-30 text-left')}>SKU</th>
             <th className={cn(thBase, 'text-left')}>Customer</th>
             <th className={cn(thBase, 'text-left')}>Costed by</th>
             {showDestination && <th className={cn(thBase, 'text-left')}>Port</th>}
@@ -1198,7 +1198,12 @@ const round = (n: number | null): number | null => (n == null ? null : Math.roun
 const lkr = (n: number): string => Math.round(n).toLocaleString();
 const usd = (n: number): string => n.toFixed(2);
 
-const thBase = 'whitespace-nowrap px-2 py-2 font-medium';
+// Header cells carry the sticky position and an OPAQUE background themselves:
+// sticking <thead> doesn't work, and a tint on the <tr> lets rows show through as
+// they scroll under it. The frozen SKU column's header overrides to z-30 so it wins
+// over both the sticky row and the sticky column. See components/output-grid.tsx.
+const thBase =
+  'sticky top-0 z-20 whitespace-nowrap border-b border-border bg-muted px-2 py-2 font-medium';
 const tdBase = 'whitespace-nowrap px-2 py-1.5';
 const selectCls = 'rounded-md border bg-background px-2 py-1 text-xs';
 const btnGhost =

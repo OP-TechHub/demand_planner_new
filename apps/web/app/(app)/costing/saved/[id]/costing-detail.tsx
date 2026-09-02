@@ -172,11 +172,11 @@ export function CostingDetail({
         </div>
       )}
 
-      <ScrollX className="rounded-lg border bg-card">
+      <ScrollX className="max-h-[70vh] rounded-lg border bg-card">
         <table className="w-full border-collapse text-right text-xs tabular-nums">
           <thead>
-            <tr className="border-b bg-muted/40 text-[10px] uppercase tracking-wide text-muted-foreground">
-              <th className={cn(th, 'sticky left-0 z-10 bg-muted/40 text-left')}>SKU</th>
+            <tr className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              <th className={cn(th, 'left-0 z-30 text-left')}>SKU</th>
               {destinations.length > 1 && <th className={cn(th, 'text-left')}>Port</th>}
               <th className={cn(th, 'text-left')}>State</th>
               <th className={th}>FINAL cost</th>
@@ -310,5 +310,10 @@ const chip = (active: boolean) =>
     'rounded-full border px-2.5 py-0.5 text-xs',
     active ? 'border-primary bg-primary/10 font-medium text-primary' : 'text-muted-foreground hover:bg-muted'
   );
-const th = 'whitespace-nowrap px-2 py-2 font-medium';
+// Header cells carry the sticky position and an OPAQUE background themselves:
+// sticking <thead> doesn't work, and a tint on the <tr> lets rows show through as
+// they scroll under it. The frozen SKU column's header overrides to z-30 so it wins
+// over both the sticky row and the sticky column. See components/output-grid.tsx.
+const th =
+  'sticky top-0 z-20 whitespace-nowrap border-b border-border bg-muted px-2 py-2 font-medium';
 const td = 'whitespace-nowrap px-2 py-1.5';
