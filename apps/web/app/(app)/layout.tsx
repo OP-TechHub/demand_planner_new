@@ -9,6 +9,7 @@ import { ThemeToggle } from '@/components/theme-toggle';
 import { Toaster } from '@/components/ui/toast';
 import { ConfirmHost } from '@/components/ui/confirm';
 import { RecalculateButton } from './recalculate-button';
+import { RegisterServiceWorker } from '@/components/pwa/register-service-worker';
 import { logout } from '../login/actions';
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -103,6 +104,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="flex h-screen overflow-hidden">
+      {/* Registered below the auth boundary, so /login stays plain HTML. */}
+      <RegisterServiceWorker />
       <AppSidebar role={profile.role as UserRole} />
       <div className="flex h-screen min-w-0 flex-1 flex-col">
         <header className="z-20 flex h-14 shrink-0 items-center justify-between border-b border-border bg-card/70 px-6 backdrop-blur-md">
