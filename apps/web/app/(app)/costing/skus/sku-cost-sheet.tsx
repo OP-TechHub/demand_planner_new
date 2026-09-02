@@ -69,10 +69,10 @@ export function SkuCostSheet({
   exportOut: ExportOutput | null;
   exportWholeFish: WholeFishCost | null;
   /**
-   * The port these export figures were costed to. The SKU editor has none —
-   * its preview uses the first destination only as a stand-in for freight, so
-   * anything past FOB there would be misleading and is left out. The Cost Grid
-   * does have a real one, and then CIF and the trade ladder are shown.
+   * The port these export figures were costed to. Null leaves the sheet at
+   * FOB: everything above it is port-generic, but CIF and the trade ladder
+   * below it are freight-specific, and printing them against an unnamed port
+   * would be a quote for a lane the reader cannot identify.
    */
   destinationName?: string | null;
   /** Set on the copy that print and the Word export read. */
