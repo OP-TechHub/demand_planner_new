@@ -3,7 +3,13 @@
 import { useActionState, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Download, FileText, Lock, Pencil, Plus, Printer, X } from 'lucide-react';
-import { computeCost, type DomesticOutput, type ExportOutput, type WholeFishCost } from '@oceanpick/engine';
+import {
+  computeCost,
+  type DomesticOutput,
+  type ExportOutput,
+  type ExportState,
+  type WholeFishCost,
+} from '@oceanpick/engine';
 import {
   COST_CATEGORIES,
   type CostAssumptionVersion,
@@ -370,6 +376,13 @@ function YieldTable({
 // Live preview: cost and price the SKU on screen, before it is saved
 // ---------------------------------------------------------------------------
 
+/** The three markups that turn a FOB price into a shelf-side one. */
+interface DownstreamPct {
+  clearingPct: number;
+  importerMarkupPct: number;
+  distributorMarkupPct: number;
+}
+
 interface PreviewResult {
   issues: string[];
   domestic: DomesticOutput | null;
@@ -382,6 +395,14 @@ interface PreviewResult {
   hasTargetExport: boolean;
   /** The size grade costed at, or null for the flat reference model. */
   gradeLabel: string | null;
+  /**
+   * The port the past-FOB ladder was costed to, and the percentages it applied.
+   *
+   * Null when this SKU is not sold for export, or when no destination is set up
+   * — in either case there is no ladder to show rather than an empty one.
+   */
+  destinationName: string | null;
+  downstream: DownstreamPct | null;
   /**
    * The rest is not used by the on-screen preview at all — it is what the
    * downloadable sheet needs to show the ex-farm build-up and identify the SKU.
@@ -413,6 +434,8 @@ function previewFromForm(
   odc: CostOdcComponentRow[],
   destinations: CostDestinationRow[],
   rates: Record<string, { sea: number; air: number }>,
+  /** The port the past-FOB ladder is costed to; an unknown id falls back to the first. */
+  destId: string,
   /** Null costs on the flat reference model, as this dialog always used to. */
   bucketRow?: CostSizeBucket | null,
   bucketYields?: Record<string, number>
@@ -470,6 +493,8 @@ function previewFromForm(
   let exportWholeFish: WholeFishCost | null = null;
   let hasTargetDomestic = false;
   let hasTargetExport = false;
+  let destinationName: string | null = null;
+  let downstream: DownstreamPct | null = null;
 
   if (marketScope === 'domestic' || marketScope === 'both') {
     const price = optional('market_price_lkr') ?? null;
@@ -487,11 +512,11 @@ function previewFromForm(
   }
 
   if (marketScope === 'export' || marketScope === 'both') {
-    // Any port will do. The preview stops at FOB, and everything up to FOB is
-    // generic — the port only starts to matter at CIF, which isn't shown here.
-    // So the first destination is a stand-in, not a choice, and naming it in the
-    // UI would imply these figures are specific to it.
-    const dest = destinations[0];
+    // Everything up to FOB is port-generic, so this choice moves nothing above
+    // it — only the freight that turns FOB into CIF, and the ladder past that.
+    // It is a real choice now that the ladder is shown, so the panel names the
+    // port rather than quietly costing to whichever destination came first.
+    const dest = destinations.find((d) => d.id === destId) ?? destinations[0];
     if (!dest) {
       issues.push('No destination is set up, so export freight can’t be priced.');
     } else {
@@ -508,6 +533,16 @@ function previewFromForm(
       if (res.ok) {
         exportOut = res.value.result as ExportOutput;
         exportWholeFish = res.value.wholeFish;
+        destinationName = dest.name;
+        // The engine applies these internally and returns only the resulting
+        // prices, so they are resolved again here for display. Same fallback,
+        // same order — an override, else the company value.
+        downstream = {
+          clearingPct: base.overrides.importerClearingPct ?? assumptions.margins.importerClearingPct,
+          importerMarkupPct: base.overrides.importerMarkupPct ?? assumptions.margins.importerMarkupPct,
+          distributorMarkupPct:
+            base.overrides.distributorMarkupPct ?? assumptions.margins.distributorMarkupPct,
+        };
       } else issues.push(...res.issues.map((i) => i.message));
     }
   }
@@ -528,6 +563,8 @@ function previewFromForm(
     absorbed: base.rawMaterialBasis === 'absorbed',
     productForm: String(fd.get('product_form') ?? 'both') as CostProductForm,
     gradeLabel: bucketRow?.label ?? null,
+    destinationName,
+    downstream,
     pctFish: base.pctFish,
     pctMarinade: base.pctMarinade,
   };
@@ -648,6 +685,32 @@ function PreviewPanel({
         />
       )}
 
+      {/*
+        Past FOB, and deliberately its own table: these are not our costs and
+        not our margin — they are what the price becomes in someone else's
+        hands. Mixing them into the FOB rows above would read as though the
+        distributor's shelf price were something this SKU earns.
+      */}
+      {preview.export && preview.destinationName && preview.downstream && (
+        <DownstreamBlock
+          port={preview.destinationName}
+          pct={preview.downstream}
+          rows={[
+            ...(form === 'fresh'
+              ? []
+              : ([
+                  [glazed ? 'Frozen, no glaze' : 'Frozen', preview.export.frozenPlain],
+                  ...(glazed
+                    ? ([[`Frozen, ${(preview.glazePct * 100).toFixed(0)}% glaze`, preview.export.frozenGlazed]] as DownstreamRow[])
+                    : []),
+                ] as DownstreamRow[])),
+            ...(form === 'frozen'
+              ? []
+              : ([['Fresh (air)', preview.export.fresh]] as DownstreamRow[])),
+          ]}
+        />
+      )}
+
       <p className="text-[10px] text-muted-foreground">
         One SKU, costed in each state it can be sold in — not separate products.
       </p>
@@ -673,8 +736,15 @@ function PreviewBlock({
   onPriceChange: (value: string) => void;
 }) {
   // Every row in a market shares one price — that is how the SKU stores it —
-  // so the cells are bound to a single value and move together.
+  // so every cell is bound to the same value and they move together. Each row
+  // is still editable: which state you are looking at when the price occurs to
+  // you is not something the form should have an opinion about, and locking
+  // all but the first reads as "this state cannot be priced" rather than
+  // "these are the same number".
   const shared = rows[0]?.[3] ?? 0;
+  // Rounded to what the column displays, so typing starts from the number on
+  // screen rather than a long float.
+  const shownPrice = Number(fmt(shared).replace(/,/g, ''));
 
   return (
     <div>
@@ -693,32 +763,25 @@ function PreviewBlock({
           </tr>
         </thead>
         <tbody>
-          {rows.map(([label, cost, standard, , margin], i) => (
+          {rows.map(([label, cost, standard, , margin]) => (
             <tr key={label} className="border-t border-primary/10">
               <td className="py-0.5 text-left">{label}</td>
               <td className="py-0.5">{fmt(cost)}</td>
               <td className={cn('py-0.5', target && 'text-muted-foreground')}>{fmt(standard)}</td>
               <td className="py-0.5">
-                {i === 0 ? (
-                  <input
-                    type="number"
-                    step="any"
-                    min="0"
-                    // Rounded to what the column displays, so typing starts from
-                    // the number on screen rather than a long float.
-                    value={Number(fmt(shared).replace(/,/g, ''))}
-                    onChange={(e) => onPriceChange(e.target.value)}
-                    // The form clears the preview on any input; this input lives
-                    // inside it but must survive its own edit.
-                    onInput={(e) => e.stopPropagation()}
-                    className="w-24 rounded border bg-background px-1.5 py-0.5 text-right font-medium"
-                    aria-label="Your price"
-                  />
-                ) : (
-                  <span className="font-medium" title="One price per market — edit it on the first row">
-                    {fmt(shared)}
-                  </span>
-                )}
+                <input
+                  type="number"
+                  step="any"
+                  min="0"
+                  value={shownPrice}
+                  onChange={(e) => onPriceChange(e.target.value)}
+                  // The form clears the preview on any input; these inputs live
+                  // inside it but must survive their own edit.
+                  onInput={(e) => e.stopPropagation()}
+                  className="w-24 rounded border bg-background px-1.5 py-0.5 text-right font-medium"
+                  title="One price per market — editing any row moves them all"
+                  aria-label={`Your price — ${label}`}
+                />
               </td>
               <td className="py-0.5">
                 <MarginBadge pct={margin} />
@@ -727,6 +790,76 @@ function PreviewBlock({
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+type DownstreamRow = [string, ExportState];
+
+/**
+ * What the FOB price becomes on its way to the shelf, at one port.
+ *
+ * Laid out as the ladder it is — each column is the previous one plus one
+ * party's cost — because the question this answers is "where does the price go
+ * after us", and a flat list of four prices does not answer it. Fresh sits in
+ * the same table as frozen: the states differ only in the freight that turns
+ * FOB into CIF, which is exactly what the freight column shows.
+ */
+function DownstreamBlock({
+  port,
+  pct,
+  rows,
+}: {
+  port: string;
+  pct: DownstreamPct;
+  rows: DownstreamRow[];
+}) {
+  const usd = (n: number) => n.toFixed(2);
+  // 0.05 x 100 is 5.000000000000001 in IEEE754, so a whole-number check on the
+  // product prints "5.0%". Round first, then drop a trailing zero decimal.
+  const asPct = (p: number) => `${Number((p * 100).toFixed(1))}%`;
+
+  return (
+    <div>
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+        Downstream — past FOB (USD/kg)
+        <span className="ml-1.5 normal-case tracking-normal opacity-80">· to {port}</span>
+      </div>
+      <ScrollX>
+        <table className="mt-1 w-full min-w-[30rem] text-right text-[11px] tabular-nums">
+          <thead className="text-[10px] uppercase text-muted-foreground">
+            <tr>
+              <th className="py-0.5 text-left font-medium">State</th>
+              <th className="py-0.5 font-medium">FOB</th>
+              <th className="py-0.5 font-medium">+ Freight</th>
+              <th className="py-0.5 font-medium">CIF</th>
+              <th className="py-0.5 font-medium" title={`CIF x (1 + ${asPct(pct.clearingPct)} clearing) x (1 + ${asPct(pct.importerMarkupPct)} markup)`}>
+                Importer
+              </th>
+              <th className="py-0.5 font-medium" title={`Importer price x (1 + ${asPct(pct.distributorMarkupPct)} markup)`}>
+                Dist → T3
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(([label, s]) => (
+              <tr key={label} className="border-t border-primary/10">
+                <td className="py-0.5 text-left">{label}</td>
+                <td className="py-0.5">{usd(s.sellingPrice)}</td>
+                <td className="py-0.5 text-muted-foreground">{usd(s.freightPerKg)}</td>
+                <td className="py-0.5">{usd(s.cif)}</td>
+                <td className="py-0.5">{usd(s.importerPrice)}</td>
+                <td className="py-0.5 font-medium">{usd(s.distributorT3)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </ScrollX>
+      <p className="mt-1 text-[10px] text-muted-foreground">
+        Clearing {asPct(pct.clearingPct)} · importer markup {asPct(pct.importerMarkupPct)} · distributor
+        markup {asPct(pct.distributorMarkupPct)}. None of this touches our cost or margin — change the
+        port to see another lane.
+      </p>
     </div>
   );
 }
@@ -777,6 +910,10 @@ function SkuDialog({
   // this dialog used to do unconditionally — so the default preserves every
   // number it produced before, and picking a grade is an explicit act.
   const [previewBucketId, setPreviewBucketId] = useState('');
+  // Which port the past-FOB ladder is costed to. Everything up to FOB is the
+  // same whatever this is, so defaulting to the first destination reproduces
+  // every number this dialog showed before the ladder existed.
+  const [previewDestId, setPreviewDestId] = useState(destinations[0]?.id ?? '');
 
   /**
    * Which record the field defaults come from.
@@ -853,12 +990,16 @@ function SkuDialog({
     return { bucket, bucketYields: src?.id ? yields[src.id] : undefined };
   }
 
+  /** Cost a form snapshot at the grade and port currently selected. */
+  function costFromForm(fd: FormData) {
+    const { bucket, bucketYields } = gradeContext();
+    return previewFromForm(fd, version, odc, destinations, rates, previewDestId, bucket, bucketYields);
+  }
+
   function calculate() {
     const el = formRef.current;
     if (!el) return;
-    const fd = new FormData(el);
-    const { bucket, bucketYields } = gradeContext();
-    setPreview(previewFromForm(fd, version, odc, destinations, rates, bucket, bucketYields));
+    setPreview(costFromForm(new FormData(el)));
   }
 
   // A stale preview is worse than none: it shows numbers for a recipe that is
@@ -921,8 +1062,7 @@ function SkuDialog({
     // The mode lives in React state, so it isn't in the form yet on this pass.
     const fd = new FormData(el);
     fd.set('pricing_mode', 'target');
-    const { bucket, bucketYields } = gradeContext();
-    setPreview(previewFromForm(fd, version, odc, destinations, rates, bucket, bucketYields));
+    setPreview(costFromForm(fd));
   }
 
   useEffect(() => {
@@ -1412,6 +1552,32 @@ function SkuDialog({
           </label>
         )}
 
+        {destinations.length > 0 && (
+          <label className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="font-medium">Export to</span>
+            <select
+              // No name attribute, as with the grade above: the port qualifies
+              // the preview's ladder and must not land in the SKU's FormData.
+              value={previewDestId}
+              onChange={(e) => {
+                setPreviewDestId(e.target.value);
+                invalidatePreview();
+              }}
+              className={cn(inputCls, 'w-auto')}
+            >
+              {destinations.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+            <span className="text-[10px] text-muted-foreground">
+              Sets the freight that turns FOB into CIF, and the ladder past it. Cost, FOB and margin
+              are the same for every port.
+            </span>
+          </label>
+        )}
+
         {preview ? (
           <PreviewPanel
             preview={preview}
@@ -1543,6 +1709,7 @@ function SkuDialog({
             absorbed={preview.absorbed}
             productForm={preview.productForm}
             gradeLabel={preview.gradeLabel}
+            destinationName={preview.destinationName}
             pctFish={preview.pctFish}
             pctMarinade={preview.pctMarinade}
             showBaseCost={canViewBaseCost && includeBaseCost}
