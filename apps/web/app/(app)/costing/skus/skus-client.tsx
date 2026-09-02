@@ -210,11 +210,11 @@ function RecipeTable({
   onEdit: (s: CostSkuRow) => void;
 }) {
   return (
-    <ScrollX className="rounded-lg border bg-card">
+    <ScrollX className="max-h-[70vh] rounded-lg border bg-card">
       <table className="w-full border-collapse text-right text-xs tabular-nums">
         <thead>
-          <tr className="border-b bg-muted/40 text-[10px] uppercase tracking-wide text-muted-foreground">
-            <th className={cn(th, 'sticky left-0 z-10 bg-muted/40 text-left')}>SKU</th>
+          <tr className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            <th className={cn(th, 'left-0 z-30 text-left')}>SKU</th>
             <th className={cn(th, 'text-left')}>Added by</th>
             <th className={cn(th, 'text-left')}>Category</th>
             <th className={cn(th, 'text-left')}>Raw material</th>
@@ -326,11 +326,11 @@ function YieldTable({
         Enter the yield at each grade&apos;s median weight. Until these differ from the flat yield,
         selecting a size grade in the grid changes FCR and ODC but not yield.
       </p>
-      <ScrollX className="rounded-lg border bg-card">
+      <ScrollX className="max-h-[70vh] rounded-lg border bg-card">
         <table className="w-full border-collapse text-right text-xs tabular-nums">
           <thead>
-            <tr className="border-b bg-muted/40 text-[10px] uppercase tracking-wide text-muted-foreground">
-              <th className={cn(th, 'sticky left-0 z-10 bg-muted/40 text-left')}>SKU</th>
+            <tr className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              <th className={cn(th, 'left-0 z-30 text-left')}>SKU</th>
               <th className={th}>Flat</th>
               {buckets.map((b) => (
                 <th key={b.id} className={th}>
@@ -2022,6 +2022,11 @@ const hasOverride = (s: CostSkuRow): boolean =>
   s.override_distributor_markup_pct != null;
 
 const pct = (n: number) => (n * 100).toFixed(0) + '%';
-const th = 'whitespace-nowrap px-2 py-2 font-medium';
+// Header cells carry the sticky position and an OPAQUE background themselves:
+// sticking <thead> doesn't work, and a tint on the <tr> lets rows show through as
+// they scroll under it. The frozen SKU column's header overrides to z-30 so it wins
+// over both the sticky row and the sticky column. See components/output-grid.tsx.
+const th =
+  'sticky top-0 z-20 whitespace-nowrap border-b border-border bg-muted px-2 py-2 font-medium';
 const td = 'whitespace-nowrap px-2 py-1.5';
 const inputCls = 'rounded-md border bg-background px-2 py-1 text-xs disabled:opacity-60';
