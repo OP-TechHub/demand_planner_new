@@ -197,6 +197,12 @@ export async function saveCostSku(_prev: SkuFormState, fd: FormData): Promise<Sk
     pct_marinade: pctMarinade,
     ...numeric,
     pack_size: String(fd.get('pack_size') ?? '').trim() || null,
+    // Blank means "no port picked" — the editor then falls back to the first
+    // active destination, which is what every SKU did before this was stored.
+    default_destination_id: String(fd.get('default_destination_id') ?? '').trim() || null,
+    // Blank is a real answer here, not a missing one: it is the flat reference
+    // model, which is what every SKU was costed on before grades existed.
+    default_bucket_id: String(fd.get('default_bucket_id') ?? '').trim() || null,
     raw_material_basis: String(fd.get('raw_material_basis') ?? 'full_fish'),
     market_price_lkr: targetLkr ?? null,
     market_price_usd: targetUsd ?? null,
