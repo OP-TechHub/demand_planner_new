@@ -150,6 +150,56 @@ function contribution(marketPrice: number | null | undefined, finalCost: number)
 }
 
 /**
+ * What the whole-round margin is measured against.
+ *
+ * `conversionCost` is every input the fish meets after it leaves the farm —
+ * marinade, processing, packing, cold-hold and freight to port — per kg of
+ * finished product. It is invariant under glaze: glaze dilutes the fish
+ * component only, so FINAL and the fish component move together and their
+ * difference does not move at all.
+ */
+interface WholeRoundBasis {
+  conversionCost: number;
+  yieldUsed: number;
+  wholeFish: number;
+  /** A by-product never paid for the fish (Decisions §7). */
+  absorbed: boolean;
+}
+
+/**
+ * What a kilogram of WHOLE ROUND fish earns, and what that is as a percentage
+ * of what the fish cost to grow.
+ *
+ * The per-kg gross margin answers "what does a kilo of this pack earn, against
+ * what it sells for?". This answers "what does a kilo of fish earn, against
+ * what the farm spent growing it?" — the question that matters when the fish,
+ * not the pack, is the scarce thing.
+ *
+ *   ((price - conversion inputs) x yield - whole fish) / whole fish
+ *
+ * Measured against the FISH COST, not against revenue. That is the whole point
+ * of the second denominator: divided by revenue it would collapse onto the
+ * per-kg gross margin for any SKU that is 100% fish, because fish_component x
+ * yield IS the whole fish cost. Read as a return on the farm cost it stays a
+ * distinct number for every SKU, and it can exceed 100% — earning more than the
+ * fish cost is the normal case, not an error.
+ *
+ * An absorbed by-product returns null rather than being charged a fish the main
+ * product already bought (Decisions §7).
+ */
+function wholeRoundMargin(basis: WholeRoundBasis, sellingPrice: number, glazePct: number) {
+  if (basis.absorbed) return { wholeRoundMarginPerKg: null, wholeRoundMarginPct: null };
+  // Glaze is sold weight, so a kilo of round fish leaves as that much more pack.
+  const packPerKgFish = basis.yieldUsed * (1 + glazePct);
+  const marginPerKg = (sellingPrice - basis.conversionCost) * packPerKgFish - basis.wholeFish;
+  return {
+    wholeRoundMarginPerKg: marginPerKg,
+    // Zero would mean a free fish, which is bad data rather than infinite return.
+    wholeRoundMarginPct: basis.wholeFish > 0 ? marginPerKg / basis.wholeFish : null,
+  };
+}
+
+/**
  * The price to actually use, and the margin it implies.
  *
  * A target only applies when the SKU is in target mode AND a usable figure is
@@ -172,7 +222,9 @@ function resolvePrice(sku: CostSku, costPlusPrice: number, finalCost: number) {
 function domesticState(
   finalCost: number,
   rackMarginPct: number,
-  sku: CostSku
+  sku: CostSku,
+  basis: WholeRoundBasis,
+  glazePct: number
 ): DomesticState {
   const rackRate = rackMarginPct < 1 ? finalCost / (1 - rackMarginPct) : 0;
   const { sellingPrice, marginPct } = resolvePrice(sku, rackRate, finalCost);
@@ -181,6 +233,7 @@ function domesticState(
     rackRate,
     sellingPrice,
     marginPct,
+    ...wholeRoundMargin(basis, sellingPrice, glazePct),
     contributionPerKg: contribution(sku.marketPrice, finalCost),
   };
 }
@@ -188,7 +241,9 @@ function domesticState(
 function exportState(
   finalCost: number,
   freightPerKg: number,
-  input: CostInput
+  input: CostInput,
+  basis: WholeRoundBasis,
+  glazePct: number
 ): ExportState {
   const { assumptions: a, sku } = input;
   const m = a.margins;
@@ -212,6 +267,7 @@ function exportState(
     fob,
     sellingPrice,
     marginPct,
+    ...wholeRoundMargin(basis, sellingPrice, glazePct),
     cif,
     importerPrice,
     distributorT3,
@@ -241,14 +297,23 @@ export function computeCost(input: CostInput): CostResult {
 
   const common = { skuId: sku.id, bucketId: input.bucket?.id ?? null, pricingBasis, wholeFish } as const;
 
+  // Everything after the farm gate, per kg of product. Shared by every state,
+  // because glaze moves FINAL and the fish component by the same amount.
+  const wholeRoundBasis: WholeRoundBasis = {
+    conversionCost: chain.finalCost - chain.fishComponent,
+    yieldUsed: chain.yieldUsed,
+    wholeFish: chain.wholeFish,
+    absorbed: sku.rawMaterialBasis === 'absorbed',
+  };
+
   if (market === 'domestic') {
     const rackMargin = sku.overrides?.rackMarginPct ?? a.margins.rackPct;
     const result: DomesticOutput = {
       market: 'domestic',
       currency: 'LKR',
       chain,
-      unglazed: domesticState(chain.finalCost, rackMargin, sku),
-      glazed: domesticState(glazed, rackMargin, sku),
+      unglazed: domesticState(chain.finalCost, rackMargin, sku, wholeRoundBasis, 0),
+      glazed: domesticState(glazed, rackMargin, sku, wholeRoundBasis, sku.glazePct),
     };
     return { ok: true, value: { ...common, result } };
   }
@@ -261,11 +326,11 @@ export function computeCost(input: CostInput): CostResult {
     currency: 'USD',
     chain,
     destination: { id: d.id, name: d.name, seaPerKg, airPerKg },
-    frozenPlain: exportState(chain.finalCost, seaPerKg, input),
-    frozenGlazed: exportState(glazed, seaPerKg, input),
+    frozenPlain: exportState(chain.finalCost, seaPerKg, input, wholeRoundBasis, 0),
+    frozenGlazed: exportState(glazed, seaPerKg, input, wholeRoundBasis, sku.glazePct),
     // Fresh is identical to frozen-no-glaze all the way to FOB; it diverges
     // only by leaving on a plane instead of in a container.
-    fresh: exportState(chain.finalCost, airPerKg, input),
+    fresh: exportState(chain.finalCost, airPerKg, input, wholeRoundBasis, 0),
   };
   return { ok: true, value: { ...common, result } };
 }

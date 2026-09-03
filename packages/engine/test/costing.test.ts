@@ -370,3 +370,107 @@ describe('target pricing', () => {
     expect(out.glazed.marginPct!).toBeGreaterThan(out.unglazed.marginPct!);
   });
 });
+
+describe('margin at whole round', () => {
+  const fillet = skuNamed('Skin-on fillet');
+  const marinated = skuNamed('Marinated fillet — lemon herb');
+
+  /** The formula, spelled out, so the engine is checked against the definition. */
+  const byHand = (
+    price: number,
+    conversion: number,
+    yieldUsed: number,
+    wholeFish: number,
+    glazePct = 0
+  ) => {
+    const pack = yieldUsed * (1 + glazePct);
+    return ((price - conversion) * pack - wholeFish) / wholeFish;
+  };
+
+  it('deducts every conversion input, then charges the whole fish once', () => {
+    const out = ok(exported(fillet)).value.result as ExportOutput;
+    const c = out.chain;
+    // FOB less freight-to-port, cold-hold, packing, processing and marinade.
+    const conversion = c.marinadeComponent + c.process + c.packing + c.coldHold + c.freight;
+    expect(out.frozenPlain.wholeRoundMarginPct!).toBeCloseTo(
+      byHand(out.frozenPlain.sellingPrice, conversion, c.yieldUsed, c.wholeFish),
+      9
+    );
+  });
+
+  it('measures against the fish cost, not against revenue', () => {
+    // The distinction the whole figure exists for: over revenue it would be the
+    // per-kg gross margin again on any 100% fish SKU. Over feed x FCR + ODC it
+    // says what the farm cost earned.
+    const out = ok(exported(fillet)).value.result as ExportOutput;
+    const s = out.frozenPlain;
+    expect(s.wholeRoundMarginPct!).toBeCloseTo(s.wholeRoundMarginPerKg! / out.chain.wholeFish, 9);
+    expect(s.wholeRoundMarginPct!).not.toBeCloseTo(s.marginPct!, 3);
+  });
+
+  it('is the whole fish build-up itself: feed x FCR + ODC', () => {
+    const res = ok(exported(fillet)).value;
+    const wf = res.wholeFish;
+    expect(wf.feedCostPerKgFishUsd + wf.odcUsd).toBeCloseTo(wf.wholeFishUsd, 9);
+    expect((res.result as ExportOutput).chain.wholeFish).toBeCloseTo(wf.wholeFishUsd, 9);
+  });
+
+  it('reads above 100% when a fish earns back more than it cost to grow', () => {
+    // A return on cost, not a share of revenue, so it is not capped at 1.
+    const out = ok(exported(fillet)).value.result as ExportOutput;
+    expect(out.frozenPlain.wholeRoundMarginPct!).toBeGreaterThan(0);
+  });
+
+  it('falls on a marinated SKU, whose pack is part marinade', () => {
+    // Both SKUs price at the same 40% per-kg margin, so any gap here is the
+    // fish being bought whole while only part of the pack is flesh.
+    const plain = ok(exported(fillet)).value.result as ExportOutput;
+    const mar = ok(exported(marinated)).value.result as ExportOutput;
+    expect(mar.frozenPlain.marginPct!).toBeCloseTo(plain.frozenPlain.marginPct!, 9);
+    expect(mar.frozenPlain.wholeRoundMarginPct!).toBeLessThan(plain.frozenPlain.wholeRoundMarginPct!);
+  });
+
+  it('stays consistent under glaze, which sells more pack per fish', () => {
+    const out = ok(exported({ ...fillet, glazePct: 0.2 })).value.result as ExportOutput;
+    const c = out.chain;
+    const conversion = c.marinadeComponent + c.process + c.packing + c.coldHold + c.freight;
+    expect(out.frozenGlazed.wholeRoundMarginPct!).toBeCloseTo(
+      byHand(out.frozenGlazed.sellingPrice, conversion, c.yieldUsed, c.wholeFish, 0.2),
+      9
+    );
+  });
+
+  it('answers a target FOB rather than the cost-plus one', () => {
+    const plus = ok(exported(marinated)).value.result as ExportOutput;
+    const out = ok(exported({ ...marinated, pricingMode: 'target', targetPrice: 20 })).value
+      .result as ExportOutput;
+    expect(out.frozenPlain.wholeRoundMarginPct!).toBeGreaterThan(
+      plus.frozenPlain.wholeRoundMarginPct!
+    );
+  });
+
+  it('goes negative when the price does not cover the fish', () => {
+    const out = ok(exported({ ...fillet, pricingMode: 'target', targetPrice: 5 })).value
+      .result as ExportOutput;
+    expect(out.frozenPlain.wholeRoundMarginPct!).toBeLessThan(0);
+  });
+
+  it('is reported for domestic too, in LKR', () => {
+    const out = ok(domestic(fillet)).value.result as DomesticOutput;
+    const c = out.chain;
+    const conversion = c.marinadeComponent + c.process + c.packing + c.coldHold + c.freight;
+    expect(out.unglazed.wholeRoundMarginPct!).toBeCloseTo(
+      byHand(out.unglazed.sellingPrice, conversion, c.yieldUsed, c.wholeFish),
+      9
+    );
+  });
+
+  it('is null for an absorbed by-product, which never bought the fish', () => {
+    // Decisions §7: charging a by-product a whole fish would report a loss for a
+    // fish the fillet run has already paid for.
+    const out = ok(domestic({ ...skuNamed('Belly flaps'), rawMaterialBasis: 'absorbed' })).value
+      .result as DomesticOutput;
+    expect(out.unglazed.wholeRoundMarginPct).toBeNull();
+    expect(out.unglazed.wholeRoundMarginPerKg).toBeNull();
+  });
+});

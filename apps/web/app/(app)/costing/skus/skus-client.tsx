@@ -756,9 +756,9 @@ function PreviewPanel({
           note={target && !preview.hasTargetDomestic ? 'no domestic target set — showing the standard price' : undefined}
           fmt={(n) => Math.round(n).toLocaleString()}
           rows={[
-            [glazed ? 'No glaze' : 'Per kg', preview.domestic.unglazed.finalCost, preview.domestic.unglazed.rackRate, preview.domestic.unglazed.sellingPrice, preview.domestic.unglazed.marginPct],
+            [glazed ? 'No glaze' : 'Per kg', preview.domestic.unglazed.finalCost, preview.domestic.unglazed.rackRate, preview.domestic.unglazed.sellingPrice, preview.domestic.unglazed.marginPct, preview.domestic.unglazed.wholeRoundMarginPct],
             ...(glazed
-              ? ([[`With ${(preview.glazePct * 100).toFixed(0)}% glaze`, preview.domestic.glazed.finalCost, preview.domestic.glazed.rackRate, preview.domestic.glazed.sellingPrice, preview.domestic.glazed.marginPct]] as PreviewRow[])
+              ? ([[`With ${(preview.glazePct * 100).toFixed(0)}% glaze`, preview.domestic.glazed.finalCost, preview.domestic.glazed.rackRate, preview.domestic.glazed.sellingPrice, preview.domestic.glazed.marginPct, preview.domestic.glazed.wholeRoundMarginPct]] as PreviewRow[])
               : []),
           ]}
           target={target}
@@ -781,14 +781,14 @@ function PreviewPanel({
             ...(form === 'fresh'
               ? []
               : ([
-                  [glazed ? 'Frozen, no glaze' : 'Frozen', preview.export.frozenPlain.finalCost, preview.export.frozenPlain.fob, preview.export.frozenPlain.sellingPrice, preview.export.frozenPlain.marginPct],
+                  [glazed ? 'Frozen, no glaze' : 'Frozen', preview.export.frozenPlain.finalCost, preview.export.frozenPlain.fob, preview.export.frozenPlain.sellingPrice, preview.export.frozenPlain.marginPct, preview.export.frozenPlain.wholeRoundMarginPct],
                   ...(glazed
-                    ? ([[`Frozen, ${(preview.glazePct * 100).toFixed(0)}% glaze`, preview.export.frozenGlazed.finalCost, preview.export.frozenGlazed.fob, preview.export.frozenGlazed.sellingPrice, preview.export.frozenGlazed.marginPct]] as PreviewRow[])
+                    ? ([[`Frozen, ${(preview.glazePct * 100).toFixed(0)}% glaze`, preview.export.frozenGlazed.finalCost, preview.export.frozenGlazed.fob, preview.export.frozenGlazed.sellingPrice, preview.export.frozenGlazed.marginPct, preview.export.frozenGlazed.wholeRoundMarginPct]] as PreviewRow[])
                     : []),
                 ] as PreviewRow[])),
             ...(form === 'frozen'
               ? []
-              : ([['Fresh (air)', preview.export.fresh.finalCost, preview.export.fresh.fob, preview.export.fresh.sellingPrice, preview.export.fresh.marginPct]] as PreviewRow[])),
+              : ([['Fresh (air)', preview.export.fresh.finalCost, preview.export.fresh.fob, preview.export.fresh.sellingPrice, preview.export.fresh.marginPct, preview.export.fresh.wholeRoundMarginPct]] as PreviewRow[])),
           ]}
           target={target}
           onPriceChange={(v) => onPriceChange('export', v)}
@@ -828,7 +828,8 @@ function PreviewPanel({
   );
 }
 
-type PreviewRow = [string, number, number, number, number | null];
+/** label, cost, standard price, your price, margin, margin at whole round */
+type PreviewRow = [string, number, number, number, number | null, number | null];
 
 function PreviewBlock({
   title,
@@ -884,10 +885,23 @@ function PreviewBlock({
             <th className="py-0.5 font-medium">Standard price</th>
             <th className="py-0.5 font-medium">Your price</th>
             <th className="py-0.5 font-medium">Margin</th>
+            {/*
+              The same price read against the FISH COST rather than against
+              revenue: what a kilo of round fish earned, over what the farm spent
+              growing it. Deliberately not a share of revenue — measured that way
+              it collapses onto the Margin column for any 100% fish SKU, because
+              fish cost / yield x yield is the fish cost again.
+            */}
+            <th
+              className="py-0.5 font-medium"
+              title="What a kg of round fish earns, over what it cost to grow (feed x FCR + ODC)"
+            >
+              Whole round
+            </th>
           </tr>
         </thead>
         <tbody>
-          {rows.map(([label, cost, standard, , margin]) => (
+          {rows.map(([label, cost, standard, , margin, wholeRound]) => (
             <tr key={label} className="border-t border-primary/10">
               <td className="py-0.5 text-left">{label}</td>
               <td className="py-0.5">{fmt(cost)}</td>
@@ -913,6 +927,9 @@ function PreviewBlock({
               </td>
               <td className="py-0.5">
                 <MarginBadge pct={margin} />
+              </td>
+              <td className="py-0.5">
+                <MarginBadge pct={wholeRound} />
               </td>
             </tr>
           ))}
