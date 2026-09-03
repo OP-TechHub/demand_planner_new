@@ -122,6 +122,16 @@ export interface SkuPriceRow {
   cost: number;
   /** Gross margin realised at `selling_price`. Negative means below cost. */
   margin_pct: number | null;
+  /**
+   * What a kg of WHOLE ROUND fish earns, over what the farm spent growing it.
+   *
+   * Every conversion input is deducted, the result is scaled to round weight by
+   * yield, the whole fish is charged once, and the remainder is taken over the
+   * whole round cost — feed x FCR plus ODC. A return on the farm cost rather
+   * than a share of revenue, so it is not capped at 1 and is NOT comparable to
+   * `margin_pct`. Null for an absorbed by-product, which never paid for a fish.
+   */
+  whole_round_margin_pct: number | null;
   /** Rack rate (domestic) or FOB (export) — the target price when one is set. */
   selling_price: number;
   /**
@@ -187,7 +197,13 @@ export function toPriceRows(
     state: SkuPriceRow['state'],
     market: CostMarket,
     currency: 'LKR' | 'USD',
-    s: { finalCost: number; sellingPrice: number; marginPct: number | null; contributionPerKg: number | null },
+    s: {
+      finalCost: number;
+      sellingPrice: number;
+      marginPct: number | null;
+      wholeRoundMarginPct: number | null;
+      contributionPerKg: number | null;
+    },
     freightPerKg: number | null
   ) => {
     rows.push({
@@ -197,6 +213,7 @@ export function toPriceRows(
       state,
       cost: money(s.finalCost),
       margin_pct: ratio(s.marginPct),
+      whole_round_margin_pct: ratio(s.wholeRoundMarginPct),
       selling_price: money(s.sellingPrice),
       contribution_per_kg:
         out.pricingBasis === 'contribution'

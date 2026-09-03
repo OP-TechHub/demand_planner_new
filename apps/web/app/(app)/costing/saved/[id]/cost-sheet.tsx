@@ -171,6 +171,16 @@ export function CostSheet({
                 </>
               )}
               <Row label="Gross margin" value={num(out.marginPct)} fmt={(n) => `${(n * 100).toFixed(1)}%`} />
+              {/*
+                The same margin read against the fish rather than the pack.
+                Dashes on a line saved before this figure existed, rather than
+                being recomputed — the sheet reports what was quoted.
+              */}
+              <Row
+                label="Margin on whole round cost"
+                value={num(out.wholeRoundMarginPct)}
+                fmt={(n) => `${(n * 100).toFixed(1)}%`}
+              />
               <Row label="Contribution per kg" value={line.contribution_per_kg} fmt={money} emphasis />
             </>
           )}

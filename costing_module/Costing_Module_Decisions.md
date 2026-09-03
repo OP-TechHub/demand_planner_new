@@ -228,6 +228,22 @@ Rationale: a 40% margin on belly flaps and on skin-on fillet are different comme
 
 **Customer quote** — stops at **your selling price**, FOB or CIF selectable. SKU, pack size, size grade, state, destination, incoterm, price per kg, terms. **The importer clearing, importer markup and distributor markup stay internal** — they model the buyer's economics to check your price leaves them room, and must never appear on a customer-facing document.
 
+### Margin at whole round
+
+Alongside the per-kg gross margin, every priced state also reports **margin at whole round** — what a kilogram of round fish earned, measured against **what the farm spent growing it**:
+
+    ((selling price − conversion inputs) × yield − whole fish cost) ÷ whole fish cost
+
+The whole round cost is the §3 build-up: **feed × FCR + ODC**. Conversion inputs are everything the fish meets after the farm gate — marinade, processing, packing, cold-hold and freight to port. The fish itself is **not** deducted per kg; it is charged **once, in full**, after yield has scaled the result back to the round weight it came from. Glaze raises the pack per kilo of fish, so the effective multiplier is `yield × (1 + glaze)`.
+
+**The denominator is the fish cost, deliberately.** Taken over revenue instead, this figure would be arithmetically identical to the per-kg gross margin for any `full_fish` SKU that is 100% fish, because `fish component × yield` **is** the whole fish cost and it cancels:
+
+    (price − FINAL + fish comp) × yield − whole fish   =   (price − FINAL) × yield
+
+Read as a **return on the farm cost** it stays a distinct number for every SKU, and it routinely **exceeds 100%** — earning several times the cost of the fish is the normal case, not an error. It goes negative when the price does not cover the fish.
+
+**Absorbed by-products report nothing here.** Charging a by-product a whole fish would contradict §7 — the fillet run already paid for it — so the figure is null rather than a fabricated loss.
+
 **Price tiers** (retail / member / wholesale) are **not built**. Price output is shaped internally so a second tier is data entry rather than an engine change, but nothing tier-related appears in the UI.
 
 ---

@@ -611,21 +611,26 @@ function Grid({
               <>
                 <th className={thBase}>Rack rate</th>
                 <th className={thBase}>Margin</th>
+                <th className={thBase} title="What a kg of round fish earns, over what it cost to grow (feed x FCR + ODC)">WR margin</th>
                 <th className={cn(thBase, 'border-l')}>FINAL glazed</th>
                 <th className={thBase}>Rack glazed</th>
                 <th className={thBase}>Margin glazed</th>
+                <th className={thBase} title="What a kg of round fish earns, over what it cost to grow (feed x FCR + ODC)">WR glazed</th>
               </>
             ) : (
               <>
                 <th className={thBase}>FOB</th>
                 <th className={thBase}>Margin</th>
+                <th className={thBase} title="What a kg of round fish earns, over what it cost to grow (feed x FCR + ODC)">WR margin</th>
                 <th className={thBase}>CIF</th>
                 <th className={thBase}>Dist→T3</th>
                 <th className={cn(thBase, 'border-l')}>Glazed FOB</th>
                 <th className={thBase}>Glazed margin</th>
+                <th className={thBase} title="What a kg of round fish earns, over what it cost to grow (feed x FCR + ODC)">Glazed WR</th>
                 <th className={thBase}>Glazed CIF</th>
                 <th className={cn(thBase, 'border-l')}>Fresh FOB</th>
                 <th className={thBase}>Fresh margin</th>
+                <th className={thBase} title="What a kg of round fish earns, over what it cost to grow (feed x FCR + ODC)">Fresh WR</th>
                 <th className={thBase}>Fresh CIF</th>
                 <th className={thBase}>Fresh T3</th>
               </>
@@ -665,7 +670,7 @@ function GridRow({
   const { sku, destination, result } = row;
   const absorbed = sku.raw_material_basis === 'absorbed';
   const inactive = sku.status === 'inactive';
-  const span = domestic ? 17 : 23;
+  const span = domestic ? 19 : 26;
   const author = authorOf(sku, authors);
 
   const nameCell = (
@@ -792,6 +797,9 @@ function DomesticCells({ out, absorbed, form }: { out: DomesticOutput; absorbed:
       <td className={tdBase}>
         <Margin value={out.unglazed.marginPct} absorbed={absorbed} />
       </td>
+      <td className={tdBase}>
+        <Margin value={out.unglazed.wholeRoundMarginPct} absorbed={absorbed} />
+      </td>
       <td className={cn(tdBase, 'border-l')}>
         {noGlaze ? <NotSold why="Fresh product carries no glaze" /> : lkr(out.glazed.finalCost)}
       </td>
@@ -809,6 +817,13 @@ function DomesticCells({ out, absorbed, form }: { out: DomesticOutput; absorbed:
           <NotSold why="Fresh product carries no glaze" />
         ) : (
           <Margin value={out.glazed.marginPct} absorbed={absorbed} />
+        )}
+      </td>
+      <td className={tdBase}>
+        {noGlaze ? (
+          <NotSold why="Fresh product carries no glaze" />
+        ) : (
+          <Margin value={out.glazed.wholeRoundMarginPct} absorbed={absorbed} />
         )}
       </td>
     </>
@@ -838,6 +853,13 @@ function ExportCells({ out, absorbed, form }: { out: ExportOutput; absorbed: boo
       <td className={tdBase}>
         {freshOnly ? <NotSold why={FROZEN} /> : <Margin value={out.frozenPlain.marginPct} absorbed={absorbed} />}
       </td>
+      <td className={tdBase}>
+        {freshOnly ? (
+          <NotSold why={FROZEN} />
+        ) : (
+          <Margin value={out.frozenPlain.wholeRoundMarginPct} absorbed={absorbed} />
+        )}
+      </td>
       <td className={tdBase}>{freshOnly ? <NotSold why={FROZEN} /> : usd(out.frozenPlain.cif)}</td>
       <td className={tdBase}>{freshOnly ? <NotSold why={FROZEN} /> : usd(out.frozenPlain.distributorT3)}</td>
 
@@ -852,12 +874,26 @@ function ExportCells({ out, absorbed, form }: { out: ExportOutput; absorbed: boo
         )}
       </td>
       <td className={tdBase}>
+        {freshOnly ? (
+          <NotSold why="Fresh product carries no glaze" />
+        ) : (
+          <Margin value={out.frozenGlazed.wholeRoundMarginPct} absorbed={absorbed} />
+        )}
+      </td>
+      <td className={tdBase}>
         {freshOnly ? <NotSold why="Fresh product carries no glaze" /> : usd(out.frozenGlazed.cif)}
       </td>
 
       <td className={cn(tdBase, 'border-l')}>{frozenOnly ? <NotSold why={FRESH} /> : usd(out.fresh.sellingPrice)}</td>
       <td className={tdBase}>
         {frozenOnly ? <NotSold why={FRESH} /> : <Margin value={out.fresh.marginPct} absorbed={absorbed} />}
+      </td>
+      <td className={tdBase}>
+        {frozenOnly ? (
+          <NotSold why={FRESH} />
+        ) : (
+          <Margin value={out.fresh.wholeRoundMarginPct} absorbed={absorbed} />
+        )}
       </td>
       <td className={tdBase}>{frozenOnly ? <NotSold why={FRESH} /> : usd(out.fresh.cif)}</td>
       <td className={tdBase}>{frozenOnly ? <NotSold why={FRESH} /> : usd(out.fresh.distributorT3)}</td>
@@ -1280,20 +1316,32 @@ function csvMatrix(
     'Freight',
     'FINAL',
     ...(domestic
-      ? ['Rack rate', 'Margin %', 'FINAL glazed', 'Rack glazed', 'Glazed margin %', 'Contribution']
+      ? [
+          'Rack rate',
+          'Margin %',
+          'Whole-round margin %',
+          'FINAL glazed',
+          'Rack glazed',
+          'Glazed margin %',
+          'Glazed whole-round margin %',
+          'Contribution',
+        ]
       : [
           'FOB',
           'Margin %',
+          'Whole-round margin %',
           'CIF',
           'Importer',
           'Dist->T3',
           'Glazed FINAL',
           'Glazed FOB',
           'Glazed margin %',
+          'Glazed whole-round margin %',
           'Glazed CIF',
           'Glazed Dist->T3',
           'Fresh FOB',
           'Fresh margin %',
+          'Fresh whole-round margin %',
           'Fresh CIF',
           'Fresh Dist->T3',
           'Contribution',
@@ -1333,9 +1381,11 @@ function csvMatrix(
         round(o.unglazed.finalCost),
         round(o.unglazed.sellingPrice),
         pct(o.unglazed.marginPct),
+        pct(o.unglazed.wholeRoundMarginPct),
         round(o.glazed.finalCost),
         round(o.glazed.sellingPrice),
         pct(o.glazed.marginPct),
+        pct(o.glazed.wholeRoundMarginPct),
         round(o.unglazed.contributionPerKg),
       ];
     }
@@ -1346,16 +1396,19 @@ function csvMatrix(
       round(o.frozenPlain.finalCost),
       round(o.frozenPlain.sellingPrice),
       pct(o.frozenPlain.marginPct),
+      pct(o.frozenPlain.wholeRoundMarginPct),
       round(o.frozenPlain.cif),
       round(o.frozenPlain.importerPrice),
       round(o.frozenPlain.distributorT3),
       round(o.frozenGlazed.finalCost),
       round(o.frozenGlazed.sellingPrice),
       pct(o.frozenGlazed.marginPct),
+      pct(o.frozenGlazed.wholeRoundMarginPct),
       round(o.frozenGlazed.cif),
       round(o.frozenGlazed.distributorT3),
       round(o.fresh.sellingPrice),
       pct(o.fresh.marginPct),
+      pct(o.fresh.wholeRoundMarginPct),
       round(o.fresh.cif),
       round(o.fresh.distributorT3),
       round(o.frozenPlain.contributionPerKg),

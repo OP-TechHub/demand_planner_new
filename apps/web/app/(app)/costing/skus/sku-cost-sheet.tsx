@@ -141,6 +141,9 @@ export function SkuCostSheet({
                 ? [{ label: 'Selling price (target)', value: s.sellingPrice, emphasis: true }]
                 : []),
               { label: 'Gross margin', value: s.marginPct, pct: true },
+              // What a kg of round fish earned, over what it cost to grow. Blank
+              // for a by-product, which never paid for a fish of its own.
+              { label: 'Margin on whole round cost', value: s.wholeRoundMarginPct, pct: true },
               { label: 'Contribution per kg', value: s.contributionPerKg },
             ],
           }))}
@@ -181,6 +184,9 @@ export function SkuCostSheet({
                 ? [{ label: 'Selling price (target)', value: s.sellingPrice, emphasis: true }]
                 : []),
               { label: 'Gross margin', value: s.marginPct, pct: true },
+              // What a kg of round fish earned, over what it cost to grow. Blank
+              // for a by-product, which never paid for a fish of its own.
+              { label: 'Margin on whole round cost', value: s.wholeRoundMarginPct, pct: true },
               { label: 'Contribution per kg', value: s.contributionPerKg },
               ...(destinationName
                 ? [

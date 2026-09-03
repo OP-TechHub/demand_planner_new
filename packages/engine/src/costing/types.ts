@@ -183,6 +183,24 @@ export interface DomesticState {
   sellingPrice: number;
   /** Gross margin realised at sellingPrice. Negative when it sells below cost. */
   marginPct: number | null;
+  /**
+   * What a kg of WHOLE ROUND fish earns, rather than what a kg of pack earns.
+   *
+   * Deducts every conversion input including marinade but not the fish, scales
+   * to the round weight by yield, then charges the whole fish once:
+   *
+   *   (sellingPrice - conversion inputs) x yield - whole fish cost
+   *
+   * Null for an absorbed by-product, which never paid for the fish (Decisions
+   * §7) and so has no whole-round figure to report.
+   */
+  wholeRoundMarginPerKg: number | null;
+  /**
+   * That figure over the WHOLE ROUND COST it was earned on — feed x FCR plus
+   * ODC. A return on the farm cost, not a margin on revenue, so it routinely
+   * exceeds 100%.
+   */
+  wholeRoundMarginPct: number | null;
   /** marketPrice - finalCost. Null when no market price is set. */
   contributionPerKg: number | null;
 }
@@ -195,6 +213,24 @@ export interface ExportState {
   sellingPrice: number;
   /** Gross margin realised at sellingPrice. */
   marginPct: number | null;
+  /**
+   * What a kg of WHOLE ROUND fish earns, rather than what a kg of pack earns.
+   *
+   * Deducts every conversion input including marinade but not the fish, scales
+   * to the round weight by yield, then charges the whole fish once:
+   *
+   *   (sellingPrice - conversion inputs) x yield - whole fish cost
+   *
+   * Null for an absorbed by-product, which never paid for the fish (Decisions
+   * §7) and so has no whole-round figure to report.
+   */
+  wholeRoundMarginPerKg: number | null;
+  /**
+   * That figure over the WHOLE ROUND COST it was earned on — feed x FCR plus
+   * ODC. A return on the farm cost, not a margin on revenue, so it routinely
+   * exceeds 100%.
+   */
+  wholeRoundMarginPct: number | null;
   /** Built on sellingPrice, so a target FOB carries through the whole chain. */
   cif: number;
   importerPrice: number;
