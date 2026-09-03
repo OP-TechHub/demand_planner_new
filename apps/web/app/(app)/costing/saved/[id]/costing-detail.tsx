@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
-import { ArrowLeft, Download, FileText, Printer, TrendingDown, TrendingUp } from 'lucide-react';
+import { ArrowLeft, Download, FileSignature, FileText, Printer, TrendingDown, TrendingUp } from 'lucide-react';
 import {
   COST_STATE_LABEL,
   type CostCosting,
@@ -16,7 +16,9 @@ import { Dialog } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { ScrollX } from '@/components/ui/scroll-x';
 import { cn } from '@/lib/utils';
-import { BaseCostToggle } from '@/components/cost-sheet-parts';
+import { BaseCostToggle, num, rec } from '@/components/cost-sheet-parts';
+import { QuoteBuilder } from '@/components/quote-builder';
+import type { QuoteItem } from '@/components/quote-sheet';
 import { CostSheet, COST_SHEET_ID } from './cost-sheet';
 
 export interface RepricedLine {
@@ -54,6 +56,9 @@ export function CostingDetail({
   const [state, setState] = useState<CostProductState | 'all'>('all');
   // The line whose breakdown sheet is open, for print / Word / preview.
   const [sheetLine, setSheetLine] = useState<CostCostingLine | null>(null);
+  // The customer-facing quotation built off these lines. Never open at the same
+  // time as a breakdown: both mount a print copy, and print reveals every one.
+  const [quoteOpen, setQuoteOpen] = useState(false);
   // Whether this sheet carries the base cost build-up. Starts on, so a reader
   // who is allowed the detail keeps getting it, and comes off in one click for
   // a copy that is going outside. Only reachable when showBaseCost is true.
@@ -116,9 +121,20 @@ export function CostingDetail({
             {destinations.length > 0 && ` · ${destinations.map((d) => d.destination_name).join(', ')}`}
           </p>
         </div>
-        <button onClick={onExport} className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium hover:bg-muted">
-          <Download className="h-3.5 w-3.5" /> Export
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => {
+              setSheetLine(null);
+              setQuoteOpen(true);
+            }}
+            className="inline-flex items-center gap-1.5 rounded-md border border-primary bg-primary/10 px-2.5 py-1.5 text-xs font-medium text-primary hover:bg-primary/15"
+          >
+            <FileSignature className="h-3.5 w-3.5" /> Quotation
+          </button>
+          <button onClick={onExport} className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium hover:bg-muted">
+            <Download className="h-3.5 w-3.5" /> Export
+          </button>
+        </div>
       </header>
 
       {costing.notes && <p className="rounded-md bg-muted/50 px-3 py-2 text-sm">{costing.notes}</p>}
@@ -233,7 +249,10 @@ export function CostingDetail({
                   )}
                   <td className={cn(td, 'text-right')}>
                     <button
-                      onClick={() => setSheetLine(l)}
+                      onClick={() => {
+                        setQuoteOpen(false);
+                        setSheetLine(l);
+                      }}
                       className="whitespace-nowrap font-medium text-primary hover:underline"
                     >
                       Breakdown
@@ -245,6 +264,14 @@ export function CostingDetail({
           </tbody>
         </table>
       </ScrollX>
+
+      {quoteOpen && (
+        <QuoteBuilder
+          sources={[{ market: costing.market, items: visible.map(toQuoteItem) }]}
+          authorName={authorName}
+          onClose={() => setQuoteOpen(false)}
+        />
+      )}
 
       {/*
         Two copies of the same sheet, deliberately. The one in the dialog is the
@@ -302,6 +329,22 @@ export function CostingDetail({
     </div>
   );
 }
+
+/**
+ * One saved line, reduced to what a customer may see.
+ *
+ * Only the four customer-facing fields cross over — the freight is carried so
+ * the quotation can build CIF off the same selling price it quotes as FOB.
+ * Everything else on the line stays on this page.
+ */
+const toQuoteItem = (l: CostCostingLine): QuoteItem => ({
+  id: l.id,
+  product: l.sku_name,
+  presentation: COST_STATE_LABEL[l.state],
+  destination: l.destination_name,
+  price: l.selling_price,
+  freightPerKg: num(rec(l.outputs).freightPerKg),
+});
 
 const round = (n: number | null): number | null => (n == null ? null : Math.round(n * 10000) / 10000);
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'costing';

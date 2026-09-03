@@ -2,7 +2,7 @@
 
 import { useActionState, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Download, FileText, Lock, Pencil, Plus, Printer, X } from 'lucide-react';
+import { Download, FileSignature, FileText, Lock, Pencil, Plus, Printer, X } from 'lucide-react';
 import {
   computeCost,
   type DomesticOutput,
@@ -27,6 +27,8 @@ import { toAssumptions, toBucket } from '@/lib/costing-adapt';
 import { cn } from '@/lib/utils';
 import { downloadDoc, slugify } from '@/lib/doc-export';
 import { BaseCostToggle, COST_SHEET_ID } from '@/components/cost-sheet-parts';
+import { QuoteBuilder } from '@/components/quote-builder';
+import type { QuoteItem, QuoteSource } from '@/components/quote-sheet';
 import { ScrollX } from '@/components/ui/scroll-x';
 import { SkuCostSheet } from './sku-cost-sheet';
 import { MarinadeBuilder } from './marinade-builder';
@@ -570,6 +572,72 @@ function previewFromForm(
   };
 }
 
+/**
+ * The preview, reduced to what a customer may be quoted.
+ *
+ * Mirrors the pack states the printed cost sheet shows, and for the same
+ * reason: a glazed SKU ships as the glazed pack, so its unglazed twin is the
+ * same pack read net of its ice rather than a second product at a higher
+ * price — and a Fresh line for a frozen-only SKU is a price for something
+ * nobody can order. `sellingPrice` is what the on-screen preview shows, target
+ * price and cost-plus already resolved by the engine, so the quotation cannot
+ * disagree with the panel it was raised from.
+ *
+ * A SKU scoped to both markets yields two sources; the builder makes the sender
+ * pick one, because a quotation is in one currency.
+ */
+function quoteSources(p: PreviewResult): QuoteSource[] {
+  const product = p.skuName || 'This SKU';
+  const glazed = p.glazePct > 0;
+  const glazeLabel = `${(p.glazePct * 100).toFixed(p.glazePct * 100 < 10 ? 1 : 0)}% glaze`;
+  const sources: QuoteSource[] = [];
+
+  if (p.domestic) {
+    const s = glazed ? p.domestic.glazed : p.domestic.unglazed;
+    sources.push({
+      market: 'domestic',
+      items: [
+        {
+          id: 'domestic',
+          product,
+          presentation: glazed ? `As packed — ${glazeLabel}` : 'Per kg',
+          destination: null,
+          price: s.sellingPrice,
+          freightPerKg: null,
+        },
+      ],
+    });
+  }
+
+  if (p.export) {
+    const items: QuoteItem[] = [];
+    if (p.productForm !== 'fresh') {
+      const s = glazed ? p.export.frozenGlazed : p.export.frozenPlain;
+      items.push({
+        id: 'frozen',
+        product,
+        presentation: glazed ? `Frozen — as packed, ${glazeLabel}` : 'Frozen',
+        destination: p.destinationName,
+        price: s.sellingPrice,
+        freightPerKg: s.freightPerKg,
+      });
+    }
+    if (p.productForm !== 'frozen') {
+      items.push({
+        id: 'fresh',
+        product,
+        presentation: 'Fresh (air)',
+        destination: p.destinationName,
+        price: p.export.fresh.sellingPrice,
+        freightPerKg: p.export.fresh.freightPerKg,
+      });
+    }
+    sources.push({ market: 'export', items });
+  }
+
+  return sources;
+}
+
 function MarginBadge({ pct }: { pct: number | null }) {
   if (pct == null) return <span className="text-muted-foreground">—</span>;
   // Below cost is the answer worth seeing, so it is coloured, not hidden.
@@ -902,6 +970,10 @@ function SkuDialog({
   const [state, action, pending] = useActionState<SkuFormState, FormData>(saveCostSku, { error: null, ok: false });
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [downloadOpen, setDownloadOpen] = useState(false);
+  // The customer-facing quotation, built off the same preview. While it is open
+  // the cost sheet is unmounted: print reveals every sheet on the page, and a
+  // breakdown riding along with a quotation is exactly what must not happen.
+  const [quoteOpen, setQuoteOpen] = useState(false);
   // Whether the printed / Word sheet carries the base cost build-up. On by
   // default, off in one click for a copy that is going to a customer. Only
   // reachable when this user may see the base cost at all.
@@ -1007,6 +1079,7 @@ function SkuDialog({
   const invalidatePreview = () => {
     setPreview(null);
     setDownloadOpen(false);
+    setQuoteOpen(false);
   };
 
   /**
@@ -1023,6 +1096,19 @@ function SkuDialog({
   function openDownload() {
     calculate();
     setDownloadOpen(true);
+  }
+
+  /**
+   * Quote this SKU to a customer, off the same freshly costed preview.
+   *
+   * Recosts first for the reason openDownload does: the quotation carries a
+   * price, and a price that disagrees with the recipe on screen is the one
+   * mistake here that reaches someone outside the company.
+   */
+  function openQuote() {
+    calculate();
+    setDownloadOpen(false);
+    setQuoteOpen(true);
   }
 
   function downloadWord() {
@@ -1607,6 +1693,15 @@ function SkuDialog({
               Calculate
             </button>
 
+            <button
+              type="button"
+              onClick={openQuote}
+              title="A customer-facing price list — prices only, no cost build-up"
+              className="inline-flex items-center gap-1.5 rounded-md border border-primary bg-primary/10 px-3 py-1.5 text-sm font-medium text-primary hover:bg-primary/15"
+            >
+              <FileSignature className="h-3.5 w-3.5" /> Quotation
+            </button>
+
             <div className="relative">
               <button
                 type="button"
@@ -1685,6 +1780,22 @@ function SkuDialog({
       )}
 
       {/*
+        A sibling of the form for the same reason the marinade builder is: a
+        dialog nested in a <form> puts its buttons in that form, and Enter in
+        the customer box would save the SKU from behind the layer on screen.
+        It carries its own print copy, out here in normal flow for the same
+        reason the cost sheet below is.
+      */}
+      {quoteOpen && preview && (
+        <QuoteBuilder
+          sources={quoteSources(preview)}
+          authorName={null}
+          defaultCustomer={preview.customer}
+          onClose={() => setQuoteOpen(false)}
+        />
+      )}
+
+      {/*
         The document itself, a SIBLING of the overlay above rather than a child.
         That is the whole point: the overlay is `fixed` and scrolls its own
         content, and an element printed from inside a fixed, overflowing
@@ -1695,9 +1806,11 @@ function SkuDialog({
         let it paginate.
 
         Hidden on screen, revealed by the #cost-sheet print rules, and read
-        as-is by the Word export.
+        as-is by the Word export. Unmounted while the quotation is open: print
+        reveals every sheet on the page, and the cost build-up must never ride
+        along with a price list going to a customer.
       */}
-      {preview && (
+      {preview && !quoteOpen && (
         <div className="hidden print:block">
           <SkuCostSheet
             elementId={COST_SHEET_ID}
