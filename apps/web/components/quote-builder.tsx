@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { FileText, Printer } from 'lucide-react';
+import { FileText, Printer, Search } from 'lucide-react';
 import { Dialog } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input, Textarea } from '@/components/ui/input';
@@ -75,6 +75,36 @@ export function QuoteBuilder({
       return next;
     });
 
+  // Narrows the list only. A product ticked before a search stays on the
+  // quotation while it is filtered out of view — searching is how you find
+  // things here, not how you choose them.
+  const [search, setSearch] = useState('');
+  const shown = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter(
+      (i) =>
+        i.product.toLowerCase().includes(q) ||
+        i.presentation.toLowerCase().includes(q) ||
+        (i.destination ?? '').toLowerCase().includes(q)
+    );
+  }, [items, search]);
+
+  // The bulk toggle acts on what is on screen: searching "fillet" and taking
+  // all of them in one click is the point of having a search box at all.
+  const allShownPicked = shown.length > 0 && shown.every((i) => !dropped.has(i.id));
+  /** Ticked products the search has scrolled out of sight — they still count. */
+  const hiddenChosen = chosen.length - shown.filter((i) => !dropped.has(i.id)).length;
+  const toggleShown = () =>
+    setDropped((s) => {
+      const next = new Set(s);
+      for (const i of shown) {
+        if (allShownPicked) next.add(i.id);
+        else next.delete(i.id);
+      }
+      return next;
+    });
+
   // A product with no price cannot be quoted on this basis — CIF needs the
   // freight it was costed with. Say so rather than dropping it silently.
   const unpriceable = chosen.filter((i) => quotePrice(i, terms, market) == null);
@@ -124,6 +154,7 @@ export function QuoteBuilder({
               onChange={(v) => {
                 setMarketIdx(Number(v));
                 setDropped(new Set());
+                setSearch('');
               }}
             />
           )}
@@ -210,14 +241,33 @@ export function QuoteBuilder({
                 </Label>
                 <button
                   type="button"
-                  onClick={() => setDropped(new Set(dropped.size === 0 ? items.map((i) => i.id) : []))}
-                  className="text-xs font-medium text-primary hover:underline"
+                  onClick={toggleShown}
+                  disabled={shown.length === 0}
+                  className="text-xs font-medium text-primary hover:underline disabled:opacity-40 disabled:hover:no-underline"
                 >
-                  {dropped.size === 0 ? 'Clear all' : 'Select all'}
+                  {allShownPicked ? 'Clear' : 'Select'} {search.trim() ? 'these' : 'all'}
                 </button>
               </div>
+
+              {items.length > 6 && (
+                <div className="relative mt-1.5">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Search products"
+                    className="h-8 pl-8 text-xs"
+                  />
+                </div>
+              )}
+
               <div className="mt-1.5 max-h-56 overflow-y-auto rounded-md border">
-                {items.map((i) => {
+                {shown.length === 0 && (
+                  <p className="px-2.5 py-3 text-center text-xs text-muted-foreground">
+                    No products match “{search.trim()}”.
+                  </p>
+                )}
+                {shown.map((i) => {
                   const price = quotePrice(i, terms, market);
                   return (
                     <label
@@ -247,6 +297,21 @@ export function QuoteBuilder({
                   {unpriceable.length} selected product(s) have no {terms.incoterm} price and will be left off the
                   document.
                 </p>
+              )}
+
+              {/* The search hides rows, not choices — say so, or a ticked
+                  product scrolled out of view reads as one that was dropped. */}
+              {chosen.length === 0 ? (
+                <p className="mt-1.5 text-xs text-muted-foreground">
+                  Tick at least one product — a quotation needs something to price.
+                </p>
+              ) : (
+                hiddenChosen > 0 && (
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    {hiddenChosen} more ticked {hiddenChosen === 1 ? 'product is' : 'products are'} hidden by the
+                    search and stay on the quotation.
+                  </p>
+                )
               )}
             </div>
           )}
