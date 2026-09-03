@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Download, FileDown, FileText, Printer, Save, AlertTriangle } from 'lucide-react';
+import { Download, FileDown, FileSignature, FileText, Printer, Save, AlertTriangle } from 'lucide-react';
 import { computeCost, type CostResult, type DomesticOutput, type ExportOutput } from '@oceanpick/engine';
 import type {
   CostAssumptionVersion,
@@ -21,6 +21,8 @@ import { OVERRIDABLE, OVERRIDE_LABEL, PERCENT_FIELDS, type OverridableField } fr
 import { isBaseCostField } from '@/lib/costing-base-cost';
 import { downloadDoc, slugify } from '@/lib/doc-export';
 import { BaseCostToggle, COST_SHEET_ID } from '@/components/cost-sheet-parts';
+import { QuoteBuilder } from '@/components/quote-builder';
+import type { QuoteItem } from '@/components/quote-sheet';
 import { SkuCostSheet } from './skus/sku-cost-sheet';
 import { saveCosting } from './actions';
 
@@ -86,6 +88,10 @@ export function CostGridClient({
   const [saving, setSaving] = useState(false);
   // The row whose breakdown document is open, for preview / print / Word.
   const [sheetRow, setSheetRow] = useState<Row | null>(null);
+  // The customer-facing quotation over the grid as filtered. Never open at the
+  // same time as a breakdown: both mount a print copy, and print reveals every
+  // one — a cost build-up must not ride along with a price list.
+  const [quoteOpen, setQuoteOpen] = useState(false);
   // Whether that document carries the base cost build-up — see BaseCostToggle.
   const [includeBaseCost, setIncludeBaseCost] = useState(true);
   const sheetBaseCost = canViewBaseCost && includeBaseCost;
@@ -169,6 +175,22 @@ export function CostGridClient({
     return new Set([...anyOk].filter(([, ok]) => !ok).map(([id]) => id));
   }, [rows]);
 
+  /**
+   * The grid as a customer would see it: one row per quotable pack state, with
+   * no cost, margin or contribution attached. Follows the filters, so searching
+   * for a customer and then quoting them is one move.
+   */
+  const quoteItems = useMemo(() => rows.flatMap((r) => quoteItemsFor(r, domestic)), [rows, domestic]);
+
+  // Prefilled only when the filtered grid is unanimous — searching a customer's
+  // name is how you get here, and guessing from a mixed list would put the
+  // wrong company on the document.
+  const quoteCustomer = useMemo(() => {
+    const names = visibleSkus.map((s) => (s.customer ?? '').trim());
+    const first = names[0] ?? '';
+    return first && names.every((n) => n === first) ? first : '';
+  }, [visibleSkus]);
+
   function onExport() {
     downloadCsv(
       `costing-${market}-${new Date().toISOString().slice(0, 10)}.csv`,
@@ -218,6 +240,17 @@ export function CostGridClient({
           <button onClick={onExport} className={btnGhost}>
             <Download className="h-3.5 w-3.5" /> Export sheet
           </button>
+          <button
+            onClick={() => {
+              setSheetRow(null);
+              setQuoteOpen(true);
+            }}
+            className={cn(btnGhost, 'border-primary bg-primary/10 text-primary hover:bg-primary/15')}
+            disabled={quoteItems.length === 0}
+            title="A customer-facing price list from the rows on screen — prices only"
+          >
+            <FileSignature className="h-3.5 w-3.5" /> Quotation
+          </button>
           <button onClick={() => setSaving(true)} className={btnPrimary} disabled={isPending}>
             <Save className="h-3.5 w-3.5" /> Save as costing
           </button>
@@ -253,10 +286,21 @@ export function CostGridClient({
         domestic={domestic}
         showDestination={!domestic && activeDests.length > 1}
         authors={authors}
-        onSheet={setSheetRow}
+        onSheet={(row) => {
+          setQuoteOpen(false);
+          setSheetRow(row);
+        }}
       />
 
       <Legend />
+
+      {quoteOpen && (
+        <QuoteBuilder
+          sources={[{ market, items: quoteItems }]}
+          defaultCustomer={quoteCustomer}
+          onClose={() => setQuoteOpen(false)}
+        />
+      )}
 
       {sheetRow && sheetRow.result.ok && (
         <>
@@ -556,20 +600,32 @@ function Grid({
             <th className={thBase}>Ex-factory</th>
             <th className={thBase}>Freight</th>
             <th className={cn(thBase, 'border-l')}>FINAL</th>
+            {/*
+              Each margin sits immediately after the price it is earned on. In
+              cost-plus mode they all read the same — the margin assumption — and
+              that sameness is itself the answer; they separate as soon as a
+              target price is set, because one named price meets a different
+              FINAL in every pack state.
+            */}
             {domestic ? (
               <>
                 <th className={thBase}>Rack rate</th>
+                <th className={thBase}>Margin</th>
                 <th className={cn(thBase, 'border-l')}>FINAL glazed</th>
                 <th className={thBase}>Rack glazed</th>
+                <th className={thBase}>Margin glazed</th>
               </>
             ) : (
               <>
                 <th className={thBase}>FOB</th>
+                <th className={thBase}>Margin</th>
                 <th className={thBase}>CIF</th>
                 <th className={thBase}>Dist→T3</th>
                 <th className={cn(thBase, 'border-l')}>Glazed FOB</th>
+                <th className={thBase}>Glazed margin</th>
                 <th className={thBase}>Glazed CIF</th>
                 <th className={cn(thBase, 'border-l')}>Fresh FOB</th>
+                <th className={thBase}>Fresh margin</th>
                 <th className={thBase}>Fresh CIF</th>
                 <th className={thBase}>Fresh T3</th>
               </>
@@ -609,7 +665,7 @@ function GridRow({
   const { sku, destination, result } = row;
   const absorbed = sku.raw_material_basis === 'absorbed';
   const inactive = sku.status === 'inactive';
-  const span = domestic ? 15 : 20;
+  const span = domestic ? 17 : 23;
   const author = authorOf(sku, authors);
 
   const nameCell = (
@@ -733,6 +789,9 @@ function DomesticCells({ out, absorbed, form }: { out: DomesticOutput; absorbed:
             rack rate on a LKR 270 floor would leave money on the table. */}
         {absorbed ? <Contribution value={out.unglazed.contributionPerKg} fmt={lkr} /> : lkr(out.unglazed.sellingPrice)}
       </td>
+      <td className={tdBase}>
+        <Margin value={out.unglazed.marginPct} absorbed={absorbed} />
+      </td>
       <td className={cn(tdBase, 'border-l')}>
         {noGlaze ? <NotSold why="Fresh product carries no glaze" /> : lkr(out.glazed.finalCost)}
       </td>
@@ -743,6 +802,13 @@ function DomesticCells({ out, absorbed, form }: { out: DomesticOutput; absorbed:
           <Contribution value={out.glazed.contributionPerKg} fmt={lkr} />
         ) : (
           lkr(out.glazed.sellingPrice)
+        )}
+      </td>
+      <td className={tdBase}>
+        {noGlaze ? (
+          <NotSold why="Fresh product carries no glaze" />
+        ) : (
+          <Margin value={out.glazed.marginPct} absorbed={absorbed} />
         )}
       </td>
     </>
@@ -769,6 +835,9 @@ function ExportCells({ out, absorbed, form }: { out: ExportOutput; absorbed: boo
           usd(out.frozenPlain.sellingPrice)
         )}
       </td>
+      <td className={tdBase}>
+        {freshOnly ? <NotSold why={FROZEN} /> : <Margin value={out.frozenPlain.marginPct} absorbed={absorbed} />}
+      </td>
       <td className={tdBase}>{freshOnly ? <NotSold why={FROZEN} /> : usd(out.frozenPlain.cif)}</td>
       <td className={tdBase}>{freshOnly ? <NotSold why={FROZEN} /> : usd(out.frozenPlain.distributorT3)}</td>
 
@@ -776,13 +845,111 @@ function ExportCells({ out, absorbed, form }: { out: ExportOutput; absorbed: boo
         {freshOnly ? <NotSold why="Fresh product carries no glaze" /> : usd(out.frozenGlazed.sellingPrice)}
       </td>
       <td className={tdBase}>
+        {freshOnly ? (
+          <NotSold why="Fresh product carries no glaze" />
+        ) : (
+          <Margin value={out.frozenGlazed.marginPct} absorbed={absorbed} />
+        )}
+      </td>
+      <td className={tdBase}>
         {freshOnly ? <NotSold why="Fresh product carries no glaze" /> : usd(out.frozenGlazed.cif)}
       </td>
 
       <td className={cn(tdBase, 'border-l')}>{frozenOnly ? <NotSold why={FRESH} /> : usd(out.fresh.sellingPrice)}</td>
+      <td className={tdBase}>
+        {frozenOnly ? <NotSold why={FRESH} /> : <Margin value={out.fresh.marginPct} absorbed={absorbed} />}
+      </td>
       <td className={tdBase}>{frozenOnly ? <NotSold why={FRESH} /> : usd(out.fresh.cif)}</td>
       <td className={tdBase}>{frozenOnly ? <NotSold why={FRESH} /> : usd(out.fresh.distributorT3)}</td>
     </>
+  );
+}
+
+/**
+ * One grid row, reduced to what a customer may be quoted.
+ *
+ * Mirrors the pack states the printed cost sheet shows, and for the same
+ * reason: a glazed SKU ships as the glazed pack, so its unglazed twin is that
+ * pack read net of its ice rather than a second product at a higher price —
+ * and a Fresh line for a frozen-only SKU is a price for something nobody can
+ * order. A row that failed to cost yields nothing at all.
+ *
+ * An absorbed by-product is quoted at what the market bears, never at the
+ * cost-plus figure: the main product already took the fish cost, so cost-plus
+ * on the remainder would leave money on the table (Decisions §7). No market
+ * price set means no price to quote, and the builder says which products that
+ * left off.
+ */
+function quoteItemsFor(row: Row, domestic: boolean): QuoteItem[] {
+  if (!row.result.ok) return [];
+  const { sku, destination } = row;
+  const absorbed = sku.raw_material_basis === 'absorbed';
+  const glazed = sku.glaze_pct > 0;
+  const glazeLabel = `${(sku.glaze_pct * 100).toFixed(sku.glaze_pct * 100 < 10 ? 1 : 0)}% glaze`;
+  const key = (state: string) => `${sku.id}-${destination?.id ?? 'none'}-${state}`;
+
+  if (domestic) {
+    const out = row.result.value.result as DomesticOutput;
+    const state = glazed ? out.glazed : out.unglazed;
+    return [
+      {
+        id: key('domestic'),
+        product: sku.name,
+        presentation: glazed ? `As packed — ${glazeLabel}` : 'Per kg',
+        destination: null,
+        price: absorbed ? sku.market_price_lkr : state.sellingPrice,
+        freightPerKg: null,
+      },
+    ];
+  }
+
+  const out = row.result.value.result as ExportOutput;
+  const port = destination?.name ?? null;
+  const items: QuoteItem[] = [];
+
+  if (sku.product_form !== 'fresh') {
+    const state = glazed ? out.frozenGlazed : out.frozenPlain;
+    items.push({
+      id: key('frozen'),
+      product: sku.name,
+      presentation: glazed ? `Frozen — as packed, ${glazeLabel}` : 'Frozen',
+      destination: port,
+      price: absorbed ? sku.market_price_usd : state.sellingPrice,
+      freightPerKg: state.freightPerKg,
+    });
+  }
+  if (sku.product_form !== 'frozen') {
+    items.push({
+      id: key('fresh'),
+      product: sku.name,
+      presentation: 'Fresh (air)',
+      destination: port,
+      price: absorbed ? sku.market_price_usd : out.fresh.sellingPrice,
+      freightPerKg: out.fresh.freightPerKg,
+    });
+  }
+  return items;
+}
+
+/**
+ * Gross margin at the price beside it.
+ *
+ * Only the answers worth acting on are coloured: below cost, and thin enough to
+ * be worth a second look. A healthy margin stays in body text — this is a grid
+ * of thirty-odd rows, and colouring the normal case turns the exceptions into
+ * noise.
+ *
+ * An absorbed by-product has no margin to show: the main product already took
+ * the fish cost, so its price comes off the market and the number that matters
+ * is contribution, in the column to the left.
+ */
+function Margin({ value, absorbed }: { value: number | null; absorbed: boolean }) {
+  if (absorbed) return <NotSold why="By-product — priced on contribution, not on a margin" />;
+  if (value == null) return <NotSold why="No selling price to take a margin on" />;
+  return (
+    <span className={cn(value < 0 && 'font-medium text-destructive', value >= 0 && value < 0.15 && 'text-warning')}>
+      {(value * 100).toFixed(1)}%
+    </span>
   );
 }
 
@@ -1113,17 +1280,20 @@ function csvMatrix(
     'Freight',
     'FINAL',
     ...(domestic
-      ? ['Rack rate', 'FINAL glazed', 'Rack glazed', 'Contribution']
+      ? ['Rack rate', 'Margin %', 'FINAL glazed', 'Rack glazed', 'Glazed margin %', 'Contribution']
       : [
           'FOB',
+          'Margin %',
           'CIF',
           'Importer',
           'Dist->T3',
           'Glazed FINAL',
           'Glazed FOB',
+          'Glazed margin %',
           'Glazed CIF',
           'Glazed Dist->T3',
           'Fresh FOB',
+          'Fresh margin %',
           'Fresh CIF',
           'Fresh Dist->T3',
           'Contribution',
@@ -1162,8 +1332,10 @@ function csvMatrix(
         ...nums,
         round(o.unglazed.finalCost),
         round(o.unglazed.sellingPrice),
+        pct(o.unglazed.marginPct),
         round(o.glazed.finalCost),
         round(o.glazed.sellingPrice),
+        pct(o.glazed.marginPct),
         round(o.unglazed.contributionPerKg),
       ];
     }
@@ -1173,14 +1345,17 @@ function csvMatrix(
       ...nums,
       round(o.frozenPlain.finalCost),
       round(o.frozenPlain.sellingPrice),
+      pct(o.frozenPlain.marginPct),
       round(o.frozenPlain.cif),
       round(o.frozenPlain.importerPrice),
       round(o.frozenPlain.distributorT3),
       round(o.frozenGlazed.finalCost),
       round(o.frozenGlazed.sellingPrice),
+      pct(o.frozenGlazed.marginPct),
       round(o.frozenGlazed.cif),
       round(o.frozenGlazed.distributorT3),
       round(o.fresh.sellingPrice),
+      pct(o.fresh.marginPct),
       round(o.fresh.cif),
       round(o.fresh.distributorT3),
       round(o.frozenPlain.contributionPerKg),
@@ -1191,6 +1366,8 @@ function csvMatrix(
 }
 
 const round = (n: number | null): number | null => (n == null ? null : Math.round(n * 10000) / 10000);
+/** A fraction as whole percent, to one place — the header says "%", so the cell doesn't. */
+const pct = (n: number | null): number | null => (n == null ? null : Math.round(n * 1000) / 10);
 
 // ---------------------------------------------------------------------------
 

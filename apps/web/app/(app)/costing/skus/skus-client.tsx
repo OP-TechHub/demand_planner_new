@@ -395,6 +395,13 @@ interface PreviewResult {
   /** In target mode, whether a target was actually entered for that market. */
   hasTargetDomestic: boolean;
   hasTargetExport: boolean;
+  /**
+   * What the market bears, in each market's currency — the same box the target
+   * price uses. Carried because an absorbed by-product is quoted at this and
+   * never at the cost-plus figure (Decisions §7).
+   */
+  marketPriceLkr: number | null;
+  marketPriceUsd: number | null;
   /** The size grade costed at, or null for the flat reference model. */
   gradeLabel: string | null;
   /**
@@ -488,6 +495,11 @@ function previewFromForm(
 
   const bucket = bucketRow ? toBucket(bucketRow) : null;
 
+  // One box per market, wearing two hats (see the migration that added them):
+  // what the market bears, and — in target mode — what we intend to charge.
+  const marketPriceLkr = optional('market_price_lkr') ?? null;
+  const marketPriceUsd = optional('market_price_usd') ?? null;
+
   const issues: string[] = [];
   let domesticOut: DomesticOutput | null = null;
   let exportOut: ExportOutput | null = null;
@@ -499,7 +511,7 @@ function previewFromForm(
   let downstream: DownstreamPct | null = null;
 
   if (marketScope === 'domestic' || marketScope === 'both') {
-    const price = optional('market_price_lkr') ?? null;
+    const price = marketPriceLkr;
     hasTargetDomestic = price != null && price > 0;
     const res = computeCost({
       market: 'domestic',
@@ -522,7 +534,7 @@ function previewFromForm(
     if (!dest) {
       issues.push('No destination is set up, so export freight can’t be priced.');
     } else {
-      const price = optional('market_price_usd') ?? null;
+      const price = marketPriceUsd;
       hasTargetExport = price != null && price > 0;
       const rate = rates[dest.id] ?? { sea: 0, air: 0 };
       const res = computeCost({
@@ -557,6 +569,8 @@ function previewFromForm(
     glazePct: base.glazePct,
     hasTargetDomestic,
     hasTargetExport,
+    marketPriceLkr,
+    marketPriceUsd,
     domesticWholeFish,
     exportWholeFish,
     skuName: base.name,
@@ -606,6 +620,11 @@ function knownBucket(id: string | null | undefined, buckets: CostSizeBucket[]): 
  * price and cost-plus already resolved by the engine, so the quotation cannot
  * disagree with the panel it was raised from.
  *
+ * The one product that is not quoted at `sellingPrice` is an absorbed
+ * by-product: the main product already took the fish cost, so its price is what
+ * the market bears and cost-plus on the remainder would leave money on the
+ * table (Decisions §7).
+ *
  * A SKU scoped to both markets yields two sources; the builder makes the sender
  * pick one, because a quotation is in one currency.
  */
@@ -625,7 +644,7 @@ function quoteSources(p: PreviewResult): QuoteSource[] {
           product,
           presentation: glazed ? `As packed — ${glazeLabel}` : 'Per kg',
           destination: null,
-          price: s.sellingPrice,
+          price: p.absorbed ? p.marketPriceLkr : s.sellingPrice,
           freightPerKg: null,
         },
       ],
@@ -641,7 +660,7 @@ function quoteSources(p: PreviewResult): QuoteSource[] {
         product,
         presentation: glazed ? `Frozen — as packed, ${glazeLabel}` : 'Frozen',
         destination: p.destinationName,
-        price: s.sellingPrice,
+        price: p.absorbed ? p.marketPriceUsd : s.sellingPrice,
         freightPerKg: s.freightPerKg,
       });
     }
@@ -651,7 +670,7 @@ function quoteSources(p: PreviewResult): QuoteSource[] {
         product,
         presentation: 'Fresh (air)',
         destination: p.destinationName,
-        price: p.export.fresh.sellingPrice,
+        price: p.absorbed ? p.marketPriceUsd : p.export.fresh.sellingPrice,
         freightPerKg: p.export.fresh.freightPerKg,
       });
     }
@@ -837,6 +856,20 @@ function PreviewBlock({
   // screen rather than a long float.
   const shownPrice = Number(fmt(shared).replace(/,/g, ''));
 
+  /**
+   * What is actually in the box while it is being typed in.
+   *
+   * Without this the input is driven straight off the recomputed preview, which
+   * makes it impossible to edit: emptying it drops the target, the engine falls
+   * back to cost-plus, and the cost-plus price lands back in the box on the same
+   * keystroke — so the field can never be cleared, and a half-typed "16." is
+   * rounded away before the decimals can be reached. The draft holds exactly
+   * what was typed until focus leaves, at which point the canonical figure takes
+   * over again. Shared by every row because every row is the same price.
+   */
+  const [draft, setDraft] = useState<string | null>(null);
+  const value = draft ?? String(shownPrice);
+
   return (
     <div>
       <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -864,8 +897,12 @@ function PreviewBlock({
                   type="number"
                   step="any"
                   min="0"
-                  value={shownPrice}
-                  onChange={(e) => onPriceChange(e.target.value)}
+                  value={value}
+                  onChange={(e) => {
+                    setDraft(e.target.value);
+                    onPriceChange(e.target.value);
+                  }}
+                  onBlur={() => setDraft(null)}
                   // The form clears the preview on any input; these inputs live
                   // inside it but must survive their own edit.
                   onInput={(e) => e.stopPropagation()}
@@ -1162,22 +1199,33 @@ function SkuDialog({
    * the margin out locally — so the number on screen comes from the same engine
    * that will store it, and the two can't disagree. Typing a price also means
    * pricing on a target, so the mode follows rather than making you set it
-   * first and then discover the field.
+   * first and then discover the field — and emptying the box the same way means
+   * there is no longer a target, so the mode follows back to cost-plus.
    */
   function tryPrice(market: 'domestic' | 'export', value: string) {
     const el = formRef.current;
     if (!el) return;
-    const field = el.elements.namedItem(
-      market === 'domestic' ? 'market_price_lkr' : 'market_price_usd'
-    ) as HTMLInputElement | null;
-    if (!field) return;
+    const priceField = (m: 'domestic' | 'export') =>
+      el.elements.namedItem(m === 'domestic' ? 'market_price_lkr' : 'market_price_usd') as
+        | HTMLInputElement
+        | null;
 
+    const field = priceField(market);
+    if (!field) return;
     field.value = value;
-    if (pricingMode !== 'target') setPricingMode('target');
+
+    // The other market keeps its own target, so clearing one must not drop the
+    // SKU off target pricing while the other still names a price. Only when
+    // neither does is there anything left to target — and leaving it in target
+    // mode with nothing set is a state Save rejects outright.
+    const other = priceField(market === 'domestic' ? 'export' : 'domestic');
+    const anyTarget = [field.value, other?.value ?? ''].some((v) => Number(String(v).trim()) > 0);
+    const mode: CostPricingMode = anyTarget ? 'target' : 'margin';
+    if (pricingMode !== mode) setPricingMode(mode);
 
     // The mode lives in React state, so it isn't in the form yet on this pass.
     const fd = new FormData(el);
-    fd.set('pricing_mode', 'target');
+    fd.set('pricing_mode', mode);
     setPreview(costFromForm(fd));
   }
 
