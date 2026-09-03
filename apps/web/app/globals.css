@@ -137,13 +137,13 @@
 }
 
 /*
- * Printing a sheet meant to leave the building — the customer offer, or a
- * costing breakdown. The app chrome (sidebar, top bar, filters) has no place on
- * such a document, so printing hides everything and reveals only the sheet —
- * visibility rather than display, so the sheet keeps its layout instead of
+ * Printing a sheet meant to leave the building — the customer offer, the price
+ * quotation, or a costing breakdown. The app chrome (sidebar, top bar, filters)
+ * has no place on such a document, so printing hides everything and reveals only
+ * the sheet — visibility rather than display, so it keeps its layout instead of
  * collapsing with its hidden ancestors.
  *
- * Both sheets are rendered `hidden print:block` at page level rather than
+ * The sheets are rendered `hidden print:block` at page level rather than
  * inside their dialog: a fixed-position ancestor confines a printed element to
  * the first page, which would silently truncate anything longer.
  */
@@ -155,12 +155,15 @@
   #offer-sheet *,
   #cost-sheet,
   #cost-sheet *,
+  #quote-sheet,
+  #quote-sheet *,
   .print-sheet,
   .print-sheet * {
     visibility: visible !important;
   }
   #offer-sheet,
   #cost-sheet,
+  #quote-sheet,
   .print-sheet {
     position: absolute;
     top: 0;
@@ -171,20 +174,24 @@
   }
   #offer-sheet table,
   #cost-sheet table,
+  #quote-sheet table,
   .print-sheet table {
     page-break-inside: auto;
   }
   #offer-sheet tr,
   #cost-sheet tr,
+  #quote-sheet tr,
   .print-sheet tr {
     page-break-inside: avoid;
   }
   #offer-sheet thead,
   #cost-sheet thead,
+  #quote-sheet thead,
   .print-sheet thead {
     display: table-header-group;
   }
-  #cost-sheet h2 {
+  #cost-sheet h2,
+  #quote-sheet h2 {
     page-break-after: avoid;
   }
   @page {
