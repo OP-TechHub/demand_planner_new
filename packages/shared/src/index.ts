@@ -493,6 +493,18 @@ export interface CostSkuRow {
   raw_material_basis: CostRawMaterialBasis;
   product_form: CostProductForm;
   market_scope: CostMarketScope;
+  /**
+   * The port this SKU is normally quoted to. Nothing up to FOB depends on it —
+   * it sets the freight that turns FOB into CIF, and the trade ladder past
+   * that. Null falls back to the first active destination.
+   */
+  default_destination_id: string | null;
+  /**
+   * The size grade this SKU is normally costed at. Unlike the port, this moves
+   * the cost — it selects the FCR and the per-grade yield. Null is the flat
+   * reference model.
+   */
+  default_bucket_id: string | null;
   /** Free text until a customer master exists. */
   customer: string;
   /**

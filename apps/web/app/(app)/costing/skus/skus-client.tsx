@@ -573,6 +573,29 @@ function previewFromForm(
 }
 
 /**
+ * The SKU's stored port, if it is still one you can ship to.
+ *
+ * A port that has since been deactivated is no longer in the list, so leaving
+ * the id in place would leave the picker showing nothing and quietly cost the
+ * SKU to a port the reader cannot see. Falling back to the first active one is
+ * what a SKU with no stored port has always done.
+ */
+function activeDestination(id: string | null | undefined, destinations: CostDestinationRow[]): string {
+  return id && destinations.some((d) => d.id === id) ? id : (destinations[0]?.id ?? '');
+}
+
+/**
+ * The SKU's stored grade, if it is still one of the grades.
+ *
+ * Falls back to '' — the flat reference model — rather than to the first grade:
+ * '' is a real answer here, and guessing a size band on a SKU whose own band
+ * has been removed would quietly change what it costs.
+ */
+function knownBucket(id: string | null | undefined, buckets: CostSizeBucket[]): string {
+  return id && buckets.some((b) => b.id === id) ? id : '';
+}
+
+/**
  * The preview, reduced to what a customer may be quoted.
  *
  * Mirrors the pack states the printed cost sheet shows, and for the same
@@ -979,13 +1002,20 @@ function SkuDialog({
   // reachable when this user may see the base cost at all.
   const [includeBaseCost, setIncludeBaseCost] = useState(true);
   // Which size grade to cost at. '' is the flat reference model, which is what
-  // this dialog used to do unconditionally — so the default preserves every
-  // number it produced before, and picking a grade is an explicit act.
-  const [previewBucketId, setPreviewBucketId] = useState('');
-  // Which port the past-FOB ladder is costed to. Everything up to FOB is the
-  // same whatever this is, so defaulting to the first destination reproduces
-  // every number this dialog showed before the ladder existed.
-  const [previewDestId, setPreviewDestId] = useState(destinations[0]?.id ?? '');
+  // this dialog used to do unconditionally — so a SKU that has never had a
+  // grade picked produces every number it produced before. Stored on the SKU,
+  // because the grade moves the cost and reopening on the reference model was
+  // re-reading the product at a size it is never sold at.
+  const [previewBucketId, setPreviewBucketId] = useState(() =>
+    knownBucket(sku?.default_bucket_id, buckets)
+  );
+  // Which port the past-FOB ladder is costed to, and what a CIF quotation is
+  // priced against. Stored on the SKU, so reopening it shows the port that was
+  // picked rather than whichever one sorts first; a SKU that has never had one
+  // still falls back to the first destination, as every SKU used to.
+  const [previewDestId, setPreviewDestId] = useState(() =>
+    activeDestination(sku?.default_destination_id, destinations)
+  );
 
   /**
    * Which record the field defaults come from.
@@ -1182,6 +1212,10 @@ function SkuDialog({
     // and finding an empty ingredient list would be the surprise here.
     setRecipe(recipeOf(source));
     setMarinadeUsd(String(source.marinade_usd_per_kg ?? 0));
+    // The port and the grade are part of "its settings" now that they are
+    // stored on the SKU — and the grade changes what the copy costs.
+    setPreviewDestId(activeDestination(source.default_destination_id, destinations));
+    setPreviewBucketId(knownBucket(source.default_bucket_id, buckets));
   }
 
   return (
@@ -1614,8 +1648,10 @@ function SkuDialog({
           <label className="flex flex-wrap items-center gap-2 text-xs">
             <span className="font-medium">Cost at</span>
             <select
-              // No `name`: this drives the preview only and must not land in
-              // the SKU's own FormData.
+              // Saved with the SKU: the grade selects the FCR and the per-grade
+              // yield, so it is part of how this product is costed rather than
+              // a way of looking at it.
+              name="default_bucket_id"
               value={previewBucketId}
               onChange={(e) => {
                 setPreviewBucketId(e.target.value);
@@ -1642,8 +1678,10 @@ function SkuDialog({
           <label className="flex flex-wrap items-center gap-2 text-xs">
             <span className="font-medium">Export to</span>
             <select
-              // No name attribute, as with the grade above: the port qualifies
-              // the preview's ladder and must not land in the SKU's FormData.
+              // Named, unlike the grade above: the grade qualifies one preview,
+              // but the port is a property of the SKU — it is what a CIF price
+              // is quoted against — so it is saved with it.
+              name="default_destination_id"
               value={previewDestId}
               onChange={(e) => {
                 setPreviewDestId(e.target.value);
@@ -1658,8 +1696,8 @@ function SkuDialog({
               ))}
             </select>
             <span className="text-[10px] text-muted-foreground">
-              Sets the freight that turns FOB into CIF, and the ladder past it. Cost, FOB and margin
-              are the same for every port.
+              Saved with the SKU. Sets the freight that turns FOB into CIF, and the ladder past it —
+              cost, FOB and margin are the same for every port.
             </span>
           </label>
         )}
