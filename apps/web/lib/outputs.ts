@@ -47,20 +47,31 @@ export function unitGridRowsFor(
   });
 }
 
-/** In-scope programs ordered by global rank, with customer + description labels. */
+/**
+ * In-scope programs with customer + description labels, ordered alphabetically
+ * by customer and then by item description, so a row is found by name rather
+ * than by remembering where it landed in the allocation ranking. Each entry
+ * still carries its rank for the pages that display it.
+ */
 export async function programOrder(supabase: any, planId: string): Promise<OrderedProgram[]> {
   const [{ data: ranks }, { data: progs }] = await Promise.all([
     supabase.from('plan_rank').select('program_id, global_rank, in_scope').eq('plan_id', planId),
     supabase.from('programs').select('id, customer, item_description').eq('plan_id', planId).is('deleted_at', null),
   ]);
   const nameById = new Map<string, any>((progs ?? []).map((p: any) => [p.id, p]));
+  const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
   return (ranks ?? [])
     .filter((r: any) => r.in_scope)
-    .sort((a: any, b: any) => a.global_rank - b.global_rank)
     .map((r: any) => ({
       id: r.program_id,
       rank: r.global_rank,
       label: nameById.get(r.program_id)?.customer ?? '—',
       sublabel: nameById.get(r.program_id)?.item_description ?? '',
-    }));
+    }))
+    .sort(
+      (a: OrderedProgram, b: OrderedProgram) =>
+        collator.compare(a.label, b.label) ||
+        collator.compare(a.sublabel, b.sublabel) ||
+        a.rank - b.rank
+    );
 }
