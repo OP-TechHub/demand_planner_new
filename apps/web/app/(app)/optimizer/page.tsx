@@ -37,7 +37,8 @@ export default async function OptimizerPage() {
     const i = r.month_index - 1;
     p.demand[i] = r.demand_fp; p.own[i] = r.own_fp; p.rolling[i] = r.rolling_fp; p.margin[i] = r.rolling_margin;
   }
-  const programs = [...progById.values()].sort((a, b) => a.rank - b.rank);
+  // Insertion order is programOrder's alphabetical order; the rank column stays visible.
+  const programs = [...progById.values()];
 
   const bkt = new Map<string, OptBucket>();
   for (const b of buckets ?? []) bkt.set(b.id, { name: b.name, capacity: zero(), used: zero(), left: zero() });
