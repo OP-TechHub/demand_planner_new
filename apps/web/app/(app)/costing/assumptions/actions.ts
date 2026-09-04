@@ -389,3 +389,163 @@ export async function saveSizeBucket(
   revalidatePath('/costing');
   return { error: null };
 }
+
+/**
+ * Add a shipping destination, with its freight rates.
+ *
+ * The port LIST is master data, edited in place like the size grades — a port
+ * we ship to is a fact about the business, not a number a costing was quoted
+ * on. Its RATES are versioned like everything else on this screen, and the new
+ * rate has to land on the CURRENT version specifically: publishing copies the
+ * rate rows it finds on the version it publishes from (see
+ * publishAssumptionVersion), so a port with no row on the current version would
+ * never acquire one and would price at zero freight forever.
+ *
+ * Historic versions are left alone deliberately. They record what was quoted at
+ * the time, and at the time we did not ship there.
+ *
+ * Re-adding a name that was retired revives that row rather than colliding with
+ * it — the unique index covers inactive rows too, and reviving keeps the
+ * destination_id that saved costings and SKU defaults already point at.
+ */
+export async function addDestination(input: {
+  name: string;
+  sea: number;
+  air: number;
+}): Promise<{ error: string | null }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: 'Your session expired.' };
+
+  const access = await getAccess(supabase, user.id);
+  if (!access.canEditRest) {
+    return { error: 'You don’t have access to change the destination list — ask an admin.' };
+  }
+  if (!access.orgId) return { error: 'Your account isn’t attached to an organisation.' };
+
+  const name = input.name.trim().replace(/\s+/g, ' ');
+  if (name.length < 2) return { error: 'Give the destination a name, e.g. “Jeddah (SA)”.' };
+  if (name.length > 80) return { error: 'That name is too long — 80 characters at most.' };
+  const sea = Number(input.sea);
+  const air = Number(input.air);
+  if (!Number.isFinite(sea) || sea < 0 || !Number.isFinite(air) || air < 0) {
+    return { error: 'Sea and air rates must be numbers of 0 or more.' };
+  }
+
+  const { data: cur } = await supabase
+    .from('cost_assumption_versions')
+    .select('id')
+    .eq('org_id', access.orgId)
+    .eq('is_current', true)
+    .maybeSingle();
+  const versionId = (cur as { id: string } | null)?.id;
+  if (!versionId) {
+    return { error: 'No assumptions version is current, so there is nothing to price the freight on. Make one current first.' };
+  }
+
+  const db = access.isAdmin ? supabase : createServiceClient();
+
+  // Case-insensitive, because the unique index is not: 'dubai (uae)' would slip
+  // past it and sit in the list next to 'Dubai (UAE)'.
+  const { data: found } = await db
+    .from('cost_destinations')
+    .select('id, name, is_active')
+    .eq('org_id', access.orgId)
+    .ilike('name', name.replace(/[%_]/g, '\\$&'))
+    .limit(1)
+    .maybeSingle();
+  const existing = found as { id: string; name: string; is_active: boolean } | null;
+  if (existing?.is_active) return { error: `“${existing.name}” is already on the list.` };
+
+  let destinationId = existing?.id ?? null;
+  if (existing) {
+    const { error } = await db
+      .from('cost_destinations')
+      .update({ is_active: true })
+      .eq('id', existing.id);
+    if (error) return { error: error.message };
+  } else {
+    const { data: last } = await db
+      .from('cost_destinations')
+      .select('sort_order')
+      .eq('org_id', access.orgId)
+      .order('sort_order', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const sortOrder = ((last as { sort_order: number } | null)?.sort_order ?? 0) + 10;
+
+    const { data: created, error } = await db
+      .from('cost_destinations')
+      .insert({ org_id: access.orgId, name, sort_order: sortOrder })
+      .select('id')
+      .single();
+    if (error || !created) return { error: error?.message ?? 'Could not add that destination.' };
+    destinationId = (created as { id: string }).id;
+  }
+
+  const { error: rateError } = await db.from('cost_destination_rates').upsert(
+    {
+      version_id: versionId,
+      destination_id: destinationId!,
+      sea_rate_per_20ft: sea,
+      air_rate_per_lot: air,
+    },
+    { onConflict: 'version_id,destination_id' }
+  );
+  // A port with no rate row prices at zero and stays that way, so undo the half
+  // that did land rather than leave one behind.
+  if (rateError) {
+    if (existing) await db.from('cost_destinations').update({ is_active: false }).eq('id', existing.id);
+    else await db.from('cost_destinations').delete().eq('id', destinationId!);
+    return { error: `saving the freight rates: ${rateError.message}` };
+  }
+
+  revalidatePath('/costing');
+  revalidatePath('/costing/assumptions');
+  revalidatePath('/costing/skus');
+  return { error: null };
+}
+
+/**
+ * Retire a destination, or bring a retired one back.
+ *
+ * Never a delete: saved costings, their destination lists and SKU defaults all
+ * point at these rows. Retiring takes the port off the pricing screens and
+ * leaves every costing that used it readable, with the name it shipped under.
+ */
+export async function setDestinationActive(
+  id: string,
+  isActive: boolean
+): Promise<{ error: string | null }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: 'Your session expired.' };
+
+  const access = await getAccess(supabase, user.id);
+  if (!access.canEditRest) {
+    return { error: 'You don’t have access to change the destination list — ask an admin.' };
+  }
+
+  const { data: d } = await supabase
+    .from('cost_destinations')
+    .select('org_id')
+    .eq('id', id)
+    .maybeSingle();
+  if (!d) return { error: 'No such destination.' };
+  if (!access.isAdmin && access.orgId !== (d as { org_id: string }).org_id) {
+    return { error: 'That destination belongs to another organisation.' };
+  }
+
+  const db = access.isAdmin ? supabase : createServiceClient();
+  const { error } = await db.from('cost_destinations').update({ is_active: isActive }).eq('id', id);
+  if (error) return { error: error.message };
+
+  revalidatePath('/costing');
+  revalidatePath('/costing/assumptions');
+  revalidatePath('/costing/skus');
+  return { error: null };
+}

@@ -12,7 +12,14 @@ import type {
 } from '@oceanpick/shared';
 import { toAssumptions } from '@/lib/costing-adapt';
 import { cn } from '@/lib/utils';
-import { makeVersionCurrent, publishAssumptionVersion, saveSizeBucket, type SaveState } from './actions';
+import {
+  addDestination,
+  makeVersionCurrent,
+  publishAssumptionVersion,
+  saveSizeBucket,
+  setDestinationActive,
+  type SaveState,
+} from './actions';
 
 type RateMap = Record<string, { sea: number; air: number }>;
 
@@ -22,6 +29,7 @@ export function AssumptionsClient({
   odc,
   buckets,
   destinations,
+  retiredDestinations,
   rates,
   isAdmin,
   canViewBaseCost,
@@ -33,6 +41,8 @@ export function AssumptionsClient({
   odc: CostOdcComponentRow[];
   buckets: CostSizeBucket[];
   destinations: CostDestinationRow[];
+  /** Ports taken off the list. Shown only so one can be brought back. */
+  retiredDestinations: CostDestinationRow[];
   rates: RateMap;
   isAdmin: boolean;
   /**
@@ -207,48 +217,22 @@ export function AssumptionsClient({
           <Field label="Distributor markup" unit="to T3 / foodservice" name="distributor_markup_pct" value={version.distributor_markup_pct} step="0.0001" disabled={!canEditAssumptions} onChange={onNum('distributor_markup_pct')} />
         </Section>
 
-        <Section title="Destination freight" hint="Rates are per shipment. Changing a fill weight reprices every port at once.">
+        <Section title="Destination freight" hint="Rates are per shipment. Changing a fill weight reprices every port at once. Adding or retiring a port saves straight away — only the rates in the table wait for you to publish.">
           <Field label="Container fill weight" unit="kg per 20ft reefer" name="container_fill_kg" value={version.container_fill_kg} step="1" disabled={!canEditAssumptions} onChange={onNum('container_fill_kg')} />
           <Field label="Air lot weight" unit="kg per air consignment" name="air_lot_kg" value={version.air_lot_kg} step="1" disabled={!canEditAssumptions} onChange={onNum('air_lot_kg')} />
 
-          <div className="col-span-full overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead className="text-left text-[10px] uppercase tracking-wide text-muted-foreground">
-                <tr>
-                  <th className="py-1 pr-3 font-medium">Destination</th>
-                  <th className="py-1 pr-3 text-right font-medium">Sea $ / 20ft</th>
-                  <th className="py-1 pr-3 text-right font-medium">Air $ / lot</th>
-                  <th className="py-1 pr-3 text-right font-medium">→ Sea $/kg</th>
-                  <th className="py-1 text-right font-medium">→ Air $/kg</th>
-                </tr>
-              </thead>
-              <tbody>
-                {destinations.map((d) => {
-                  const r = rates[d.id] ?? { sea: 0, air: 0 };
-                  const fill = draft.container_fill_kg ?? version.container_fill_kg;
-                  const lot = draft.air_lot_kg ?? version.air_lot_kg;
-                  const sea = draft[`sea_${d.id}`] ?? r.sea;
-                  const air = draft[`air_${d.id}`] ?? r.air;
-                  return (
-                    <tr key={d.id} className="border-t">
-                      <td className="py-1.5 pr-3">{d.name}</td>
-                      <td className="py-1.5 pr-3 text-right">
-                        <input name={`sea_${d.id}`} defaultValue={r.sea} type="number" step="1" min="0" disabled={!canEditAssumptions} onChange={onNum(`sea_${d.id}`)} className={cn(inputCls, 'w-24 text-right')} />
-                      </td>
-                      <td className="py-1.5 pr-3 text-right">
-                        <input name={`air_${d.id}`} defaultValue={r.air} type="number" step="1" min="0" disabled={!canEditAssumptions} onChange={onNum(`air_${d.id}`)} className={cn(inputCls, 'w-24 text-right')} />
-                      </td>
-                      <td className="py-1.5 pr-3 text-right tabular-nums text-muted-foreground">
-                        {fill > 0 ? (sea / fill).toFixed(3) : '—'}
-                      </td>
-                      <td className="py-1.5 text-right tabular-nums text-muted-foreground">
-                        {lot > 0 ? (air / lot).toFixed(3) : '—'}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div className="col-span-full">
+            <DestinationFreight
+              destinations={destinations}
+              retired={retiredDestinations}
+              rates={rates}
+              draft={draft}
+              fill={draft.container_fill_kg ?? version.container_fill_kg}
+              lot={draft.air_lot_kg ?? version.air_lot_kg}
+              canEdit={canEditAssumptions}
+              isCurrentVersion={version.is_current}
+              onNum={onNum}
+            />
           </div>
         </Section>
 
@@ -273,6 +257,207 @@ export function AssumptionsClient({
 }
 
 // ---------------------------------------------------------------------------
+
+/**
+ * The freight table, plus the two things that keep the port list current:
+ * adding a destination and retiring one.
+ *
+ * The rates for existing ports are part of the surrounding publish form — they
+ * move only when a new version is published, because a quoted costing must keep
+ * the freight it was quoted on. The port list itself is master data and saves on
+ * the spot, so the buttons here are type="button": this markup sits inside that
+ * form and a submit would publish a version nobody asked for.
+ *
+ * Adding is offered only on the current version. A new port's rate is written to
+ * the current version wherever you happen to be standing, and letting someone
+ * add from a historic screen would say otherwise.
+ */
+function DestinationFreight({
+  destinations,
+  retired,
+  rates,
+  draft,
+  fill,
+  lot,
+  canEdit,
+  isCurrentVersion,
+  onNum,
+}: {
+  destinations: CostDestinationRow[];
+  retired: CostDestinationRow[];
+  rates: RateMap;
+  draft: Record<string, number>;
+  fill: number;
+  lot: number;
+  canEdit: boolean;
+  isCurrentVersion: boolean;
+  onNum: (field: string) => (e: React.ChangeEvent<HTMLInputElement>) => void;
+}) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [name, setName] = useState('');
+  const [sea, setSea] = useState('');
+  const [air, setAir] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const canManage = canEdit && isCurrentVersion;
+
+  function add() {
+    setError(null);
+    startTransition(async () => {
+      const res = await addDestination({ name, sea: Number(sea), air: Number(air) });
+      if (res.error) {
+        setError(res.error);
+        return;
+      }
+      setName('');
+      setSea('');
+      setAir('');
+      router.refresh();
+    });
+  }
+
+  function retire(d: CostDestinationRow) {
+    // Retiring hides a port everyone prices against, so make it deliberate.
+    if (!window.confirm(`Retire ${d.name}? It stops appearing on new costings. Costings already saved keep it.`)) return;
+    setError(null);
+    startTransition(async () => {
+      const res = await setDestinationActive(d.id, false);
+      if (res.error) setError(res.error);
+      router.refresh();
+    });
+  }
+
+  function restore(d: CostDestinationRow) {
+    setError(null);
+    startTransition(async () => {
+      const res = await setDestinationActive(d.id, true);
+      if (res.error) setError(res.error);
+      router.refresh();
+    });
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead className="text-left text-[10px] uppercase tracking-wide text-muted-foreground">
+            <tr>
+              <th className="py-1 pr-3 font-medium">Destination</th>
+              <th className="py-1 pr-3 text-right font-medium">Sea $ / 20ft</th>
+              <th className="py-1 pr-3 text-right font-medium">Air $ / lot</th>
+              <th className="py-1 pr-3 text-right font-medium">→ Sea $/kg</th>
+              <th className="py-1 text-right font-medium">→ Air $/kg</th>
+              {canManage && <th className="py-1 pl-3 text-right font-medium" />}
+            </tr>
+          </thead>
+          <tbody>
+            {destinations.map((d) => {
+              const r = rates[d.id] ?? { sea: 0, air: 0 };
+              const seaRate = draft[`sea_${d.id}`] ?? r.sea;
+              const airRate = draft[`air_${d.id}`] ?? r.air;
+              return (
+                <tr key={d.id} className="border-t">
+                  <td className="py-1.5 pr-3">{d.name}</td>
+                  <td className="py-1.5 pr-3 text-right">
+                    <input name={`sea_${d.id}`} defaultValue={r.sea} type="number" step="1" min="0" disabled={!canEdit} onChange={onNum(`sea_${d.id}`)} className={cn(inputCls, 'w-24 text-right')} />
+                  </td>
+                  <td className="py-1.5 pr-3 text-right">
+                    <input name={`air_${d.id}`} defaultValue={r.air} type="number" step="1" min="0" disabled={!canEdit} onChange={onNum(`air_${d.id}`)} className={cn(inputCls, 'w-24 text-right')} />
+                  </td>
+                  <td className="py-1.5 pr-3 text-right tabular-nums text-muted-foreground">
+                    {fill > 0 ? (seaRate / fill).toFixed(3) : '—'}
+                  </td>
+                  <td className="py-1.5 text-right tabular-nums text-muted-foreground">
+                    {lot > 0 ? (airRate / lot).toFixed(3) : '—'}
+                  </td>
+                  {canManage && (
+                    <td className="py-1.5 pl-3 text-right">
+                      <button type="button" onClick={() => retire(d)} disabled={pending} className="text-[11px] text-muted-foreground underline-offset-2 hover:text-destructive hover:underline disabled:opacity-50">
+                        Retire
+                      </button>
+                    </td>
+                  )}
+                </tr>
+              );
+            })}
+
+            {canManage && (
+              <tr className="border-t bg-muted/30">
+                <td className="py-1.5 pr-3">
+                  <input
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="New destination, e.g. Jeddah (SA)"
+                    disabled={pending}
+                    className={cn(inputCls, 'w-full min-w-[200px]')}
+                  />
+                </td>
+                <td className="py-1.5 pr-3 text-right">
+                  <input value={sea} onChange={(e) => setSea(e.target.value)} type="number" step="1" min="0" placeholder="0" disabled={pending} className={cn(inputCls, 'w-24 text-right')} />
+                </td>
+                <td className="py-1.5 pr-3 text-right">
+                  <input value={air} onChange={(e) => setAir(e.target.value)} type="number" step="1" min="0" placeholder="0" disabled={pending} className={cn(inputCls, 'w-24 text-right')} />
+                </td>
+                <td className="py-1.5 pr-3 text-right tabular-nums text-muted-foreground">
+                  {fill > 0 && sea !== '' ? (Number(sea) / fill).toFixed(3) : '—'}
+                </td>
+                <td className="py-1.5 text-right tabular-nums text-muted-foreground">
+                  {lot > 0 && air !== '' ? (Number(air) / lot).toFixed(3) : '—'}
+                </td>
+                <td className="py-1.5 pl-3 text-right">
+                  <button
+                    type="button"
+                    onClick={add}
+                    disabled={pending || name.trim().length < 2}
+                    className="rounded border px-2 py-0.5 text-[11px] font-medium hover:bg-background disabled:opacity-50"
+                  >
+                    {pending ? 'Adding…' : 'Add'}
+                  </button>
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {canManage && (
+        <p className="text-[11px] text-muted-foreground">
+          A new port is saved against the current version straight away, so enter its real rates now
+          — a port left at zero freight quietly under-prices every quote it appears on.
+        </p>
+      )}
+
+      {canEdit && !isCurrentVersion && (
+        <p className="text-[11px] text-muted-foreground">
+          Ports are added and retired on the current version. Switch to it to change the list.
+        </p>
+      )}
+
+      {error && (
+        <p className="text-[11px] text-destructive">{error}</p>
+      )}
+
+      {canManage && retired.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+          <span>Retired:</span>
+          {retired.map((d) => (
+            <button
+              key={d.id}
+              type="button"
+              onClick={() => restore(d)}
+              disabled={pending}
+              className="rounded border px-1.5 py-0.5 hover:bg-background disabled:opacity-50"
+              title="Bring this destination back"
+            >
+              {d.name} <span className="text-muted-foreground">+</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function SizeGrades({ buckets, canEdit }: { buckets: CostSizeBucket[]; canEdit: boolean }) {
   const router = useRouter();
