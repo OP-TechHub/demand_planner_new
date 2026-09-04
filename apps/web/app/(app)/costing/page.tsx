@@ -49,6 +49,7 @@ export default async function CostingPage() {
       skus={ctx.skus}
       yields={yields}
       authors={authors}
+      currentUserId={profile?.id ?? null}
       isAdmin={(profile?.role ?? 'viewer') === 'admin'}
       canViewBaseCost={baseCost.canView}
     />

@@ -30,6 +30,7 @@ import { BaseCostToggle, COST_SHEET_ID } from '@/components/cost-sheet-parts';
 import { QuoteBuilder } from '@/components/quote-builder';
 import type { QuoteItem, QuoteSource } from '@/components/quote-sheet';
 import { ScrollX } from '@/components/ui/scroll-x';
+import { CostedByFilter, matchesCostedBy, COSTED_BY_ALL, type CostedBy } from '../costed-by-filter';
 import { SkuCostSheet } from './sku-cost-sheet';
 import { MarinadeBuilder } from './marinade-builder';
 import { archiveCostSku, saveCostSku, saveSkuBucketYield, type SkuFormState } from './actions';
@@ -75,11 +76,18 @@ export function SkusClient({
   const [editing, setEditing] = useState<CostSkuRow | null | undefined>(undefined);
   const [query, setQuery] = useState('');
   const [tab, setTab] = useState<'recipe' | 'yields'>('recipe');
+  // Opens on everyone's: narrowing to one person is a deliberate act, and a
+  // list that starts filtered hides recipes a newcomer does not know exist.
+  const [costedBy, setCostedBy] = useState<CostedBy>(COSTED_BY_ALL);
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return q ? skus.filter((s) => s.name.toLowerCase().includes(q) || s.category.toLowerCase().includes(q)) : skus;
-  }, [skus, query]);
+    return skus.filter(
+      (s) =>
+        matchesCostedBy(s, costedBy, currentUserId) &&
+        (!q || s.name.toLowerCase().includes(q) || s.category.toLowerCase().includes(q))
+    );
+  }, [skus, query, costedBy, currentUserId]);
 
   /**
    * You own what you make. Admins may edit any recipe; everyone else may edit
@@ -167,6 +175,13 @@ export function SkusClient({
           ))}
         </div>
         <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find a SKU…" className={cn(inputCls, 'w-48')} />
+        <CostedByFilter
+          skus={skus}
+          currentUserId={currentUserId}
+          authors={authors}
+          value={costedBy}
+          onChange={setCostedBy}
+        />
         <span className="text-xs text-muted-foreground">{visible.length} of {skus.length}</span>
       </div>
 

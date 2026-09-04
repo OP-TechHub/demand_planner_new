@@ -398,6 +398,8 @@ export type CostCurrency = 'LKR' | 'USD';
 export type CostOdcBasis = 'per_kg' | 'per_fish';
 export type CostSkuStatus = 'active' | 'inactive';
 export type CostDestMode = 'single' | 'multi';
+/** Who can open a saved costing: everyone who can read costings, or its owner (and admins). */
+export type CostVisibility = 'public' | 'private';
 export type CostRawMaterialBasis = 'full_fish' | 'absorbed';
 export type CostProductState = 'unglazed' | 'glazed' | 'frozen_plain' | 'frozen_glazed' | 'fresh';
 
@@ -592,6 +594,7 @@ export interface CostCosting {
   assumption_overrides: Record<string, number>;
   bucket_id: string | null;
   destination_mode: CostDestMode;
+  visibility: CostVisibility;
   created_at: string;
   created_by: string;
   deleted_at: string | null;

@@ -15,7 +15,7 @@ import {
   type OverridableField,
 } from '@/lib/costing';
 import { computeCost, type DomesticOutput, type ExportOutput } from '@oceanpick/engine';
-import type { CostMarket, CostProductState } from '@oceanpick/shared';
+import type { CostMarket, CostProductState, CostVisibility } from '@oceanpick/shared';
 
 /**
  * Clean the per-costing assumption overrides posted from the browser.
@@ -75,6 +75,8 @@ export interface SaveCostingInput {
   destinationIds: string[];
   skuIds: string[];
   notes?: string;
+  /** Defaults to public — a costing is opted out of the shared list, not into it. */
+  visibility?: CostVisibility;
   /**
    * Per-costing deviations from the pinned version, keyed by the column names
    * in OVERRIDABLE. Applied to the engine AND stored, so the costing reproduces
@@ -139,6 +141,7 @@ export async function saveCosting(input: SaveCostingInput): Promise<{ error: str
       assumption_overrides: overrides,
       bucket_id: input.bucketId,
       destination_mode: dests.length > 1 ? 'multi' : 'single',
+      visibility: input.visibility ?? 'public',
       created_by: user.id,
       updated_by: user.id,
     })
@@ -302,6 +305,7 @@ export async function duplicateCosting(id: string): Promise<{ error: string | nu
     assumption_overrides: Record<string, number>;
     bucket_id: string | null;
     destination_mode: string;
+    visibility: CostVisibility;
   };
 
   const { data: copy, error } = await supabase
@@ -315,6 +319,9 @@ export async function duplicateCosting(id: string): Promise<{ error: string | nu
       assumption_overrides: source.assumption_overrides,
       bucket_id: source.bucket_id,
       destination_mode: source.destination_mode,
+      // A copy of a private costing stays private: the act of copying is not
+      // the act of publishing, and the numbers came from someone else.
+      visibility: source.visibility,
       created_by: user.id,
       updated_by: user.id,
     })
@@ -378,5 +385,37 @@ export async function deleteCosting(id: string): Promise<{ error: string | null 
   if (error) return { error: error.message };
 
   revalidatePath('/costing/saved');
+  return { error: null };
+}
+
+/**
+ * Publish a costing to the shared list, or pull it back to just you.
+ *
+ * RLS allows the write only for the creator or an admin, and the read policy
+ * then does the hiding — so this is the whole of the feature on the write side.
+ * Returns the row it changed, which is also how a caller learns the update was
+ * refused: a policy denial comes back as zero rows, not as an error.
+ */
+export async function setCostingVisibility(
+  id: string,
+  visibility: CostVisibility
+): Promise<{ error: string | null }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: 'Your session expired. Sign in again.' };
+
+  const { data, error } = await supabase
+    .from('cost_costings')
+    .update({ visibility, updated_by: user.id })
+    .eq('id', id)
+    .is('deleted_at', null)
+    .select('id');
+  if (error) return { error: error.message };
+  if (!data?.length) return { error: 'Only the person who made a costing can change who sees it.' };
+
+  revalidatePath('/costing/saved');
+  revalidatePath(`/costing/saved/${id}`);
   return { error: null };
 }

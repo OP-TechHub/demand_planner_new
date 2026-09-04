@@ -2,11 +2,11 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useTransition } from 'react';
-import { AlertTriangle, Copy, Trash2 } from 'lucide-react';
+import { useMemo, useState, useTransition } from 'react';
+import { AlertTriangle, Copy, Globe, Lock, Trash2 } from 'lucide-react';
 import type { CostCosting } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
-import { deleteCosting, duplicateCosting } from '../actions';
+import { deleteCosting, duplicateCosting, setCostingVisibility } from '../actions';
 
 export interface SavedRow {
   costing: CostCosting;
@@ -15,25 +15,75 @@ export interface SavedRow {
   lineCount: number;
   authorName: string;
   canEdit: boolean;
+  /** Made by the signed-in user — what the Mine tab filters on. */
+  isMine: boolean;
 }
 
+type Tab = 'mine' | 'all';
+
 export function SavedList({ rows }: { rows: SavedRow[] }) {
+  const mine = useMemo(() => rows.filter((r) => r.isMine), [rows]);
+  // Mine is the point of the split, but opening on an empty list reads as a
+  // broken page to someone who has never saved one — so a user with none starts
+  // on the shared list instead.
+  const [tab, setTab] = useState<Tab>(mine.length > 0 ? 'mine' : 'all');
+  const shown = tab === 'mine' ? mine : rows;
+
   return (
     <div className="mx-auto max-w-5xl space-y-4">
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">Saved costings</h1>
         <p className="mt-0.5 text-sm text-muted-foreground">
-          Everyone&apos;s costings are visible here. Only the person who made one can change it — copy
-          one to work from its numbers yourself.
+          Yours are on the first tab. Everything shared with the org is on the second, where only its
+          owner can change it — copy one to work from someone else&apos;s numbers.
         </p>
       </header>
 
-      <div className="divide-y rounded-lg border bg-card">
-        {rows.map((row) => (
-          <Row key={row.costing.id} row={row} />
-        ))}
+      <div className="flex gap-1 border-b">
+        <TabButton active={tab === 'mine'} onClick={() => setTab('mine')}>
+          Mine ({mine.length})
+        </TabButton>
+        <TabButton active={tab === 'all'} onClick={() => setTab('all')}>
+          Everyone ({rows.length})
+        </TabButton>
       </div>
+
+      {shown.length === 0 ? (
+        <div className="rounded-lg border bg-card p-8 text-center text-sm text-muted-foreground">
+          You haven&apos;t saved a costing yet.
+        </div>
+      ) : (
+        <div className="divide-y rounded-lg border bg-card">
+          {shown.map((row) => (
+            <Row key={row.costing.id} row={row} />
+          ))}
+        </div>
+      )}
     </div>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        '-mb-px border-b-2 px-3 py-1.5 text-sm',
+        active
+          ? 'border-primary font-medium text-foreground'
+          : 'border-transparent text-muted-foreground hover:text-foreground'
+      )}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -42,6 +92,7 @@ function Row({ row }: { row: SavedRow }) {
   const [pending, startTransition] = useTransition();
   const c = row.costing;
   const overridden = Object.keys(c.assumption_overrides ?? {}).length > 0;
+  const isPrivate = c.visibility === 'private';
 
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 p-3">
@@ -61,6 +112,19 @@ function Row({ row }: { row: SavedRow }) {
       </div>
 
       <div className="flex items-center gap-2">
+        {/* On the badge, not only behind the toggle: an admin reading the
+            Everyone tab is looking at work its author has not published, and
+            that has to be obvious before they quote from it. */}
+        {isPrivate && (
+          <span
+            className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] text-muted-foreground"
+            title={row.isMine ? 'Only you can see this' : `Private to ${row.authorName}`}
+          >
+            <Lock className="h-3 w-3" />
+            private
+          </span>
+        )}
+
         <span
           className={cn(
             'rounded-full border px-2 py-0.5 text-[11px]',
@@ -105,6 +169,24 @@ function Row({ row }: { row: SavedRow }) {
         >
           <Copy className="h-3.5 w-3.5" />
         </button>
+
+        {row.canEdit && (
+          <button
+            disabled={pending}
+            onClick={() =>
+              startTransition(async () => {
+                const res = await setCostingVisibility(c.id, isPrivate ? 'public' : 'private');
+                if (res.error) alert(res.error);
+                router.refresh();
+              })
+            }
+            className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+            aria-label={isPrivate ? `Share ${c.name} with everyone` : `Make ${c.name} private`}
+            title={isPrivate ? 'Share with everyone' : 'Make private — only you will see it'}
+          >
+            {isPrivate ? <Globe className="h-3.5 w-3.5" /> : <Lock className="h-3.5 w-3.5" />}
+          </button>
+        )}
 
         {row.canEdit && (
           <button
