@@ -1,5 +1,11 @@
 import { getProfile } from '@/lib/plan';
-import { canEditAssumptions, type CostOdcComponentRow, type UserRole } from '@oceanpick/shared';
+import {
+  canEditAssumptions,
+  type CostDestinationRow,
+  type CostOdcComponentRow,
+  type UserRole,
+} from '@oceanpick/shared';
+import { createClient } from '@/lib/supabase/server';
 import { forClient, getBaseCostAccess, loadCostingContext, maskBaseCost } from '@/lib/costing';
 import { CostingSetupNotice } from '../setup-notice';
 import { AssumptionsClient } from './assumptions-client';
@@ -35,6 +41,16 @@ export default async function AssumptionsPage({
   ]);
   if (!ctx) return <CostingSetupNotice />;
 
+  // Retired ports, which the costing context deliberately leaves out — nothing
+  // prices against them. They are here only so this screen can offer to bring
+  // one back, instead of it disappearing the moment someone retires it.
+  const supabase = await createClient();
+  const { data: retired } = await supabase
+    .from('cost_destinations')
+    .select('*')
+    .eq('is_active', false)
+    .order('sort_order');
+
   const rates = Object.fromEntries(
     [...ctx.rates.entries()].map(([id, r]) => [id, { sea: r.sea_rate_per_20ft, air: r.air_rate_per_lot }])
   );
@@ -54,6 +70,7 @@ export default async function AssumptionsPage({
       odc={odc}
       buckets={ctx.buckets}
       destinations={ctx.destinations}
+      retiredDestinations={(retired ?? []) as CostDestinationRow[]}
       rates={rates}
       isAdmin={(profile?.role ?? 'viewer') === 'admin'}
       canViewBaseCost={baseCost.canView}
