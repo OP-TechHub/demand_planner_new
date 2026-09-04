@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Download, FileDown, FileSignature, FileText, Printer, Save, AlertTriangle } from 'lucide-react';
+import { Download, FileDown, FileSignature, FileText, Globe, Lock, Printer, Save, AlertTriangle } from 'lucide-react';
 import { computeCost, type CostResult, type DomesticOutput, type ExportOutput } from '@oceanpick/engine';
 import type {
   CostAssumptionVersion,
@@ -12,6 +12,7 @@ import type {
   CostOdcComponentRow,
   CostSizeBucket,
   CostSkuRow,
+  CostVisibility,
 } from '@oceanpick/shared';
 import { toAssumptions, toBucket, toDestination, toSku } from '@/lib/costing-adapt';
 import { toCsv, downloadCsv } from '@/lib/csv';
@@ -24,6 +25,7 @@ import { BaseCostToggle, COST_SHEET_ID } from '@/components/cost-sheet-parts';
 import { QuoteBuilder } from '@/components/quote-builder';
 import type { QuoteItem } from '@/components/quote-sheet';
 import { SkuCostSheet } from './skus/sku-cost-sheet';
+import { CostedByFilter, matchesCostedBy, COSTED_BY_ALL, type CostedBy } from './costed-by-filter';
 import { saveCosting } from './actions';
 
 export type RateMap = Record<string, { sea: number; air: number }>;
@@ -57,6 +59,7 @@ export function CostGridClient({
   skus,
   yields,
   authors,
+  currentUserId,
   isAdmin,
   canViewBaseCost,
 }: {
@@ -68,6 +71,8 @@ export function CostGridClient({
   skus: CostSkuRow[];
   yields: YieldMap;
   authors: Record<string, string>;
+  /** Null when the profile could not be read — the Created by me filter is then not offered. */
+  currentUserId: string | null;
   isAdmin: boolean;
   /**
    * Whether this user may see what the fish costs to grow. False means the
@@ -85,6 +90,9 @@ export function CostGridClient({
   );
   const [showInactive, setShowInactive] = useState(false);
   const [query, setQuery] = useState('');
+  // Everyone's by default. The grid exists to compare across the range, so it
+  // must not open on a subset a reader has not asked for.
+  const [costedBy, setCostedBy] = useState<CostedBy>(COSTED_BY_ALL);
   const [saving, setSaving] = useState(false);
   // The row whose breakdown document is open, for preview / print / Word.
   const [sheetRow, setSheetRow] = useState<Row | null>(null);
@@ -114,6 +122,7 @@ export function CostGridClient({
     return skus.filter(
       (s) =>
         (showInactive || s.status === 'active') &&
+        matchesCostedBy(s, costedBy, currentUserId) &&
         // A SKU can declare itself domestic-only or export-only; 'both' is the
         // default and the seeded behaviour.
         (s.market_scope === 'both' || s.market_scope === market) &&
@@ -125,7 +134,7 @@ export function CostGridClient({
           (s.customer ?? '').toLowerCase().includes(q) ||
           authorOf(s, authors).toLowerCase().includes(q))
     );
-  }, [skus, showInactive, query, market, authors]);
+  }, [skus, showInactive, query, market, authors, costedBy, currentUserId]);
 
   /**
    * Every visible row, recomputed whenever an input changes. Domestic has no
@@ -210,10 +219,16 @@ export function CostGridClient({
     if (!ok) alert('Could not build the document — the breakdown sheet was not found on the page.');
   }
 
-  function onSave(name: string, skuIds: string[], overrides: Partial<Record<OverridableField, number>>) {
+  function onSave(
+    name: string,
+    skuIds: string[],
+    overrides: Partial<Record<OverridableField, number>>,
+    visibility: CostVisibility
+  ) {
     startTransition(async () => {
       const res = await saveCosting({
         name,
+        visibility,
         market,
         versionId: version.id,
         bucketId: bucketId || null,
@@ -270,6 +285,11 @@ export function CostGridClient({
         setShowInactive={setShowInactive}
         query={query}
         setQuery={setQuery}
+        skus={skus}
+        currentUserId={currentUserId}
+        authors={authors}
+        costedBy={costedBy}
+        setCostedBy={setCostedBy}
         version={version}
       />
 
@@ -441,6 +461,11 @@ function Controls({
   setShowInactive,
   query,
   setQuery,
+  skus,
+  currentUserId,
+  authors,
+  costedBy,
+  setCostedBy,
   version,
 }: {
   market: CostMarket;
@@ -455,6 +480,11 @@ function Controls({
   setShowInactive: (v: boolean) => void;
   query: string;
   setQuery: (v: string) => void;
+  skus: CostSkuRow[];
+  currentUserId: string | null;
+  authors: Record<string, string>;
+  costedBy: CostedBy;
+  setCostedBy: (v: CostedBy) => void;
   version: CostAssumptionVersion;
 }) {
   const multi = selectedDests.length > 1;
@@ -508,6 +538,8 @@ function Controls({
             className={cn(selectCls, 'w-48')}
           />
         </label>
+
+        <CostedByFilter skus={skus} currentUserId={currentUserId} authors={authors} value={costedBy} onChange={setCostedBy} />
 
         <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} />
@@ -1036,6 +1068,37 @@ function Legend() {
  * items is not saved as a snapshot of all thirty. Everything costable starts
  * ticked — saving the lot was the old behaviour and stays one click away.
  */
+/** One half of the shared/private pair in the save dialog. */
+function VisibilityChoice({
+  active,
+  onClick,
+  icon,
+  label,
+  hint,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: React.ReactNode;
+  label: string;
+  hint: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={hint}
+      aria-pressed={active}
+      className={cn(
+        'inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs',
+        active ? 'border-primary bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted'
+      )}
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
+
 function SaveDialog({
   skus,
   brokenSkuIds,
@@ -1055,12 +1118,16 @@ function SaveDialog({
   onSave: (
     name: string,
     skuIds: string[],
-    overrides: Partial<Record<OverridableField, number>>
+    overrides: Partial<Record<OverridableField, number>>,
+    visibility: CostVisibility
   ) => void;
   busy: boolean;
 }) {
   const [name, setName] = useState('');
   const [query, setQuery] = useState('');
+  // Public by default: the shared list is the norm, and a draft is opted out of
+  // it rather than every finished costing having to be opted in.
+  const [visibility, setVisibility] = useState<CostVisibility>('public');
   // Raw strings, not numbers: '' has to keep meaning "follow the company
   // value", and a half-typed '0.' is not a number yet.
   const [overrides, setOverrides] = useState<Partial<Record<OverridableField, string>>>({});
@@ -1130,7 +1197,7 @@ function SaveDialog({
 
   const canSave = !!name.trim() && selected.size > 0 && !busy;
   const submit = () => {
-    if (canSave) onSave(name.trim(), [...selected], numericOverrides());
+    if (canSave) onSave(name.trim(), [...selected], numericOverrides(), visibility);
   };
 
   return (
@@ -1152,6 +1219,23 @@ function SaveDialog({
           className="mt-3 w-full rounded-md border px-3 py-2 text-sm"
           onKeyDown={(e) => e.key === 'Enter' && submit()}
         />
+
+        <div className="mt-2 flex items-center gap-1">
+          <VisibilityChoice
+            active={visibility === 'public'}
+            onClick={() => setVisibility('public')}
+            icon={<Globe className="h-3.5 w-3.5" />}
+            label="Shared"
+            hint="Everyone who can read costings sees it"
+          />
+          <VisibilityChoice
+            active={visibility === 'private'}
+            onClick={() => setVisibility('private')}
+            icon={<Lock className="h-3.5 w-3.5" />}
+            label="Private"
+            hint="Only you — you can share it later from Saved costings"
+          />
+        </div>
 
         <div className="mt-4 flex min-h-0 flex-col">
           <div className="mb-1.5 flex items-center justify-between gap-3">

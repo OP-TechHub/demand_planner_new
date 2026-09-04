@@ -1,8 +1,9 @@
 'use client';
 
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
-import { ArrowLeft, Download, FileSignature, FileText, Printer, TrendingDown, TrendingUp } from 'lucide-react';
+import { useMemo, useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
+import { ArrowLeft, Download, FileSignature, FileText, Globe, Lock, Printer, TrendingDown, TrendingUp } from 'lucide-react';
 import {
   COST_STATE_LABEL,
   type CostCosting,
@@ -19,6 +20,7 @@ import { cn } from '@/lib/utils';
 import { BaseCostToggle, num, rec } from '@/components/cost-sheet-parts';
 import { QuoteBuilder } from '@/components/quote-builder';
 import type { QuoteItem } from '@/components/quote-sheet';
+import { setCostingVisibility } from '../../actions';
 import { CostSheet, COST_SHEET_ID } from './cost-sheet';
 
 export interface RepricedLine {
@@ -34,6 +36,7 @@ export function CostingDetail({
   pinnedIsCurrent,
   currentLabel,
   authorName,
+  canEdit,
   repriced,
   showBaseCost,
 }: {
@@ -44,6 +47,8 @@ export function CostingDetail({
   pinnedIsCurrent: boolean;
   currentLabel: string | null;
   authorName: string;
+  /** Its owner, or an admin — who may publish it or pull it back. */
+  canEdit: boolean;
   repriced: Record<string, RepricedLine>;
   /**
    * Whether the reader may see what the fish costs to grow. False also means
@@ -52,6 +57,8 @@ export function CostingDetail({
    */
   showBaseCost: boolean;
 }) {
+  const router = useRouter();
+  const [visibilityPending, startVisibility] = useTransition();
   const [showReprice, setShowReprice] = useState(false);
   const [state, setState] = useState<CostProductState | 'all'>('all');
   // The line whose breakdown sheet is open, for print / Word / preview.
@@ -65,6 +72,7 @@ export function CostingDetail({
   const [includeBaseCost, setIncludeBaseCost] = useState(true);
   const sheetBaseCost = showBaseCost && includeBaseCost;
 
+  const isPrivate = costing.visibility === 'private';
   const overrides = Object.entries(costing.assumption_overrides ?? {});
   const states = useMemo(
     () => [...new Set(lines.map((l) => l.state))] as CostProductState[],
@@ -114,7 +122,21 @@ export function CostingDetail({
 
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">{costing.name}</h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-2xl font-semibold tracking-tight">{costing.name}</h1>
+            {/* Shown to every reader, not just the owner: an admin opening
+                someone else's unpublished draft should know that is what it is
+                before quoting from it. */}
+            {isPrivate && (
+              <span
+                className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] text-muted-foreground"
+                title={canEdit ? 'Not shared — only you and admins can open this' : `Private to ${authorName}`}
+              >
+                <Lock className="h-3 w-3" />
+                private
+              </span>
+            )}
+          </div>
           <p className="mt-0.5 text-sm text-muted-foreground">
             <span className="capitalize">{costing.market}</span> · {authorName} ·{' '}
             {new Date(costing.created_at).toLocaleDateString()}
@@ -134,6 +156,23 @@ export function CostingDetail({
           <button onClick={onExport} className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium hover:bg-muted">
             <Download className="h-3.5 w-3.5" /> Export
           </button>
+          {canEdit && (
+            <button
+              disabled={visibilityPending}
+              onClick={() =>
+                startVisibility(async () => {
+                  const res = await setCostingVisibility(costing.id, isPrivate ? 'public' : 'private');
+                  if (res.error) alert(res.error);
+                  router.refresh();
+                })
+              }
+              className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium hover:bg-muted disabled:opacity-50"
+              title={isPrivate ? 'Everyone who can read costings will see it' : 'Only you will see it'}
+            >
+              {isPrivate ? <Globe className="h-3.5 w-3.5" /> : <Lock className="h-3.5 w-3.5" />}
+              {isPrivate ? 'Share' : 'Make private'}
+            </button>
+          )}
         </div>
       </header>
 

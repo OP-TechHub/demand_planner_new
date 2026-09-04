@@ -27,6 +27,7 @@ import {
   Calculator,
   FileSpreadsheet,
   Tags,
+  ArchiveRestore,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -91,6 +92,7 @@ const SECTIONS: Section[] = [
       { label: 'Plans', href: '/admin/plans', icon: GitFork },
       { label: 'Users', href: '/admin/users', icon: Users },
       { label: 'Audit log', href: '/admin/audit', icon: ScrollText },
+      { label: 'Deleted costings', href: '/costing/archived', icon: ArchiveRestore },
     ],
   },
 ];

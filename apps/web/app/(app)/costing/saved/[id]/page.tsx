@@ -19,6 +19,7 @@ import {
   toDestination,
   toSku,
 } from '@/lib/costing';
+import { getProfile } from '@/lib/plan';
 import { CostingDetail, type RepricedLine } from './costing-detail';
 
 /**
@@ -51,6 +52,9 @@ export default async function SavedCostingPage({ params }: { params: Promise<{ i
     getBaseCostAccess(),
   ]);
 
+  const profile = await getProfile();
+  const canEdit = costing.created_by === profile?.id || profile?.role === 'admin';
+
   const pinned = pinnedRow as CostAssumptionVersion | null;
   const authorName = (authorRow as { full_name: string } | null)?.full_name ?? 'Unknown';
 
@@ -78,6 +82,7 @@ export default async function SavedCostingPage({ params }: { params: Promise<{ i
         current ? `v${current.version.version_no}${current.version.label ? ` · ${current.version.label}` : ''}` : null
       }
       authorName={authorName}
+      canEdit={canEdit}
       repriced={Object.fromEntries(repriced) as Record<string, RepricedLine>}
       showBaseCost={baseCost.canView}
     />

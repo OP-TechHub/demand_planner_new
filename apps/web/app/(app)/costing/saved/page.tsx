@@ -8,9 +8,11 @@ import { SavedList, type SavedRow } from './saved-list';
 /**
  * Every saved costing in the org.
  *
- * Visible to everyone, editable only by whoever made it (Decisions §5). Each
- * row shows the assumptions version it was pinned to, and flags the ones built
- * on overridden numbers so they can't be mistaken for the standard rates.
+ * Editable only by whoever made it (Decisions §5), and now visible on their
+ * terms too: a private costing reaches this query only for its owner and for
+ * admins, because the read policy filters it out for everyone else. Each row
+ * shows the assumptions version it was pinned to, and flags the ones built on
+ * overridden numbers so they can't be mistaken for the standard rates.
  */
 export default async function SavedCostingsPage() {
   const supabase = await createClient();
@@ -72,6 +74,9 @@ export default async function SavedCostingsPage() {
     lineCount: counts.get(c.id) ?? 0,
     authorName: names.get(c.created_by) ?? 'Unknown',
     canEdit: c.created_by === profile?.id || profile?.role === 'admin',
+    // Ownership, not edit rights: an admin may change anyone's costing, but the
+    // Mine tab has to mean the ones they made or it is the old list again.
+    isMine: c.created_by === profile?.id,
   }));
 
   return <SavedList rows={list} />;
