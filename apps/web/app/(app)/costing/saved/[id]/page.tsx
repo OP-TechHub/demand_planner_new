@@ -20,7 +20,7 @@ import {
   toSku,
 } from '@/lib/costing';
 import { getProfile } from '@/lib/plan';
-import { CostingDetail, type RepricedLine } from './costing-detail';
+import { CostingDetail, type AddableSku, type RepricedLine } from './costing-detail';
 
 /**
  * One saved costing, as sent — plus what it would cost at today's assumptions.
@@ -60,6 +60,25 @@ export default async function SavedCostingPage({ params }: { params: Promise<{ i
 
   const repriced = current ? reprice(costing, lines, current) : new Map<string, number>();
 
+  // What the owner may still add. Products already on the sheet are excluded by
+  // their snapshot name — that is what the lines are keyed on, and it is what a
+  // second copy of the same product would collide with. Archived SKUs are left
+  // out: costing on a recipe that has been retired is how a stale price gets
+  // quoted. The list is version-independent, so reading it off the current
+  // context is safe even though the lines are costed on the pinned one.
+  const onCosting = new Set(lines.map((l) => l.sku_name));
+  const addable: AddableSku[] =
+    canEdit && current
+      ? current.skus
+          .filter(
+            (s) =>
+              s.status === 'active' &&
+              !onCosting.has(s.name) &&
+              (s.market_scope === 'both' || s.market_scope === costing.market)
+          )
+          .map((s) => ({ id: s.id, name: s.name, category: s.category, customer: s.customer }))
+      : [];
+
   // The reprice above uses the real assumptions — it runs here, on the server.
   // What goes to the browser is the costing without its base-cost content: the
   // stored whole-fish build-up on each line, and any override of a base-cost
@@ -83,6 +102,7 @@ export default async function SavedCostingPage({ params }: { params: Promise<{ i
       }
       authorName={authorName}
       canEdit={canEdit}
+      addable={addable}
       repriced={Object.fromEntries(repriced) as Record<string, RepricedLine>}
       showBaseCost={baseCost.canView}
     />

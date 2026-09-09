@@ -104,10 +104,12 @@ committing.
   unauthenticated users are redirected to `/login`.
 - **Sign-up approval**: `handle_new_user()` attaches the account to the org; the
   first user is admin, others start `is_active = false` and need admin approval.
-- **Password reset**: `/forgot-password` → `resetPasswordForEmail` → email link →
-  `/auth/callback` (handles both PKCE `?code` and OTP `?token_hash&type=recovery`)
-  → `/reset-password` → `updateUser({ password })`. The reset email is sent by
-  **Supabase Auth** (configure its SMTP + allow-list the callback redirect URL).
+- **Password reset**: `/forgot-password` → `admin.generateLink({ type: 'recovery' })`
+  → email sent via **Resend** → `/auth/callback` (handles both PKCE `?code` and
+  OTP `?token_hash&type=recovery`) → `/reset-password` → `updateUser({ password })`.
+  `generateLink` mints the token **without** mailing, so this Supabase project's
+  SMTP — shared with another app — is left alone. Still allow-list the callback
+  redirect URL in Supabase Auth → URL Configuration.
 
 ### Permissions (`packages/shared`)
 - `UserRole = 'admin' | 'planner' | 'contributor' | 'viewer'`.
@@ -224,9 +226,14 @@ so the UI and DB stay in lockstep.
   **Harvest Plan** changed since the last recalculation; emails each active user
   individually. Dormant unless `RESEND_API_KEY` is set. `RESEND_FROM` should be a
   verified domain. Times are formatted in **Asia/Colombo**.
-- **Password-reset email** — sent by **Supabase Auth**, not Resend. Configure
-  Supabase SMTP (can point at Resend) and **allow-list** `…/auth/callback` in
-  Supabase Auth → URL Configuration.
+- **Password-reset email** — `lib/reset-password-email.ts` +
+  `app/forgot-password/actions.ts`, also over Resend. The token comes from
+  `admin.generateLink` (service role, sends nothing) and we mail the link
+  ourselves, because the project's Supabase SMTP is shared with another app and
+  must not be repointed. **Allow-list** `…/auth/callback` in Supabase Auth → URL
+  Configuration. Without `RESEND_API_KEY` it falls back to Supabase's own mailer.
+  Note the trade-off: Supabase's per-hour email rate limit no longer applies to
+  this route, so add a throttle if the form ever gets abused.
 
 ---
 

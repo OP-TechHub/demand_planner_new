@@ -3,10 +3,24 @@
 import Link from 'next/link';
 import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Download, FileSignature, FileText, Globe, Lock, Printer, TrendingDown, TrendingUp } from 'lucide-react';
+import {
+  ArrowLeft,
+  Download,
+  FileSignature,
+  FileText,
+  Globe,
+  ListPlus,
+  Lock,
+  Printer,
+  Search,
+  TrendingDown,
+  TrendingUp,
+  Trash2,
+} from 'lucide-react';
 import {
   COST_STATE_LABEL,
   type CostCosting,
+  type CostMarket,
   type CostCostingDestination,
   type CostCostingLine,
   type CostProductState,
@@ -20,8 +34,16 @@ import { cn } from '@/lib/utils';
 import { BaseCostToggle, num, rec } from '@/components/cost-sheet-parts';
 import { QuoteBuilder } from '@/components/quote-builder';
 import type { QuoteItem } from '@/components/quote-sheet';
-import { setCostingVisibility } from '../../actions';
+import { addSkusToCosting, removeProductFromCosting, setCostingVisibility } from '../../actions';
 import { CostSheet, COST_SHEET_ID } from './cost-sheet';
+
+/** A SKU the owner may still put on this costing. */
+export interface AddableSku {
+  id: string;
+  name: string;
+  category: string;
+  customer: string;
+}
 
 export interface RepricedLine {
   finalCost: number;
@@ -37,6 +59,7 @@ export function CostingDetail({
   currentLabel,
   authorName,
   canEdit,
+  addable,
   repriced,
   showBaseCost,
 }: {
@@ -47,8 +70,10 @@ export function CostingDetail({
   pinnedIsCurrent: boolean;
   currentLabel: string | null;
   authorName: string;
-  /** Its owner, or an admin — who may publish it or pull it back. */
+  /** Its owner, or an admin — who may publish it, change what is on it, or pull it back. */
   canEdit: boolean;
+  /** Active SKUs for this market that are not on the costing yet. Empty unless canEdit. */
+  addable: AddableSku[];
   repriced: Record<string, RepricedLine>;
   /**
    * Whether the reader may see what the fish costs to grow. False also means
@@ -59,6 +84,7 @@ export function CostingDetail({
 }) {
   const router = useRouter();
   const [visibilityPending, startVisibility] = useTransition();
+  const [productsOpen, setProductsOpen] = useState(false);
   const [showReprice, setShowReprice] = useState(false);
   const [state, setState] = useState<CostProductState | 'all'>('all');
   // The line whose breakdown sheet is open, for print / Word / preview.
@@ -74,6 +100,15 @@ export function CostingDetail({
 
   const isPrivate = costing.visibility === 'private';
   const overrides = Object.entries(costing.assumption_overrides ?? {});
+  // One entry per product on the sheet, however many states and ports it spans.
+  // Keyed by the snapshot name: that is what the lines are unique on and what
+  // removal addresses, and it survives the underlying SKU being deleted.
+  const products = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const l of lines) counts.set(l.sku_name, (counts.get(l.sku_name) ?? 0) + 1);
+    return [...counts].map(([name, lineCount]) => ({ name, lineCount }));
+  }, [lines]);
+
   const states = useMemo(
     () => [...new Set(lines.map((l) => l.state))] as CostProductState[],
     [lines]
@@ -147,6 +182,7 @@ export function CostingDetail({
           <button
             onClick={() => {
               setSheetLine(null);
+              setProductsOpen(false);
               setQuoteOpen(true);
             }}
             className="inline-flex items-center gap-1.5 rounded-md border border-primary bg-primary/10 px-2.5 py-1.5 text-xs font-medium text-primary hover:bg-primary/15"
@@ -156,6 +192,19 @@ export function CostingDetail({
           <button onClick={onExport} className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium hover:bg-muted">
             <Download className="h-3.5 w-3.5" /> Export
           </button>
+          {canEdit && (
+            <button
+              onClick={() => {
+                setSheetLine(null);
+                setQuoteOpen(false);
+                setProductsOpen(true);
+              }}
+              className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium hover:bg-muted"
+              title="Add products to this costing, or take one off"
+            >
+              <ListPlus className="h-3.5 w-3.5" /> Products
+            </button>
+          )}
           {canEdit && (
             <button
               disabled={visibilityPending}
@@ -290,6 +339,7 @@ export function CostingDetail({
                     <button
                       onClick={() => {
                         setQuoteOpen(false);
+                        setProductsOpen(false);
                         setSheetLine(l);
                       }}
                       className="whitespace-nowrap font-medium text-primary hover:underline"
@@ -303,6 +353,16 @@ export function CostingDetail({
           </tbody>
         </table>
       </ScrollX>
+
+      {productsOpen && (
+        <ProductManager
+          costingId={costing.id}
+          products={products}
+          addable={addable}
+          market={costing.market}
+          onClose={() => setProductsOpen(false)}
+        />
+      )}
 
       {quoteOpen && (
         <QuoteBuilder
@@ -366,6 +426,165 @@ export function CostingDetail({
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * Add products to a saved costing, or take one off.
+ *
+ * Both halves in one dialog because they are one question — "what is on this
+ * sheet" — and because doing them apart invites the mistake of adding a
+ * replacement without removing what it replaces.
+ *
+ * Nothing is costed here. The new lines are built on the server against the
+ * costing's own pinned assumptions, so a product added today is priced on the
+ * same basis as the ones saved with it rather than on today's numbers.
+ */
+function ProductManager({
+  costingId,
+  products,
+  addable,
+  market,
+  onClose,
+}: {
+  costingId: string;
+  products: { name: string; lineCount: number }[];
+  addable: AddableSku[];
+  market: CostMarket;
+  onClose: () => void;
+}) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [query, setQuery] = useState('');
+  const [picked, setPicked] = useState<string[]>([]);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return addable;
+    return addable.filter(
+      (s) =>
+        s.name.toLowerCase().includes(q) ||
+        s.category.toLowerCase().includes(q) ||
+        (s.customer ?? '').toLowerCase().includes(q)
+    );
+  }, [addable, query]);
+
+  // The last product cannot go: the server refuses it, and an enabled button
+  // that always fails is worse than a disabled one that explains itself.
+  const isLast = products.length <= 1;
+
+  function onAdd() {
+    if (picked.length === 0) return;
+    startTransition(async () => {
+      const res = await addSkusToCosting(costingId, picked);
+      setMessage(res.error);
+      if (!res.error) setPicked([]);
+      router.refresh();
+    });
+  }
+
+  function onRemove(name: string) {
+    if (!confirm(`Take “${name}” off this costing? Every state and port of it goes with it.`)) return;
+    startTransition(async () => {
+      const res = await removeProductFromCosting(costingId, name);
+      setMessage(res.error);
+      router.refresh();
+    });
+  }
+
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title="Products on this costing"
+      description={`Added products are costed on this costing's pinned ${market} assumptions, not today's.`}
+      className="max-w-2xl"
+      footer={
+        <>
+          <Button variant="outline" onClick={onClose}>
+            Done
+          </Button>
+          <Button onClick={onAdd} disabled={pending || picked.length === 0}>
+            {picked.length === 0 ? 'Add products' : `Add ${picked.length} product${picked.length === 1 ? '' : 's'}`}
+          </Button>
+        </>
+      }
+    >
+      {message && (
+        <p className="mb-3 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
+          {message}
+        </p>
+      )}
+
+      <section className="mb-4">
+        <h3 className="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          On the costing ({products.length})
+        </h3>
+        <div className="flex flex-wrap gap-1.5">
+          {products.map((p) => (
+            <span
+              key={p.name}
+              className="inline-flex items-center gap-1.5 rounded-full border bg-muted/40 py-0.5 pl-2.5 pr-1 text-xs"
+            >
+              {p.name}
+              <span className="text-[10px] text-muted-foreground">{p.lineCount}</span>
+              <button
+                disabled={pending || isLast}
+                onClick={() => onRemove(p.name)}
+                className="rounded-full p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+                aria-label={`Remove ${p.name}`}
+                title={isLast ? 'The last product cannot be removed — delete the costing instead' : `Remove ${p.name}`}
+              >
+                <Trash2 className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+      </section>
+
+      <section>
+        <h3 className="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">Add a product</h3>
+        {addable.length === 0 ? (
+          <p className="rounded-md border bg-muted/30 px-3 py-4 text-center text-xs text-muted-foreground">
+            Every active {market} product is already on this costing.
+          </p>
+        ) : (
+          <>
+            <div className="relative mb-2">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search by product, category or customer"
+                className="w-full rounded-md border bg-background py-1.5 pl-8 pr-2 text-xs outline-none focus:border-primary"
+              />
+            </div>
+            <div className="max-h-64 divide-y overflow-y-auto rounded-md border">
+              {matches.length === 0 ? (
+                <p className="px-3 py-4 text-center text-xs text-muted-foreground">Nothing matches “{query}”.</p>
+              ) : (
+                matches.map((s) => (
+                  <label key={s.id} className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted/40">
+                    <input
+                      type="checkbox"
+                      checked={picked.includes(s.id)}
+                      onChange={(e) =>
+                        setPicked((prev) => (e.target.checked ? [...prev, s.id] : prev.filter((id) => id !== s.id)))
+                      }
+                    />
+                    <span className="min-w-0 flex-1 truncate font-medium">{s.name}</span>
+                    <span className="shrink-0 text-[11px] text-muted-foreground">
+                      {[s.category, s.customer].filter(Boolean).join(' · ')}
+                    </span>
+                  </label>
+                ))
+              )}
+            </div>
+          </>
+        )}
+      </section>
+    </Dialog>
   );
 }
 
