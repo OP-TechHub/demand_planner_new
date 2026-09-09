@@ -12,10 +12,18 @@ import {
   toDestination,
   toSku,
   OVERRIDABLE,
+  type CostingContext,
   type OverridableField,
 } from '@/lib/costing';
 import { computeCost, type DomesticOutput, type ExportOutput } from '@oceanpick/engine';
-import type { CostMarket, CostProductState, CostVisibility } from '@oceanpick/shared';
+import type {
+  CostCosting,
+  CostDestinationRow,
+  CostMarket,
+  CostProductState,
+  CostSkuRow,
+  CostVisibility,
+} from '@oceanpick/shared';
 
 /**
  * Clean the per-costing assumption overrides posted from the browser.
@@ -164,91 +172,17 @@ export async function saveCosting(input: SaveCostingInput): Promise<{ error: str
     if (error) return { error: error.message };
   }
 
-  const lines: Record<string, unknown>[] = [];
-  let sort = 0;
-  const skipped: string[] = [];
-
-  for (const skuRow of skus) {
-    const engineSku = toSku(skuRow, input.market, ctx.yields.get(skuRow.id));
-
-    const targets = input.market === 'domestic' ? [null] : dests;
-    for (const dest of targets) {
-      const result = computeCost({
-        market: input.market,
-        assumptions,
-        sku: engineSku,
-        bucket,
-        destination: dest ? toDestination(dest, ctx.rates.get(dest.id)) : null,
-      });
-
-      // A SKU whose split is broken is not costed, so there is nothing honest to
-      // snapshot for it — record the omission rather than storing a zero.
-      if (!result.ok) {
-        skipped.push(skuRow.name);
-        continue;
-      }
-
-      const absorbed = skuRow.raw_material_basis === 'absorbed';
-      const marketPrice = input.market === 'domestic' ? skuRow.market_price_lkr : skuRow.market_price_usd;
-      const common = {
-        costing_id: costingId,
-        sku_id: skuRow.id,
-        sku_name: skuRow.name,
-        destination_id: dest?.id ?? null,
-        destination_name: dest?.name ?? null,
-        currency: input.market === 'domestic' ? 'LKR' : 'USD',
-        inputs: {
-          yield_used: result.value.result.chain.yieldUsed,
-          glaze_pct: skuRow.glaze_pct,
-          pct_fish: skuRow.pct_fish,
-          pct_marinade: skuRow.pct_marinade,
-          process_usd_per_kg: skuRow.process_usd_per_kg,
-          packing_usd_per_kg: skuRow.packing_usd_per_kg,
-          marinade_usd_per_kg: skuRow.marinade_usd_per_kg,
-          raw_material_basis: skuRow.raw_material_basis,
-          bucket_id: input.bucketId,
-        },
-      };
-
-      if (input.market === 'domestic') {
-        const out = result.value.result as DomesticOutput;
-        for (const [state, s] of [
-          ['unglazed', out.unglazed],
-          ['glazed', out.glazed],
-        ] as [CostProductState, DomesticOutput['unglazed']][]) {
-          lines.push({
-            ...common,
-            state,
-            final_cost: s.finalCost,
-            // Cost-plus for a normal SKU; what the market bears for a by-product,
-            // whose cost is a floor rather than a base for margin (§7).
-            // sellingPrice already resolves target-vs-cost-plus in the engine.
-            selling_price: absorbed ? marketPrice : s.sellingPrice,
-            contribution_per_kg: s.contributionPerKg,
-            outputs: { ...s, chain: out.chain, wholeFish: result.value.wholeFish },
-            sort_order: (sort += 10),
-          });
-        }
-      } else {
-        const out = result.value.result as ExportOutput;
-        for (const [state, s] of [
-          ['frozen_plain', out.frozenPlain],
-          ['frozen_glazed', out.frozenGlazed],
-          ['fresh', out.fresh],
-        ] as [CostProductState, ExportOutput['frozenPlain']][]) {
-          lines.push({
-            ...common,
-            state,
-            final_cost: s.finalCost,
-            selling_price: absorbed ? marketPrice : s.sellingPrice,
-            contribution_per_kg: s.contributionPerKg,
-            outputs: { ...s, chain: out.chain, destination: out.destination, wholeFish: result.value.wholeFish },
-            sort_order: (sort += 10),
-          });
-        }
-      }
-    }
-  }
+  const { lines, skipped } = resolveLines({
+    ctx,
+    costingId,
+    market: input.market,
+    assumptions,
+    bucket,
+    bucketId: input.bucketId,
+    skus,
+    dests,
+    startSort: 0,
+  });
 
   if (lines.length === 0) {
     await supabase.from('cost_costings').delete().eq('id', costingId);
@@ -417,5 +351,274 @@ export async function setCostingVisibility(
 
   revalidatePath('/costing/saved');
   revalidatePath(`/costing/saved/${id}`);
+  return { error: null };
+}
+
+/**
+ * Cost a set of SKUs into rows ready to store on a costing.
+ *
+ * Shared by the initial save and by adding a product to a costing later, so a
+ * line added months afterwards is built exactly like the ones saved on day one:
+ * the same states, the same snapshot fields, and the same refusal to store a
+ * zero for a SKU whose fish/marinade split is broken.
+ */
+function resolveLines(args: {
+  ctx: CostingContext;
+  costingId: string;
+  market: CostMarket;
+  assumptions: ReturnType<typeof toAssumptions>;
+  bucket: ReturnType<typeof toBucket> | null;
+  bucketId: string | null;
+  skus: CostSkuRow[];
+  dests: CostDestinationRow[];
+  /** Where this batch of lines slots into the existing sheet order. */
+  startSort: number;
+}): { lines: Record<string, unknown>[]; skipped: string[] } {
+  const { ctx, costingId, market, assumptions, bucket, bucketId, skus, dests } = args;
+  const lines: Record<string, unknown>[] = [];
+  const skipped: string[] = [];
+  let sort = args.startSort;
+
+  for (const skuRow of skus) {
+    const engineSku = toSku(skuRow, market, ctx.yields.get(skuRow.id));
+
+    const targets = market === 'domestic' ? [null] : dests;
+    for (const dest of targets) {
+      const result = computeCost({
+        market: market,
+        assumptions,
+        sku: engineSku,
+        bucket,
+        destination: dest ? toDestination(dest, ctx.rates.get(dest.id)) : null,
+      });
+
+      // A SKU whose split is broken is not costed, so there is nothing honest to
+      // snapshot for it — record the omission rather than storing a zero.
+      if (!result.ok) {
+        skipped.push(skuRow.name);
+        continue;
+      }
+
+      const absorbed = skuRow.raw_material_basis === 'absorbed';
+      const marketPrice = market === 'domestic' ? skuRow.market_price_lkr : skuRow.market_price_usd;
+      const common = {
+        costing_id: costingId,
+        sku_id: skuRow.id,
+        sku_name: skuRow.name,
+        destination_id: dest?.id ?? null,
+        destination_name: dest?.name ?? null,
+        currency: market === 'domestic' ? 'LKR' : 'USD',
+        inputs: {
+          yield_used: result.value.result.chain.yieldUsed,
+          glaze_pct: skuRow.glaze_pct,
+          pct_fish: skuRow.pct_fish,
+          pct_marinade: skuRow.pct_marinade,
+          process_usd_per_kg: skuRow.process_usd_per_kg,
+          packing_usd_per_kg: skuRow.packing_usd_per_kg,
+          marinade_usd_per_kg: skuRow.marinade_usd_per_kg,
+          raw_material_basis: skuRow.raw_material_basis,
+          bucket_id: bucketId,
+        },
+      };
+
+      if (market === 'domestic') {
+        const out = result.value.result as DomesticOutput;
+        for (const [state, s] of [
+          ['unglazed', out.unglazed],
+          ['glazed', out.glazed],
+        ] as [CostProductState, DomesticOutput['unglazed']][]) {
+          lines.push({
+            ...common,
+            state,
+            final_cost: s.finalCost,
+            // Cost-plus for a normal SKU; what the market bears for a by-product,
+            // whose cost is a floor rather than a base for margin (§7).
+            // sellingPrice already resolves target-vs-cost-plus in the engine.
+            selling_price: absorbed ? marketPrice : s.sellingPrice,
+            contribution_per_kg: s.contributionPerKg,
+            outputs: { ...s, chain: out.chain, wholeFish: result.value.wholeFish },
+            sort_order: (sort += 10),
+          });
+        }
+      } else {
+        const out = result.value.result as ExportOutput;
+        for (const [state, s] of [
+          ['frozen_plain', out.frozenPlain],
+          ['frozen_glazed', out.frozenGlazed],
+          ['fresh', out.fresh],
+        ] as [CostProductState, ExportOutput['frozenPlain']][]) {
+          lines.push({
+            ...common,
+            state,
+            final_cost: s.finalCost,
+            selling_price: absorbed ? marketPrice : s.sellingPrice,
+            contribution_per_kg: s.contributionPerKg,
+            outputs: { ...s, chain: out.chain, destination: out.destination, wholeFish: result.value.wholeFish },
+            sort_order: (sort += 10),
+          });
+        }
+      }
+    }
+  }
+
+
+  return { lines, skipped };
+}
+
+/**
+ * Add products to a costing that has already been saved.
+ *
+ * The new lines are costed on the costing's OWN basis — its pinned assumptions
+ * version, its stored overrides, its bucket, its ports — not on today's
+ * numbers. A sheet whose products were priced off different assumptions would
+ * not be a quote, and the reprice column would have nothing coherent to
+ * compare against.
+ *
+ * RLS allows the insert only for the creator or an admin, and refuses anyone
+ * else outright — the zero-row check after the insert is there for the case
+ * where a policy change turns that refusal into a silent filter instead.
+ */
+export async function addSkusToCosting(
+  costingId: string,
+  skuIds: string[]
+): Promise<{ error: string | null; added?: number }> {
+  if (skuIds.length === 0) return { error: 'Pick at least one product to add.' };
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: 'Your session expired. Sign in again.' };
+
+  const [{ data: costingRow }, { data: destRows }, { data: existingRows }] = await Promise.all([
+    supabase.from('cost_costings').select('*').eq('id', costingId).is('deleted_at', null).maybeSingle(),
+    supabase.from('cost_costing_destinations').select('destination_id').eq('costing_id', costingId),
+    supabase.from('cost_costing_lines').select('sku_name, sort_order').eq('costing_id', costingId),
+  ]);
+  if (!costingRow) return { error: 'That costing no longer exists.' };
+  const costing = costingRow as CostCosting;
+
+  const ctx = await loadCostingContext(costing.version_id);
+  if (!ctx) return { error: 'Costing is not set up yet.' };
+  // loadCostingContext falls back to the current version when the one asked for
+  // is gone. Silently costing on today's assumptions is exactly what this action
+  // must not do, so the fallback is treated as a failure.
+  if (ctx.version.id !== costing.version_id) {
+    return { error: 'The assumptions version this costing was built on no longer exists.' };
+  }
+
+  const assumptions = toAssumptions(applyOverrides(ctx.version, costing.assumption_overrides), ctx.odc);
+  const bucketRow = costing.bucket_id ? ctx.buckets.find((b) => b.id === costing.bucket_id) : null;
+  const bucket = bucketRow ? toBucket(bucketRow) : null;
+
+  const existing = (existingRows ?? []) as { sku_name: string; sort_order: number }[];
+  // Products are identified by their snapshot name, which is what the unique
+  // index on the lines keys on and what survives a SKU being deleted.
+  const already = new Set(existing.map((l) => l.sku_name));
+
+  const picked = ctx.skus.filter((s) => skuIds.includes(s.id));
+  const wrongMarket = picked.filter((s) => s.market_scope !== 'both' && s.market_scope !== costing.market);
+  if (wrongMarket.length > 0) {
+    return {
+      error: `Not costed for the ${costing.market} market: ${wrongMarket.map((s) => s.name).join(', ')}.`,
+    };
+  }
+  const skus = picked.filter((s) => !already.has(s.name));
+  if (skus.length === 0) return { error: 'Those products are already on this costing.' };
+
+  const destIds = ((destRows ?? []) as { destination_id: string }[]).map((d) => d.destination_id);
+  const dests = ctx.destinations.filter((d) => destIds.includes(d.id));
+  if (costing.market === 'export' && dests.length === 0) {
+    return { error: 'Every port on this costing has since been switched off, so there is nothing to cost against.' };
+  }
+
+  const startSort = existing.reduce((max, l) => Math.max(max, l.sort_order), 0) + 10;
+  const { lines, skipped } = resolveLines({
+    ctx,
+    costingId,
+    market: costing.market,
+    assumptions,
+    bucket,
+    bucketId: costing.bucket_id,
+    skus,
+    dests,
+    startSort,
+  });
+
+  if (lines.length === 0) {
+    return { error: 'Nothing could be costed — every product picked has a broken fish/marinade split.' };
+  }
+
+  for (let i = 0; i < lines.length; i += 500) {
+    const { data, error } = await supabase
+      .from('cost_costing_lines')
+      .insert(lines.slice(i, i + 500))
+      .select('id');
+    if (error) return { error: error.message };
+    if (!data?.length) return { error: 'Only the person who made a costing can change what is on it.' };
+  }
+
+  // Stamps updated_at through the touch trigger, so the sheet does not claim to
+  // be untouched since the day it was saved.
+  await supabase.from('cost_costings').update({ updated_by: user.id }).eq('id', costingId);
+
+  revalidatePath('/costing/saved');
+  revalidatePath(`/costing/saved/${costingId}`);
+  // An export SKU that cannot be costed is recorded once per port, so what
+  // actually went on is counted over distinct names, not over the entries.
+  const left = [...new Set(skipped)];
+  const added = skus.length - left.length;
+  return {
+    error: left.length
+      ? `Added ${added}, but ${left.length} were left out for a broken fish/marinade split: ${left.join(', ')}`
+      : null,
+    added,
+  };
+}
+
+/**
+ * Take a product off a costing — every state and every port of it at once.
+ *
+ * Keyed by the snapshot name rather than the SKU id: that is what the lines'
+ * unique index treats as one product within a costing, and it still resolves
+ * when the underlying SKU has since been deleted and the id set to null.
+ *
+ * The last product cannot be removed. An empty costing is not a record of
+ * anything, and a save is refused when nothing can be costed — deleting the
+ * costing is the honest way to end up with none.
+ */
+export async function removeProductFromCosting(
+  costingId: string,
+  skuName: string
+): Promise<{ error: string | null }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: 'Your session expired. Sign in again.' };
+
+  const { data: lineRows } = await supabase
+    .from('cost_costing_lines')
+    .select('sku_name')
+    .eq('costing_id', costingId);
+  const names = new Set(((lineRows ?? []) as { sku_name: string }[]).map((l) => l.sku_name));
+  if (!names.has(skuName)) return { error: 'That product is not on this costing.' };
+  if (names.size <= 1) {
+    return { error: 'This is the only product left — delete the costing itself rather than emptying it.' };
+  }
+
+  const { data, error } = await supabase
+    .from('cost_costing_lines')
+    .delete()
+    .eq('costing_id', costingId)
+    .eq('sku_name', skuName)
+    .select('id');
+  if (error) return { error: error.message };
+  if (!data?.length) return { error: 'Only the person who made a costing can change what is on it.' };
+
+  await supabase.from('cost_costings').update({ updated_by: user.id }).eq('id', costingId);
+
+  revalidatePath('/costing/saved');
+  revalidatePath(`/costing/saved/${costingId}`);
   return { error: null };
 }
