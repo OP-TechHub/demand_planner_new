@@ -147,7 +147,8 @@ export function ImportPrograms({
   }
 
   function downloadTemplate() {
-    const example = ['active', '7372', 'Frozen Barra Portions', 'Woolworths', '15000', '800-1100g', '0.498', '', '', '', '', '7.95', '2.30', '0.40', '0.90', '0.02', '0.26', '0', 'false'];
+    // One value per PROGRAM_CSV_HEADER column, in the same order — keep the two in step.
+    const example = ['active', '7372', 'EXPORT006', 'Frozen Barra Portions', 'Woolworths', '15000', '800-1100g', '0.498', '', '', '', '', '7.95', '2.30', '0.40', '0.90', '0.02', '0.26', '0', 'false'];
     downloadCsv('programs-template.csv', toCsv([[...PROGRAM_CSV_HEADER], example]));
   }
 
