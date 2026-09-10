@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Download, Upload, Boxes, Save, Factory } from 'lucide-react';
 import { toast } from '@/components/ui/toast';
-import { monthLabel, type Bucket, type HarvestCell } from '@oceanpick/shared';
+import { monthLabel, type Bucket, type HarvestCell, type HarvestRequestCell } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 import { toCsv, downloadCsv } from '@/lib/csv';
 import { Button } from '@/components/ui/button';
@@ -31,8 +31,8 @@ export function HarvestClient({
   buckets: Bucket[];
   harvestRows: HarvestCell[];
   canEdit: boolean;
-  /** Processing plant's requested kg WR, keyed by month index. */
-  request: Record<number, number>;
+  /** Processing plant's requested kg WR, one row per month and size. */
+  request: HarvestRequestCell[];
   canEditRequest: boolean;
 }) {
   const router = useRouter();
@@ -58,10 +58,14 @@ export function HarvestClient({
     'sticky left-0 z-10 transition-shadow group-data-[scrolled=true]/scrollx:shadow-[6px_0_8px_-6px_rgba(0,0,0,0.18)]';
 
   // Request plan: local edits until saved. Blank means nothing requested.
-  const initialReq = useMemo(
-    () => Object.fromEntries(Object.entries(request).map(([m, v]) => [m, String(Math.round(v))])) as Record<string, string>,
-    [request]
-  );
+  // Keyed bucket:month, with an empty bucket standing for the sizeless rows
+  // entered before the request carried a size — see the migration that added it.
+  const reqKey = (bucketId: string | null, mo: number) => `${bucketId ?? ''}:${mo}`;
+  const initialReq = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const r of request) out[reqKey(r.bucket_id, r.month_index)] = String(Math.round(r.quantity_kg_wr));
+    return out;
+  }, [request]);
   const [req, setReq] = useState<Record<string, string>>(initialReq);
   const [savingReq, startSaveReq] = useTransition();
   const reqDirty = useMemo(() => {
@@ -69,12 +73,28 @@ export function HarvestClient({
     for (const k of keys) if ((initialReq[k] ?? '') !== (req[k] ?? '')) return true;
     return false;
   }, [initialReq, req]);
-  const reqValue = (mo: number) => Number(req[String(mo)] ?? '') || 0;
+  const reqValue = (bucketId: string | null, mo: number) => Number(req[reqKey(bucketId, mo)] ?? '') || 0;
+
+  // The sizeless line only exists while there is something on it. Once the
+  // plant restates those months by bucket and clears it, the row goes for good
+  // — which is why it is driven by the live edits, not by what was loaded.
+  const hasSizeless = useMemo(
+    () => months.some((mo) => reqValue(null, mo) > 0),
+    [months, req] // eslint-disable-line react-hooks/exhaustive-deps
+  );
+
+  const reqBucketTotal = (bucketId: string | null) =>
+    visibleMonths.reduce((sum, mo) => sum + reqValue(bucketId, mo), 0);
+  const reqMonthTotal = (mo: number) =>
+    buckets.reduce((sum, b) => sum + reqValue(b.id, mo), 0) + reqValue(null, mo);
 
   function saveRequest() {
-    // Send every month in the horizon so cleared cells are removed, not just
-    // left behind at their old value.
-    const entries = months.map((mo) => ({ month_index: mo, quantity_kg_wr: reqValue(mo) }));
+    // Every bucket in every month, so a cleared cell is deleted rather than left
+    // behind at its old value. The sizeless row goes too, so it can be emptied.
+    const entries = months.flatMap((mo) => [
+      ...buckets.map((b) => ({ bucket_id: b.id, month_index: mo, quantity_kg_wr: reqValue(b.id, mo) })),
+      { bucket_id: null, month_index: mo, quantity_kg_wr: reqValue(null, mo) },
+    ]);
     startSaveReq(async () => {
       const res = await saveHarvestRequest(planId, entries);
       if (res.error) toast.error(res.error);
@@ -221,8 +241,9 @@ export function HarvestClient({
               <Factory className="h-4 w-4 text-muted-foreground" /> Harvest Plan — Request Plan
             </h2>
             <p className="text-xs text-muted-foreground">
-              Whole round the <b>processing plant</b> is requesting each month (kg WR). Maintained by the plant on its
-              own permission, and not used by the calc engine — it sits alongside capacity for comparison.
+              Whole round the <b>processing plant</b> is requesting each month, by size bucket (kg WR). Same rows and
+              months as the capacity grid above, so the two compare line for line. Maintained by the plant on its own
+              permission, and not used by the calc engine.
             </p>
           </div>
           {canEditRequest && (
@@ -237,7 +258,7 @@ export function HarvestClient({
             <thead className="bg-muted text-muted-foreground">
               <tr>
                 <th className={cn(stickyCol, 'sticky top-0 z-30 min-w-[10rem] border-b border-border bg-muted px-3 py-2 text-left font-semibold')}>
-                  Month
+                  Bucket
                 </th>
                 {visibleMonths.map((mo) => (
                   <th key={mo} className={cn('sticky top-0 z-20 min-w-[4.5rem] border-b border-border bg-muted px-2 py-2 text-right font-medium', yearStart(mo) && 'border-l border-border')}>
@@ -250,30 +271,63 @@ export function HarvestClient({
               </tr>
             </thead>
             <tbody>
-              <tr className="border-t">
-                <td className={cn(stickyCol, 'min-w-[10rem] border-r bg-card px-3 py-1.5 font-medium')}>Quantity (kg WR)</td>
-                {visibleMonths.map((mo) => (
-                  <td key={mo} className={cn('px-1 py-1 text-right tabular-nums', yearStart(mo) && 'border-l border-border/60')}>
-                    {canEditRequest ? (
-                      <input
-                        type="number"
-                        min={0}
-                        step="1"
-                        value={req[String(mo)] ?? ''}
-                        onChange={(e) => setReq((prev) => ({ ...prev, [String(mo)]: e.target.value }))}
-                        placeholder="0"
-                        aria-label={`Requested quantity for ${monthLabel(planStartDate, mo)}`}
-                        className="w-[4rem] rounded-md border px-1.5 py-0.5 text-right text-xs tabular-nums outline-none focus:ring-2 focus:ring-primary"
-                      />
-                    ) : (
-                      <span className={cn(reqValue(mo) === 0 && 'text-muted-foreground/40')}>
-                        {reqValue(mo).toLocaleString()}
-                      </span>
+              {[
+                ...buckets.map((b) => ({ id: b.id as string | null, name: b.name })),
+                // Kept last and only while it holds something: it is history, not
+                // a bucket, and it must not read as one more size.
+                ...(hasSizeless ? [{ id: null, name: 'No size stated' }] : []),
+              ].map((row) => (
+                <tr key={row.id ?? 'sizeless'} className="border-t hover:bg-muted/30">
+                  <td
+                    className={cn(
+                      stickyCol,
+                      'min-w-[10rem] border-r bg-card px-3 py-1.5 font-medium',
+                      row.id === null && 'italic text-muted-foreground'
                     )}
+                    title={
+                      row.id === null
+                        ? 'Requested before the plan carried sizes. Restate these months by bucket, then clear this row.'
+                        : undefined
+                    }
+                  >
+                    {row.name}
+                  </td>
+                  {visibleMonths.map((mo) => (
+                    <td key={mo} className={cn('px-1 py-1 text-right tabular-nums', yearStart(mo) && 'border-l border-border/60')}>
+                      {canEditRequest ? (
+                        <input
+                          type="number"
+                          min={0}
+                          step="1"
+                          value={req[reqKey(row.id, mo)] ?? ''}
+                          onChange={(e) =>
+                            setReq((prev) => ({ ...prev, [reqKey(row.id, mo)]: e.target.value }))
+                          }
+                          placeholder="0"
+                          aria-label={`Requested ${row.name} for ${monthLabel(planStartDate, mo)}`}
+                          className="w-[4rem] rounded-md border px-1.5 py-0.5 text-right text-xs tabular-nums outline-none focus:ring-2 focus:ring-primary"
+                        />
+                      ) : (
+                        <span className={cn(reqValue(row.id, mo) === 0 && 'text-muted-foreground/40')}>
+                          {reqValue(row.id, mo).toLocaleString()}
+                        </span>
+                      )}
+                    </td>
+                  ))}
+                  <td className="border-l px-3 py-1.5 text-right font-semibold tabular-nums">
+                    {reqBucketTotal(row.id).toLocaleString()}
+                  </td>
+                </tr>
+              ))}
+              <tr className="border-t-2 bg-muted/40 font-semibold">
+                <td className={cn(stickyCol, 'bg-muted/40 px-3 py-1.5')}>TOTAL</td>
+                {visibleMonths.map((mo) => (
+                  <td key={mo} className={cn('px-2 py-1.5 text-right tabular-nums', yearStart(mo) && 'border-l border-border/60')}>
+                    {reqMonthTotal(mo).toLocaleString()}
                   </td>
                 ))}
-                <td className="border-l px-3 py-1.5 text-right font-semibold tabular-nums">
-                  {visibleMonths.reduce((s, mo) => s + reqValue(mo), 0).toLocaleString()}
+                <td className="border-l px-3 py-1.5 text-right tabular-nums">
+                  {visibleMonths.reduce((sum, mo) => sum + reqMonthTotal(mo), 0).toLocaleString()}
                 </td>
               </tr>
             </tbody>

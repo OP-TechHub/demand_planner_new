@@ -105,9 +105,21 @@ export async function saveHarvestCapacity(
  * 'harvest_request' grant — this deliberately does NOT accept the harvest_plan
  * permission. Not an engine input, so it never marks the plan stale.
  */
+/**
+ * Replace the plant's request for this plan, cell by cell.
+ *
+ * Every month in the horizon is sent for every bucket, so a cleared cell is
+ * deleted rather than left behind at its old value — the same contract the
+ * single-row version had, now two-dimensional.
+ *
+ * A null `bucket_id` is a request with no size stated, which is what the rows
+ * entered before the breakdown existed are. They can be cleared but not typed
+ * afresh, so the only null entries this accepts are ones that zero an existing
+ * row: the plant states a size from now on.
+ */
 export async function saveHarvestRequest(
   planId: string,
-  entries: { month_index: number; quantity_kg_wr: number }[]
+  entries: { bucket_id: string | null; month_index: number; quantity_kg_wr: number }[]
 ): Promise<SaveResult> {
   if (!planId) return { error: 'Missing plan.' };
 
@@ -125,45 +137,66 @@ export async function saveHarvestRequest(
   if (!user) return { error: 'Your session expired. Sign in again.' };
 
   // Whole kg WR, matching how harvest capacity is kept.
-  const rounded = entries.map((e) => ({ month_index: e.month_index, quantity_kg_wr: Math.round(e.quantity_kg_wr) }));
-  const upserts = rounded.filter((e) => e.quantity_kg_wr > 0);
-  const deletes = rounded.filter((e) => e.quantity_kg_wr === 0).map((e) => e.month_index);
+  const rounded = entries.map((e) => ({ ...e, quantity_kg_wr: Math.round(e.quantity_kg_wr) }));
+  // A sizeless row is legacy data: it may be cleared, never created.
+  const upserts = rounded.filter((e) => e.quantity_kg_wr > 0 && e.bucket_id);
+  const clears = rounded.filter((e) => e.quantity_kg_wr === 0);
 
   const { data: existingRows } = await supabase
     .from('harvest_request')
-    .select('month_index, quantity_kg_wr')
+    .select('bucket_id, month_index, quantity_kg_wr')
     .eq('plan_id', planId);
-  const existing = new Map<number, number>(
-    (existingRows ?? []).map((r: { month_index: number; quantity_kg_wr: number }) => [r.month_index, Number(r.quantity_kg_wr)])
+  const key = (bucketId: string | null, month: number) => `${bucketId ?? ''}:${month}`;
+  const existing = new Map<string, number>(
+    (existingRows ?? []).map((r: { bucket_id: string | null; month_index: number; quantity_kg_wr: number }) => [
+      key(r.bucket_id, r.month_index),
+      Number(r.quantity_kg_wr),
+    ])
   );
 
   if (upserts.length) {
     const { error } = await supabase.from('harvest_request').upsert(
       upserts.map((e) => ({
-        plan_id: planId, month_index: e.month_index, quantity_kg_wr: e.quantity_kg_wr,
-        created_by: user.id, updated_by: user.id,
+        plan_id: planId, bucket_id: e.bucket_id, month_index: e.month_index,
+        quantity_kg_wr: e.quantity_kg_wr, created_by: user.id, updated_by: user.id,
       })),
-      { onConflict: 'plan_id,month_index' }
+      { onConflict: 'plan_id,month_index,bucket_id' }
     );
     if (error) return { error: requestPermError(error.message) };
   }
 
-  if (deletes.length) {
-    const { error } = await supabase
-      .from('harvest_request').delete().eq('plan_id', planId).in('month_index', deletes);
+  // Deleted one bucket at a time. A single `in` over months would take out every
+  // bucket in those months, including ones this save is not touching.
+  const byBucket = new Map<string | null, number[]>();
+  for (const c of clears) {
+    // Only delete what is actually there — clearing 3,000 empty cells otherwise
+    // sends 3,000 pointless deletes on every save.
+    if (!existing.has(key(c.bucket_id, c.month_index))) continue;
+    const list = byBucket.get(c.bucket_id) ?? [];
+    list.push(c.month_index);
+    byBucket.set(c.bucket_id, list);
+  }
+  for (const [bucketId, monthList] of byBucket) {
+    const q = supabase.from('harvest_request').delete().eq('plan_id', planId).in('month_index', monthList);
+    const { error } = await (bucketId === null ? q.is('bucket_id', null) : q.eq('bucket_id', bucketId));
     if (error) return { error: requestPermError(error.message) };
   }
 
-  const edits: { m: number; old: number; new: number }[] = [];
+  const edits: { b: string | null; m: number; old: number; new: number }[] = [];
   for (const e of rounded) {
-    const old = existing.get(e.month_index) ?? 0;
-    if (old !== e.quantity_kg_wr) edits.push({ m: e.month_index, old, new: e.quantity_kg_wr });
+    const old = existing.get(key(e.bucket_id, e.month_index)) ?? 0;
+    if (old !== e.quantity_kg_wr) edits.push({ b: e.bucket_id, m: e.month_index, old, new: e.quantity_kg_wr });
   }
   edits.sort((a, b) => a.m - b.m);
   const CAP = 40;
   await logAudit(supabase, {
     planId, entityType: 'harvest_request', entityId: planId, action: 'update',
-    changes: { set: upserts.length, cleared: deletes.length, edits: edits.slice(0, CAP), more: Math.max(0, edits.length - CAP) },
+    changes: {
+      set: upserts.length,
+      cleared: [...byBucket.values()].reduce((n, l) => n + l.length, 0),
+      edits: edits.slice(0, CAP),
+      more: Math.max(0, edits.length - CAP),
+    },
   });
   revalidatePath('/harvest-plan');
   return { error: null };

@@ -133,6 +133,21 @@ export interface HarvestCell {
   capacity_kg_wr: number;
 }
 
+/**
+ * One cell of the processing plant's request: how much whole round it wants
+ * landed in a month, at a size.
+ *
+ * `bucket_id` is null on rows entered before the request carried a size at
+ * all. Those are a month's total with no size stated, not a zero — see the
+ * migration that added the column.
+ */
+export interface HarvestRequestCell {
+  plan_id: string;
+  bucket_id: string | null;
+  month_index: number;
+  quantity_kg_wr: number;
+}
+
 /** The fixed planning horizon (months). data-model.md fixes this at 60 for v1. */
 export const HORIZON_MONTHS = 60 as const;
 
