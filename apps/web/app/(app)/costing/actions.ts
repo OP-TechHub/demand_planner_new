@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import {
   applyOverrides,
   getBaseCostAccess,
@@ -308,34 +309,62 @@ export async function duplicateCosting(id: string): Promise<{ error: string | nu
 }
 
 /**
- * Soft-delete a costing. RLS allows this only for its creator or an admin.
+ * Soft-delete a costing: stamp `deleted_at` so it leaves every list but stays
+ * recoverable from the bin.
  *
- * Nothing is erased — the row is stamped and drops out of every read, so an
- * admin can restore it from the bin. That is why this is an UPDATE and not a
- * DELETE, and why the update policy must not test `deleted_at`: a write policy
- * that does refuses the stamp outright (20260910000001).
+ * Runs under the service role, for the same reason `restoreCosting` does. The
+ * read policy on `cost_costings` carries `deleted_at is null`, so the instant
+ * this statement stamps the row, the row stops satisfying that policy — and the
+ * cookie-bound client cannot return a row it is no longer allowed to see. The
+ * database reports that as
+ *   new row violates row-level security policy for table "cost_costings"
+ * which reads like a permission problem and is really a visibility one: the
+ * write was allowed, the row just vanished underneath it.
  *
- * Counted rather than returned. Asking for the row back would apply the read
- * policy to it, and the row has just been stamped deleted — so the count is the
- * only way to tell a refusal from a success without reading a row that is, by
- * then, correctly invisible.
+ * Bypassing RLS means the checks it would have made have to be made here
+ * instead, and they are not optional:
+ *   - the costing is read through the COOKIE client first, so a row the caller
+ *     cannot see cannot be deleted, whatever id they post;
+ *   - the caller must be its creator or an admin, which is what the update
+ *     policy said;
+ *   - every statement is filtered by org_id, which is what keeps one org out of
+ *     another's data once the policy is out of the way.
  */
 export async function deleteCosting(id: string): Promise<{ error: string | null }> {
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) return { error: 'Your session expired.' };
+  if (!user) return { error: 'Your session expired. Sign in again.' };
 
-  const { error, count } = await supabase
+  // Read as the caller: RLS decides here whether this costing exists for them.
+  const { data: row } = await supabase
     .from('cost_costings')
-    .update({ deleted_at: new Date().toISOString(), updated_by: user.id }, { count: 'exact' })
+    .select('id, org_id, created_by')
     .eq('id', id)
-    .is('deleted_at', null);
+    .is('deleted_at', null)
+    .maybeSingle();
+  const costing = row as { id: string; org_id: string; created_by: string } | null;
+  if (!costing) return { error: 'That costing no longer exists.' };
+
+  const { data: meRow } = await supabase.from('users').select('role, org_id').eq('id', user.id).maybeSingle();
+  const me = meRow as { role: string; org_id: string } | null;
+  if (!me) return { error: 'Your session expired. Sign in again.' };
+  if (costing.created_by !== user.id && me.role !== 'admin') {
+    return { error: 'Only the person who made a costing can delete it.' };
+  }
+
+  const svc = createServiceClient();
+  const { data, error } = await svc
+    .from('cost_costings')
+    .update({ deleted_at: new Date().toISOString(), updated_by: user.id })
+    .eq('id', id)
+    .eq('org_id', me.org_id)
+    .is('deleted_at', null)
+    .select('id');
   if (error) return { error: `Could not delete this costing: ${error.message}` };
-  // Strictly zero, not falsy: a null count means the server did not report one,
-  // which is not evidence that the delete failed.
-  if (count === 0) return { error: 'Only the person who made a costing can delete it.' };
+  // Zero rows means someone else deleted it while this page was open.
+  if (!data?.length) return { error: 'That costing has already been deleted — refresh the page.' };
 
   revalidatePath('/costing/saved');
   revalidatePath('/costing/archived');
