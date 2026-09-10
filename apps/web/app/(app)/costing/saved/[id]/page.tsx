@@ -66,17 +66,23 @@ export default async function SavedCostingPage({ params }: { params: Promise<{ i
   // out: costing on a recipe that has been retired is how a stale price gets
   // quoted. The list is version-independent, so reading it off the current
   // context is safe even though the lines are costed on the pinned one.
+  //
+  // Both markets are offered, as the grid now offers them: a market scope says
+  // which grid a recipe was written for, not which costing it may go on. The
+  // scope travels with each entry so the dialog can mark the ones set up for
+  // the other market.
   const onCosting = new Set(lines.map((l) => l.sku_name));
   const addable: AddableSku[] =
     canEdit && current
       ? current.skus
-          .filter(
-            (s) =>
-              s.status === 'active' &&
-              !onCosting.has(s.name) &&
-              (s.market_scope === 'both' || s.market_scope === costing.market)
-          )
-          .map((s) => ({ id: s.id, name: s.name, category: s.category, customer: s.customer }))
+          .filter((s) => s.status === 'active' && !onCosting.has(s.name))
+          .map((s) => ({
+            id: s.id,
+            name: s.name,
+            category: s.category,
+            customer: s.customer,
+            scope: s.market_scope,
+          }))
       : [];
 
   // The reprice above uses the real assumptions — it runs here, on the server.
@@ -132,23 +138,28 @@ function reprice(
     const skuRow = ctx.skus.find((s) => s.id === line.sku_id);
     if (!skuRow) continue;
 
+    // The line's own market, read off the currency it was saved in. A costing
+    // can hold both, so the costing's market says nothing about this line.
+    const lineDomestic = line.currency === 'LKR';
+    const lineMarket = lineDomestic ? 'domestic' : 'export';
+
     const destRow = line.destination_id ? ctx.destinations.find((d) => d.id === line.destination_id) : null;
-    if (costing.market === 'export' && !destRow) continue;
+    if (!lineDomestic && !destRow) continue;
 
     const result = computeCost({
-      market: costing.market,
+      market: lineMarket,
       assumptions,
-      sku: toSku(skuRow, costing.market, ctx.yields.get(skuRow.id)),
+      sku: toSku(skuRow, lineMarket, ctx.yields.get(skuRow.id)),
       bucket,
       destination: destRow ? toDestination(destRow, ctx.rates.get(destRow.id)) : null,
     });
     if (!result.ok) continue;
 
     const absorbed = skuRow.raw_material_basis === 'absorbed';
-    const marketPrice = costing.market === 'domestic' ? skuRow.market_price_lkr : skuRow.market_price_usd;
+    const marketPrice = lineDomestic ? skuRow.market_price_lkr : skuRow.market_price_usd;
     const state = line.state as CostProductState;
 
-    if (costing.market === 'domestic') {
+    if (lineDomestic) {
       const o = result.value.result as DomesticOutput;
       const s = state === 'glazed' ? o.glazed : o.unglazed;
       out.set(line.id, {

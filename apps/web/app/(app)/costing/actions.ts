@@ -20,6 +20,7 @@ import type {
   CostCosting,
   CostDestinationRow,
   CostMarket,
+  CostMarketScope,
   CostProductState,
   CostSkuRow,
   CostVisibility,
@@ -261,7 +262,9 @@ export async function duplicateCosting(id: string): Promise<{ error: string | nu
     })
     .select('id')
     .single();
-  if (error || !copy) return { error: error?.message ?? 'Could not copy the costing.' };
+  if (error || !copy) {
+    return { error: error ? `Could not copy this costing: ${error.message}` : 'Could not copy the costing.' };
+  }
   const newId = (copy as { id: string }).id;
 
   const dests = (destRows ?? []) as Record<string, unknown>[];
@@ -304,7 +307,19 @@ export async function duplicateCosting(id: string): Promise<{ error: string | nu
   return { error: null, id: newId };
 }
 
-/** Soft-delete a costing. RLS allows this only for its creator or an admin. */
+/**
+ * Soft-delete a costing. RLS allows this only for its creator or an admin.
+ *
+ * Nothing is erased — the row is stamped and drops out of every read, so an
+ * admin can restore it from the bin. That is why this is an UPDATE and not a
+ * DELETE, and why the update policy must not test `deleted_at`: a write policy
+ * that does refuses the stamp outright (20260910000001).
+ *
+ * Counted rather than returned. Asking for the row back would apply the read
+ * policy to it, and the row has just been stamped deleted — so the count is the
+ * only way to tell a refusal from a success without reading a row that is, by
+ * then, correctly invisible.
+ */
 export async function deleteCosting(id: string): Promise<{ error: string | null }> {
   const supabase = await createClient();
   const {
@@ -312,13 +327,18 @@ export async function deleteCosting(id: string): Promise<{ error: string | null 
   } = await supabase.auth.getUser();
   if (!user) return { error: 'Your session expired.' };
 
-  const { error } = await supabase
+  const { error, count } = await supabase
     .from('cost_costings')
-    .update({ deleted_at: new Date().toISOString(), updated_by: user.id })
-    .eq('id', id);
-  if (error) return { error: error.message };
+    .update({ deleted_at: new Date().toISOString(), updated_by: user.id }, { count: 'exact' })
+    .eq('id', id)
+    .is('deleted_at', null);
+  if (error) return { error: `Could not delete this costing: ${error.message}` };
+  // Strictly zero, not falsy: a null count means the server did not report one,
+  // which is not evidence that the delete failed.
+  if (count === 0) return { error: 'Only the person who made a costing can delete it.' };
 
   revalidatePath('/costing/saved');
+  revalidatePath('/costing/archived');
   return { error: null };
 }
 
@@ -346,7 +366,7 @@ export async function setCostingVisibility(
     .eq('id', id)
     .is('deleted_at', null)
     .select('id');
-  if (error) return { error: error.message };
+  if (error) return { error: `Could not change who sees this costing: ${error.message}` };
   if (!data?.length) return { error: 'Only the person who made a costing can change who sees it.' };
 
   revalidatePath('/costing/saved');
@@ -361,7 +381,30 @@ export async function setCostingVisibility(
  * line added months afterwards is built exactly like the ones saved on day one:
  * the same states, the same snapshot fields, and the same refusal to store a
  * zero for a SKU whose fish/marinade split is broken.
+ *
+ * Each product is costed in ITS OWN market, so one costing can hold rupee
+ * domestic lines beside dollar export ones. A product scoped to both follows
+ * the costing's market — that is what the grid's toggle decides, and it is the
+ * only sensible reading of "both".
  */
+/**
+ * Which market a product is costed in.
+ *
+ * A scope of 'both' is not a market, so it takes the costing's — everything
+ * else is costed the way it was set up, whichever grid it was picked from.
+ */
+function marketForSku(scope: CostMarketScope, costingMarket: CostMarket): CostMarket {
+  return scope === 'both' ? costingMarket : scope;
+}
+
+/** The one port an export product falls back to, as a single-element target list. */
+function defaultDestFor(sku: CostSkuRow, ctx: CostingContext): (CostDestinationRow | null)[] {
+  const preferred = sku.default_destination_id
+    ? ctx.destinations.find((d) => d.id === sku.default_destination_id)
+    : undefined;
+  return [preferred ?? ctx.destinations[0] ?? null];
+}
+
 function resolveLines(args: {
   ctx: CostingContext;
   costingId: string;
@@ -380,12 +423,23 @@ function resolveLines(args: {
   let sort = args.startSort;
 
   for (const skuRow of skus) {
-    const engineSku = toSku(skuRow, market, ctx.yields.get(skuRow.id));
+    const skuMarket = marketForSku(skuRow.market_scope, market);
+    const domesticSku = skuMarket === 'domestic';
+    const engineSku = toSku(skuRow, skuMarket, ctx.yields.get(skuRow.id));
 
-    const targets = market === 'domestic' ? [null] : dests;
+    // An export line needs a port. The costing's chosen ports are used when it
+    // has any — that is how several ports get compared side by side — but a
+    // domestic costing has none, so an export product falls back to the port it
+    // is normally quoted to, and then to the first active one.
+    const targets = domesticSku ? [null] : dests.length ? dests : defaultDestFor(skuRow, ctx);
     for (const dest of targets) {
+      // Nowhere to ship it: no port on the costing and none active at all.
+      if (!domesticSku && !dest) {
+        skipped.push(skuRow.name);
+        continue;
+      }
       const result = computeCost({
-        market: market,
+        market: skuMarket,
         assumptions,
         sku: engineSku,
         bucket,
@@ -400,14 +454,14 @@ function resolveLines(args: {
       }
 
       const absorbed = skuRow.raw_material_basis === 'absorbed';
-      const marketPrice = market === 'domestic' ? skuRow.market_price_lkr : skuRow.market_price_usd;
+      const marketPrice = domesticSku ? skuRow.market_price_lkr : skuRow.market_price_usd;
       const common = {
         costing_id: costingId,
         sku_id: skuRow.id,
         sku_name: skuRow.name,
         destination_id: dest?.id ?? null,
         destination_name: dest?.name ?? null,
-        currency: market === 'domestic' ? 'LKR' : 'USD',
+        currency: domesticSku ? 'LKR' : 'USD',
         inputs: {
           yield_used: result.value.result.chain.yieldUsed,
           glaze_pct: skuRow.glaze_pct,
@@ -417,11 +471,16 @@ function resolveLines(args: {
           packing_usd_per_kg: skuRow.packing_usd_per_kg,
           marinade_usd_per_kg: skuRow.marinade_usd_per_kg,
           raw_material_basis: skuRow.raw_material_basis,
+          // Which market the product was set up for, as against the market this
+          // line was costed in. Snapshotted like everything else here: the
+          // costing has to still read correctly once the SKU has been rescoped
+          // or deleted.
+          market_scope: skuRow.market_scope,
           bucket_id: bucketId,
         },
       };
 
-      if (market === 'domestic') {
+      if (domesticSku) {
         const out = result.value.result as DomesticOutput;
         for (const [state, s] of [
           ['unglazed', out.unglazed],
@@ -516,20 +575,23 @@ export async function addSkusToCosting(
   // index on the lines keys on and what survives a SKU being deleted.
   const already = new Set(existing.map((l) => l.sku_name));
 
-  const picked = ctx.skus.filter((s) => skuIds.includes(s.id));
-  const wrongMarket = picked.filter((s) => s.market_scope !== 'both' && s.market_scope !== costing.market);
-  if (wrongMarket.length > 0) {
-    return {
-      error: `Not costed for the ${costing.market} market: ${wrongMarket.map((s) => s.name).join(', ')}.`,
-    };
-  }
-  const skus = picked.filter((s) => !already.has(s.name));
+  // Market scope is not a gate. It says which grid a recipe was written for,
+  // and the grid now offers both — so refusing here would mean a product you
+  // could put on a costing when you built it could not be added to it later.
+  // The engine costs any recipe in either market; what changes is which
+  // currency's market price it reads, and a missing one shows as no price
+  // rather than a wrong one.
+  const skus = ctx.skus.filter((s) => skuIds.includes(s.id) && !already.has(s.name));
   if (skus.length === 0) return { error: 'Those products are already on this costing.' };
 
   const destIds = ((destRows ?? []) as { destination_id: string }[]).map((d) => d.destination_id);
   const dests = ctx.destinations.filter((d) => destIds.includes(d.id));
-  if (costing.market === 'export' && dests.length === 0) {
-    return { error: 'Every port on this costing has since been switched off, so there is nothing to cost against.' };
+  // No hard refusal for a missing port any more: an export product falls back
+  // to the one it is normally quoted to. Only a costing with no port to reach
+  // at all is stuck, and resolveLines reports that per product rather than
+  // failing the whole batch.
+  if (costing.market === 'export' && dests.length === 0 && ctx.destinations.length === 0) {
+    return { error: 'No active ports, so nothing can be costed for export.' };
   }
 
   const startSort = existing.reduce((max, l) => Math.max(max, l.sort_order), 0) + 10;

@@ -38,7 +38,9 @@ export function CostSheet({
    */
   elementId?: string;
 }) {
-  const domestic = costing.market === 'domestic';
+  // The line's own market, not the costing's: a costing can hold rupee
+  // domestic lines beside dollar export ones, and this sheet is one line.
+  const domestic = line.currency === 'LKR';
   const money = moneyFor(domestic);
   const unit = `${line.currency}/kg`;
 

@@ -8,6 +8,7 @@ import type {
   CostAssumptionVersion,
   CostDestinationRow,
   CostMarket,
+  CostMarketScope,
   CostProductForm,
   CostOdcComponentRow,
   CostSizeBucket,
@@ -34,8 +35,22 @@ export type YieldMap = Record<string, Record<string, number>>;
 /** One grid row: a SKU costed for one destination (export) or none (domestic). */
 interface Row {
   sku: CostSkuRow;
+  /** The market this row was costed in — its product's, not the page toggle's. */
+  market: CostMarket;
   destination: CostDestinationRow | null;
   result: CostResult;
+}
+
+/**
+ * Which market a product is costed in.
+ *
+ * A scope of 'both' is not a market, so it takes the page's — everything else
+ * is costed the way it was set up, whichever grid it was picked from. This is
+ * the same rule the save runs on the server; the two must not drift, or the
+ * grid would show a price the saved costing does not agree with.
+ */
+function marketForSku(scope: CostMarketScope, pageMarket: CostMarket): CostMarket {
+  return scope === 'both' ? pageMarket : scope;
 }
 
 /**
@@ -117,15 +132,24 @@ export function CostGridClient({
     [destinations, selectedDests]
   );
 
+  /**
+   * Every product, in both markets.
+   *
+   * A SKU's market scope says which grid its recipe was WRITTEN for, not which
+   * one it may appear in — the engine costs any recipe in either market, and a
+   * real costing often needs one item from the other side. Hiding them meant
+   * the only way to find out what else existed was to flip the market toggle
+   * and lose the grid you were building.
+   *
+   * The scope is not thrown away: a product from the other market is badged in
+   * its row, so it is picked knowingly rather than by mistake.
+   */
   const visibleSkus = useMemo(() => {
     const q = query.trim().toLowerCase();
     return skus.filter(
       (s) =>
         (showInactive || s.status === 'active') &&
         matchesCostedBy(s, costedBy, currentUserId) &&
-        // A SKU can declare itself domestic-only or export-only; 'both' is the
-        // default and the seeded behaviour.
-        (s.market_scope === 'both' || s.market_scope === market) &&
         // Searching by customer is the point of showing it — "what did we quote
         // Al Rawdah?" is a question the grid should answer directly.
         (!q ||
@@ -134,7 +158,7 @@ export function CostGridClient({
           (s.customer ?? '').toLowerCase().includes(q) ||
           authorOf(s, authors).toLowerCase().includes(q))
     );
-  }, [skus, showInactive, query, market, authors, costedBy, currentUserId]);
+  }, [skus, showInactive, query, authors, costedBy, currentUserId]);
 
   /**
    * Every visible row, recomputed whenever an input changes. Domestic has no
@@ -145,31 +169,55 @@ export function CostGridClient({
     const engineBucket = bucket ? toBucket(bucket) : null;
     const out: Row[] = [];
     for (const sku of visibleSkus) {
-      const engineSku = toSku(sku, market, yields[sku.id]);
-      if (domestic) {
+      const skuMarket = marketForSku(sku.market_scope, market);
+      const engineSku = toSku(sku, skuMarket, yields[sku.id]);
+
+      if (skuMarket === 'domestic') {
         out.push({
           sku,
+          market: skuMarket,
           destination: null,
-          result: computeCost({ market, assumptions, sku: engineSku, bucket: engineBucket }),
+          result: computeCost({ market: skuMarket, assumptions, sku: engineSku, bucket: engineBucket }),
         });
-      } else {
-        for (const d of activeDests) {
-          out.push({
-            sku,
-            destination: d,
-            result: computeCost({
-              market,
-              assumptions,
-              sku: engineSku,
-              bucket: engineBucket,
-              destination: toDestination(d, rateOf(rates, d.id)),
-            }),
-          });
-        }
+        continue;
+      }
+
+      // An export product needs a port. The page's chosen ports are used when
+      // there are any — that is how ports get compared side by side — but the
+      // domestic grid selects none, so it falls back to the port this product
+      // is normally quoted to, and then to the first active one.
+      const ports = activeDests.length
+        ? activeDests
+        : [destinations.find((d) => d.id === sku.default_destination_id) ?? destinations[0]].filter(
+            (d): d is CostDestinationRow => Boolean(d)
+          );
+      for (const d of ports) {
+        out.push({
+          sku,
+          market: skuMarket,
+          destination: d,
+          result: computeCost({
+            market: skuMarket,
+            assumptions,
+            sku: engineSku,
+            bucket: engineBucket,
+            destination: toDestination(d, rateOf(rates, d.id)),
+          }),
+        });
       }
     }
     return out;
-  }, [visibleSkus, market, domestic, assumptions, bucket, activeDests, rates, yields]);
+  }, [visibleSkus, market, assumptions, bucket, activeDests, destinations, rates, yields]);
+
+  // The grid draws a different set of columns for each market — nineteen
+  // against twenty-six — so mixed rows cannot share one table. They get one
+  // section each instead, which is also how they are saved.
+  const domesticRows = useMemo(() => rows.filter((r) => r.market === 'domestic'), [rows]);
+  const exportRows = useMemo(() => rows.filter((r) => r.market === 'export'), [rows]);
+  const exportPorts = useMemo(
+    () => new Set(exportRows.map((r) => r.destination?.id).filter(Boolean)),
+    [exportRows]
+  );
 
   const brokenCount = rows.filter((r) => !r.result.ok).length;
 
@@ -189,7 +237,14 @@ export function CostGridClient({
    * no cost, margin or contribution attached. Follows the filters, so searching
    * for a customer and then quoting them is one move.
    */
-  const quoteItems = useMemo(() => rows.flatMap((r) => quoteItemsFor(r, domestic)), [rows, domestic]);
+  const quoteSources = useMemo(() => {
+    const d = domesticRows.flatMap((r) => quoteItemsFor(r, true));
+    const e = exportRows.flatMap((r) => quoteItemsFor(r, false));
+    return [
+      ...(d.length ? [{ market: 'domestic' as CostMarket, items: d }] : []),
+      ...(e.length ? [{ market: 'export' as CostMarket, items: e }] : []),
+    ];
+  }, [domesticRows, exportRows]);
 
   // Prefilled only when the filtered grid is unanimous — searching a customer's
   // name is how you get here, and guessing from a mixed list would put the
@@ -201,10 +256,14 @@ export function CostGridClient({
   }, [visibleSkus]);
 
   function onExport() {
-    downloadCsv(
-      `costing-${market}-${new Date().toISOString().slice(0, 10)}.csv`,
-      toCsv(csvMatrix(rows, domestic, activeDests.length > 1, authors))
-    );
+    // Two markets means two column layouts, so they cannot share a sheet. The
+    // sections are stacked with a blank line between them rather than split
+    // into two files — one download, and the columns stay readable.
+    const parts: (string | number | null)[][] = [];
+    if (domesticRows.length) parts.push(...csvMatrix(domesticRows, true, false, authors));
+    if (domesticRows.length && exportRows.length) parts.push([], ['Export']);
+    if (exportRows.length) parts.push(...csvMatrix(exportRows, false, exportPorts.size > 1, authors));
+    downloadCsv(`costing-${new Date().toISOString().slice(0, 10)}.csv`, toCsv(parts));
   }
 
   function onSheetWord() {
@@ -261,7 +320,7 @@ export function CostGridClient({
               setQuoteOpen(true);
             }}
             className={cn(btnGhost, 'border-primary bg-primary/10 text-primary hover:bg-primary/15')}
-            disabled={quoteItems.length === 0}
+            disabled={quoteSources.length === 0}
             title="A customer-facing price list from the rows on screen — prices only"
           >
             <FileSignature className="h-3.5 w-3.5" /> Quotation
@@ -301,22 +360,53 @@ export function CostGridClient({
         </p>
       )}
 
-      <Grid
-        rows={rows}
-        domestic={domestic}
-        showDestination={!domestic && activeDests.length > 1}
-        authors={authors}
-        onSheet={(row) => {
-          setQuoteOpen(false);
-          setSheetRow(row);
-        }}
-      />
+      {/*
+        One section per market, and a heading only when both are on screen —
+        a single-market grid should look exactly as it always did.
+      */}
+      {domesticRows.length > 0 && (
+        <>
+          {exportRows.length > 0 && <SectionHeading market="domestic" count={domesticRows.length} />}
+          <Grid
+            rows={domesticRows}
+            domestic
+            showDestination={false}
+            authors={authors}
+            onSheet={(row) => {
+              setQuoteOpen(false);
+              setSheetRow(row);
+            }}
+          />
+        </>
+      )}
+
+      {exportRows.length > 0 && (
+        <>
+          {domesticRows.length > 0 && <SectionHeading market="export" count={exportRows.length} />}
+          <Grid
+            rows={exportRows}
+            domestic={false}
+            showDestination={exportPorts.size > 1}
+            authors={authors}
+            onSheet={(row) => {
+              setQuoteOpen(false);
+              setSheetRow(row);
+            }}
+          />
+        </>
+      )}
+
+      {rows.length === 0 && (
+        <div className="rounded-lg border bg-card p-8 text-center text-sm text-muted-foreground">
+          No SKUs match.
+        </div>
+      )}
 
       <Legend />
 
       {quoteOpen && (
         <QuoteBuilder
-          sources={[{ market, items: quoteItems }]}
+          sources={quoteSources}
           defaultCustomer={quoteCustomer}
           onClose={() => setQuoteOpen(false)}
         />
@@ -385,6 +475,7 @@ export function CostGridClient({
       {saving && (
         <SaveDialog
           skus={visibleSkus}
+          market={market}
           brokenSkuIds={brokenSkuIds}
           authors={authors}
           version={version}
@@ -500,7 +591,11 @@ function Controls({
   return (
     <div className="space-y-2 rounded-lg border bg-card p-3">
       <div className="flex flex-wrap items-center gap-3">
-        {/* Market is a mode, not a second SKU list (Decisions §3). */}
+        {/*
+          Market is a mode, not a second SKU list (Decisions §3) — and since
+          each product is now costed in the market it was set up for, this
+          decides only the ones scoped to BOTH, which is most of them.
+        */}
         <div className="inline-flex rounded-md border p-0.5">
           {(['domestic', 'export'] as const).map((m) => (
             <button
@@ -1039,6 +1134,28 @@ function ByProductBadge() {
   );
 }
 
+/**
+ * The divider between the two market sections.
+ *
+ * Only rendered when both are present, so a grid showing one market is
+ * unchanged. It names the currency because the two tables carry different
+ * columns and different money, and the reader is scrolling between them.
+ */
+function SectionHeading({ market, count }: { market: CostMarket; count: number }) {
+  const domestic = market === 'domestic';
+  return (
+    <div className="flex items-center gap-2 pt-2">
+      <h2 className="text-sm font-semibold tracking-tight">{domestic ? 'Domestic' : 'Export'}</h2>
+      <span className="rounded-full border px-2 py-0.5 text-[11px] text-muted-foreground">
+        {domestic ? 'LKR' : 'USD'}
+      </span>
+      <span className="text-xs text-muted-foreground">
+        {count} {count === 1 ? 'row' : 'rows'}
+      </span>
+    </div>
+  );
+}
+
 function Legend() {
   return (
     <div className="flex flex-wrap gap-x-5 gap-y-1 px-1 text-[11px] text-muted-foreground">
@@ -1051,6 +1168,10 @@ function Legend() {
       </span>
       <span>
         <strong className="font-medium text-foreground">Glaze</strong> dilutes fish cost only
+      </span>
+      <span>
+        <strong className="font-medium text-foreground">Each product</strong> is costed in the market it was set
+        up for; the toggle decides only the ones scoped to both
       </span>
     </div>
   );
@@ -1101,6 +1222,7 @@ function VisibilityChoice({
 
 function SaveDialog({
   skus,
+  market,
   brokenSkuIds,
   authors,
   version,
@@ -1110,6 +1232,7 @@ function SaveDialog({
   busy,
 }: {
   skus: CostSkuRow[];
+  market: CostMarket;
   brokenSkuIds: Set<string>;
   authors: Record<string, string>;
   version: CostAssumptionVersion;
@@ -1289,6 +1412,16 @@ function SaveDialog({
                       <span className="font-medium">{s.name}</span>
                       {s.customer && <span className="text-muted-foreground"> · {s.customer}</span>}
                     </span>
+                    {s.market_scope !== 'both' && s.market_scope !== market && (
+                      <span
+                        className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground"
+                        title={`Set up for the ${s.market_scope} market, and costed as ${s.market_scope} — in ${
+                          s.market_scope === 'domestic' ? 'LKR' : 'USD'
+                        }, whichever market this costing is built on.`}
+                      >
+                        {s.market_scope}
+                      </span>
+                    )}
                     {broken && <span className="shrink-0 text-xs text-destructive">not costed</span>}
                   </label>
                 );

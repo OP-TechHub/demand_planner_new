@@ -21,6 +21,7 @@ import {
   COST_STATE_LABEL,
   type CostCosting,
   type CostMarket,
+  type CostMarketScope,
   type CostCostingDestination,
   type CostCostingLine,
   type CostProductState,
@@ -43,6 +44,8 @@ export interface AddableSku {
   name: string;
   category: string;
   customer: string;
+  /** Which grid its recipe was written for. Advisory — any product may go on any costing. */
+  scope: CostMarketScope;
 }
 
 export interface RepricedLine {
@@ -118,8 +121,36 @@ export function CostingDetail({
     [lines, state]
   );
 
-  const domestic = costing.market === 'domestic';
-  const money = domestic ? (n: number) => Math.round(n).toLocaleString() : (n: number) => n.toFixed(2);
+  // Per line, not per costing: one costing can hold rupee domestic lines beside
+  // dollar export ones, and rupees are whole numbers where dollars carry cents.
+  const money = (n: number, currency: string) =>
+    currency === 'LKR' ? Math.round(n).toLocaleString() : n.toFixed(2);
+
+  // Which markets are actually on this sheet, read off the lines rather than
+  // the costing's own market — that one only decides which market a product
+  // scoped to BOTH was costed in.
+  const currencies = useMemo(() => new Set(lines.map((l) => l.currency)), [lines]);
+  const marketSummary =
+    currencies.size > 1 ? 'Domestic + export' : currencies.has('LKR') ? 'Domestic' : 'Export';
+  // A port belongs to an export line, and those can sit on a costing whose own
+  // market is domestic — so the column follows the lines, not the port list.
+  const showPort = useMemo(() => lines.some((l) => l.destination_name), [lines]);
+
+  /**
+   * The quotation, split by market.
+   *
+   * One source per currency: a quote sheet prices in a single currency, so a
+   * costing spanning both would otherwise put rupees and dollars in one column.
+   * The builder already takes several sources — the SKU page sends two.
+   */
+  const quoteSources = useMemo(() => {
+    const domesticItems = visible.filter((l) => l.currency === 'LKR').map(toQuoteItem);
+    const exportItems = visible.filter((l) => l.currency === 'USD').map(toQuoteItem);
+    return [
+      ...(domesticItems.length ? [{ market: 'domestic' as CostMarket, items: domesticItems }] : []),
+      ...(exportItems.length ? [{ market: 'export' as CostMarket, items: exportItems }] : []),
+    ];
+  }, [visible]);
 
   // Only meaningful once the pinned version is no longer the current one.
   const repriceAvailable = !pinnedIsCurrent && Object.keys(repriced).length > 0;
@@ -136,10 +167,11 @@ export function CostingDetail({
   }
 
   function onExport() {
-    const head = ['SKU', 'Port', 'State', 'Currency', 'FINAL cost', 'Selling price', 'Contribution/kg'];
+    const head = ['SKU', 'Port', 'Market', 'State', 'Currency', 'FINAL cost', 'Selling price', 'Contribution/kg'];
     const body = visible.map((l) => [
       l.sku_name,
       l.destination_name ?? '',
+      l.currency === 'LKR' ? 'Domestic' : 'Export',
       COST_STATE_LABEL[l.state],
       l.currency,
       round(l.final_cost),
@@ -173,7 +205,7 @@ export function CostingDetail({
             )}
           </div>
           <p className="mt-0.5 text-sm text-muted-foreground">
-            <span className="capitalize">{costing.market}</span> · {authorName} ·{' '}
+            {marketSummary} · {authorName} ·{' '}
             {new Date(costing.created_at).toLocaleDateString()}
             {destinations.length > 0 && ` · ${destinations.map((d) => d.destination_name).join(', ')}`}
           </p>
@@ -281,7 +313,13 @@ export function CostingDetail({
           <thead>
             <tr className="text-[10px] uppercase tracking-wide text-muted-foreground">
               <th className={cn(th, 'left-0 z-30 text-left')}>SKU</th>
-              {destinations.length > 1 && <th className={cn(th, 'text-left')}>Port</th>}
+              {showPort && <th className={cn(th, 'text-left')}>Port</th>}
+              <th
+                className={cn(th, 'text-left')}
+                title="Each product is costed in its own market, so one costing can hold both"
+              >
+                Market
+              </th>
               <th className={cn(th, 'text-left')}>State</th>
               <th className={th}>FINAL cost</th>
               <th className={th}>Selling price</th>
@@ -304,14 +342,20 @@ export function CostingDetail({
                   <th className={cn(td, 'sticky left-0 z-10 max-w-[240px] truncate bg-card text-left font-medium')} title={l.sku_name}>
                     {l.sku_name}
                   </th>
-                  {destinations.length > 1 && <td className={cn(td, 'text-left')}>{l.destination_name ?? '—'}</td>}
+                  {showPort && <td className={cn(td, 'text-left')}>{l.destination_name ?? '—'}</td>}
+                  {/* The currency is the market: both are set when the line is
+                      costed, so they cannot drift apart. */}
+                  <td className={cn(td, 'text-left text-muted-foreground')}>
+                    {l.currency === 'LKR' ? 'Domestic' : 'Export'}{' '}
+                    <span className="text-muted-foreground/60">{l.currency}</span>
+                  </td>
                   <td className={cn(td, 'text-left text-muted-foreground')}>{COST_STATE_LABEL[l.state]}</td>
-                  <td className={cn(td, 'font-semibold')}>{money(l.final_cost)}</td>
-                  <td className={td}>{l.selling_price != null ? money(l.selling_price) : '—'}</td>
+                  <td className={cn(td, 'font-semibold')}>{money(l.final_cost, l.currency)}</td>
+                  <td className={td}>{l.selling_price != null ? money(l.selling_price, l.currency) : '—'}</td>
                   <td className={td}>
                     {l.contribution_per_kg != null ? (
                       <span className={l.contribution_per_kg >= 0 ? 'text-success' : 'text-destructive'}>
-                        {money(l.contribution_per_kg)}
+                        {money(l.contribution_per_kg, l.currency)}
                       </span>
                     ) : (
                       '—'
@@ -319,7 +363,7 @@ export function CostingDetail({
                   </td>
                   {showReprice && (
                     <>
-                      <td className={cn(td, 'border-l')}>{now ? money(now.finalCost) : '—'}</td>
+                      <td className={cn(td, 'border-l')}>{now ? money(now.finalCost, l.currency) : '—'}</td>
                       <td className={td}>
                         {delta == null ? (
                           '—'
@@ -329,7 +373,7 @@ export function CostingDetail({
                           <span className={cn('inline-flex items-center gap-1', delta > 0 ? 'text-destructive' : 'text-success')}>
                             {delta > 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
                             {delta > 0 ? '+' : ''}
-                            {money(delta)}
+                            {money(delta, l.currency)}
                           </span>
                         )}
                       </td>
@@ -366,7 +410,7 @@ export function CostingDetail({
 
       {quoteOpen && (
         <QuoteBuilder
-          sources={[{ market: costing.market, items: visible.map(toQuoteItem) }]}
+          sources={quoteSources}
           authorName={authorName}
           onClose={() => setQuoteOpen(false)}
         />
@@ -574,6 +618,14 @@ function ProductManager({
                       }
                     />
                     <span className="min-w-0 flex-1 truncate font-medium">{s.name}</span>
+                    {s.scope !== 'both' && s.scope !== market && (
+                      <span
+                        className="shrink-0 text-[10px] uppercase tracking-wide text-warning"
+                        title={`Set up for the ${s.scope} market. It will be costed on this costing's ${market} basis — check its selling price.`}
+                      >
+                        {s.scope} only
+                      </span>
+                    )}
                     <span className="shrink-0 text-[11px] text-muted-foreground">
                       {[s.category, s.customer].filter(Boolean).join(' · ')}
                     </span>
