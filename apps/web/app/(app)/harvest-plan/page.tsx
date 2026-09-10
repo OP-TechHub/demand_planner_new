@@ -1,6 +1,12 @@
 import { createClient } from '@/lib/supabase/server';
 import { getActivePlan, getProfile, getMyPlanGrants } from '@/lib/plan';
-import { canEditPlanSection, type Bucket, type HarvestCell, type UserRole } from '@oceanpick/shared';
+import {
+  canEditPlanSection,
+  type Bucket,
+  type HarvestCell,
+  type HarvestRequestCell,
+  type UserRole,
+} from '@oceanpick/shared';
 import { fetchAllByPlan } from '@/lib/fetch-all';
 import { HarvestClient } from './harvest-client';
 
@@ -22,7 +28,12 @@ export default async function HarvestPlanPage() {
   const [{ data: buckets }, rows, { data: requestRows }, profile, grants] = await Promise.all([
     supabase.from('buckets').select('*').eq('is_archived', false).order('sort_order'),
     fetchAllByPlan(supabase, 'harvest_plan', '*', plan.id),
-    supabase.from('harvest_request').select('month_index, quantity_kg_wr').eq('plan_id', plan.id),
+    // buckets x 60 stays well under PostgREST's 1000-row cap, unlike capacity,
+    // because a request is stated for the months the plant is actually asking about.
+    supabase
+      .from('harvest_request')
+      .select('plan_id, bucket_id, month_index, quantity_kg_wr')
+      .eq('plan_id', plan.id),
     getProfile(),
     getMyPlanGrants(plan.id),
   ]);
@@ -33,10 +44,13 @@ export default async function HarvestPlanPage() {
   // harvest_plan does not confer it.
   const canEditRequest = canEditPlanSection(plan, me, grants.has('harvest_request'));
 
-  const request: Record<number, number> = {};
-  for (const r of (requestRows ?? []) as { month_index: number; quantity_kg_wr: number }[]) {
-    request[r.month_index] = Number(r.quantity_kg_wr);
-  }
+  // Passed as rows rather than a keyed object: the grid needs the size too, and
+  // a null bucket has to survive the trip intact rather than collapsing into a
+  // month key that cannot tell "no size stated" from a bucket named nothing.
+  const request = ((requestRows ?? []) as HarvestRequestCell[]).map((r) => ({
+    ...r,
+    quantity_kg_wr: Number(r.quantity_kg_wr),
+  }));
 
   return (
     <HarvestClient
