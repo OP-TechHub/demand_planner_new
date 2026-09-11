@@ -500,6 +500,13 @@ function resolveLines(args: {
           packing_usd_per_kg: skuRow.packing_usd_per_kg,
           marinade_usd_per_kg: skuRow.marinade_usd_per_kg,
           raw_material_basis: skuRow.raw_material_basis,
+          primary_input_name: skuRow.primary_input_name,
+          primary_input_cost:
+            skuRow.raw_material_basis === 'ingredient'
+              ? domesticSku
+                ? skuRow.primary_input_cost_lkr
+                : skuRow.primary_input_cost_usd
+              : null,
           // Which market the product was set up for, as against the market this
           // line was costed in. Snapshotted like everything else here: the
           // costing has to still read correctly once the SKU has been rescoped

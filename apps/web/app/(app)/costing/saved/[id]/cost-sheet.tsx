@@ -54,6 +54,12 @@ export function CostSheet({
   const pctFish = num(inputs.pct_fish);
   const pctMarinade = num(inputs.pct_marinade);
   const absorbed = inputs.raw_material_basis === 'absorbed';
+  // Older snapshots predate the ingredient basis and simply have neither key,
+  // which reads as a fish product — which is what they were.
+  const ingredientName =
+    inputs.raw_material_basis === 'ingredient' && typeof inputs.primary_input_name === 'string'
+      ? inputs.primary_input_name
+      : null;
 
   // The stored line is ONE state, so the footer can say plainly whether this
   // figure includes glaze weight — the old wording claimed it never did.
@@ -86,6 +92,25 @@ export function CostSheet({
         </tbody>
       </table>
 
+      {/* A SKU built from a bought-in or transferred-in input never met a
+          fish, so the farm build-up is replaced by the one price that did
+          apply. Snapshotted at save time, like everything else on this page. */}
+      {ingredientName ? (
+        <>
+          <h2 style={S.h2}>Primary ingredient</h2>
+          <table style={S.table}>
+            <tbody>
+              <Row
+                label={`${ingredientName} (${line.currency} per kg of input)`}
+                value={num(inputs.primary_input_cost) ?? num(chain.inputCost)}
+                fmt={money}
+                emphasis
+              />
+            </tbody>
+          </table>
+        </>
+      ) : (
+        <>
       <h2 style={S.h2}>Whole fish, ex-farm</h2>
       <table style={S.table}>
         <tbody>
@@ -105,6 +130,8 @@ export function CostSheet({
           />
         </tbody>
       </table>
+        </>
+      )}
 
       <h2 style={S.h2}>Cost build-up ({unit})</h2>
       <table style={S.table}>
@@ -113,7 +140,7 @@ export function CostSheet({
             label={
               absorbed
                 ? 'Fish component — by-product, raw material absorbed by the main product'
-                : `Fish component${pctFish != null ? ` — ${asPct(pctFish)} of pack, at ${asPct(yieldUsed)} yield` : ''}`
+                : `${ingredientName ?? 'Fish'} component${pctFish != null ? ` — ${asPct(pctFish)} of pack, at ${asPct(yieldUsed)} yield` : ''}`
             }
             value={num(chain.fishComponent)}
             fmt={money}

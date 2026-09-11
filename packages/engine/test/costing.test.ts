@@ -142,6 +142,114 @@ describe('by-products: absorbed raw material (Decisions §7)', () => {
   });
 });
 
+describe('primary-ingredient basis: products not made from whole fish', () => {
+  // Fish maw: wet swim bladder dried down four to one. Nothing here is in the
+  // workbook — it is the third basis, and the point of it is that only the
+  // input price changes. Built off a real SKU so the downstream costs are the
+  // ones the engine actually charges.
+  const base = skuNamed('Skin-on fillet');
+  const maw = (over: Partial<CostSku> = {}): CostSku => ({
+    ...base,
+    name: 'Fish maw (dried)',
+    rawMaterialBasis: 'ingredient',
+    primaryInputName: 'wet swim bladder',
+    primaryInputCost: 2000,
+    baseYield: 0.25,
+    ...over,
+  });
+
+  it('costs the ingredient the way it costs a fish: price ÷ yield', () => {
+    const out = ok(domestic(maw())).value.result as DomesticOutput;
+    expect(out.chain.inputCost).toBe(2000);
+    expect(out.chain.fishComponent).toBeCloseTo(2000 / 0.25, 9);
+  });
+
+  it('ignores the whole-fish cost entirely', () => {
+    // Same SKU on both bases: the only figure that moves is the input, and it
+    // moves by exactly the difference between the two input prices ÷ yield.
+    const asFish = ok(domestic({ ...maw(), rawMaterialBasis: 'full_fish' })).value.result as DomesticOutput;
+    const asMaw = ok(domestic(maw())).value.result as DomesticOutput;
+    const delta = (asFish.chain.inputCost - 2000) / 0.25;
+    expect(asMaw.chain.finalCost).toBeCloseTo(asFish.chain.finalCost - delta, 9);
+    expect(asMaw.chain.inputCost).not.toBe(asFish.chain.inputCost);
+  });
+
+  it('charges the downstream costs unchanged', () => {
+    const out = ok(domestic(maw())).value.result as DomesticOutput;
+    const fish = ok(domestic(base)).value.result as DomesticOutput;
+    for (const k of ['process', 'packing', 'coldHold', 'freight'] as const) {
+      expect(out.chain[k], k).toBeCloseTo(fish.chain[k], 9);
+    }
+  });
+
+  it('prices on margin, not contribution: this is a product we sell, not a leftover', () => {
+    const res = ok(domestic(maw({ marketPrice: 30000 })));
+    expect(res.value.pricingBasis).toBe('margin');
+    const out = res.value.result as DomesticOutput;
+    expect(out.unglazed.rackRate).toBeGreaterThan(out.unglazed.finalCost);
+  });
+
+  it('lets glaze dilute the ingredient, exactly as it dilutes fish', () => {
+    const out = ok(domestic(maw({ glazePct: 0.2 }))).value.result as DomesticOutput;
+    expect(out.glazed.finalCost).toBeCloseTo(
+      out.chain.finalCost - out.chain.fishComponent * (0.2 / 1.2),
+      9
+    );
+    expect(out.glazed.finalCost).toBeLessThan(out.unglazed.finalCost);
+  });
+
+  it('reports the return on the ingredient, not on a fish it never bought', () => {
+    const out = ok(domestic(maw({ pricingMode: 'target', targetPrice: 30000 }))).value
+      .result as DomesticOutput;
+    const conversion = out.chain.finalCost - out.chain.fishComponent;
+    expect(out.unglazed.wholeRoundMarginPerKg).toBeCloseTo((30000 - conversion) * 0.25 - 2000, 9);
+    expect(out.unglazed.wholeRoundMarginPct).toBeCloseTo(
+      out.unglazed.wholeRoundMarginPerKg! / 2000,
+      9
+    );
+  });
+
+  it('treats a zero input cost as free, not as an error', () => {
+    // The transfer-price case: the bladder came off our own harvest and the
+    // fillet already paid for the fish. The maw then carries drying and
+    // packing only, and there is no denominator for a return.
+    const out = ok(domestic(maw({ primaryInputCost: 0 }))).value.result as DomesticOutput;
+    expect(out.chain.fishComponent).toBe(0);
+    expect(out.unglazed.wholeRoundMarginPct).toBeNull();
+    // Absent reads the same as zero: an input nobody has priced is not charged.
+    const unset = ok(domestic(maw({ primaryInputCost: null }))).value.result as DomesticOutput;
+    expect(unset.chain.finalCost).toBeCloseTo(out.chain.finalCost, 9);
+  });
+
+  it('still demands a yield, because the input still has to convert', () => {
+    const issues = validateCostInput({
+      market: 'domestic',
+      assumptions: A,
+      sku: maw({ baseYield: 0 }),
+    });
+    expect(issues.map((i) => i.code)).toContain('invalid_yield');
+  });
+
+  it('carries the ingredient through the export chain too', () => {
+    const out = ok(exported(maw({ primaryInputCost: 6 }))).value.result as ExportOutput;
+    expect(out.chain.inputCost).toBe(6);
+    expect(out.chain.fishComponent).toBeCloseTo(24, 9);
+    expect(out.frozenPlain.fob).toBeGreaterThan(out.chain.finalCost);
+  });
+
+  it('leaves inputCost equal to the whole fish on every other basis', () => {
+    // The chain grew a field; the 34 workbook SKUs must not notice.
+    for (const sku of v11Skus()) {
+      const c = ok(domestic(sku)).value.result.chain;
+      expect(c.inputCost, sku.name).toBe(c.wholeFish);
+    }
+    const belly = ok(domestic({ ...skuNamed('Belly flaps'), rawMaterialBasis: 'absorbed' })).value
+      .result.chain;
+    expect(belly.inputCost).toBe(belly.wholeFish);
+    expect(belly.fishComponent).toBe(0);
+  });
+});
+
 describe('size buckets', () => {
   const buckets = v11Buckets();
   const fillet = skuNamed('Skin-on fillet');

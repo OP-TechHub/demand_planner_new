@@ -21,6 +21,7 @@ export function SkuCostSheet({
   authorName,
   glazePct,
   absorbed,
+  ingredientName,
   productForm,
   gradeLabel,
   pctFish,
@@ -40,6 +41,13 @@ export function SkuCostSheet({
   authorName?: string | null;
   glazePct: number;
   absorbed: boolean;
+  /**
+   * What this SKU is built from when it does not start from a whole fish, e.g.
+   * wet swim bladder. Null on a fish product. Named on every line the fish
+   * would otherwise own, because a sheet reading "fish component" over a maw
+   * costing is simply wrong.
+   */
+  ingredientName?: string | null;
   /**
    * Which states this SKU is actually sold in. The engine costs all three
    * export states whatever the SKU is, because fresh and frozen-no-glaze share
@@ -101,7 +109,16 @@ export function SkuCostSheet({
           />
           <Meta label="Size grade" value={gradeLabel ?? 'Reference size (no grade)'} />
           {glazePct > 0 && <Meta label="Glaze" value={asPct(glazePct)} />}
-          <Meta label="Raw material" value={absorbed ? 'Absorbed by-product' : 'Full fish'} />
+          <Meta
+            label="Raw material"
+            value={
+              absorbed
+                ? 'Absorbed by-product'
+                : ingredientName
+                  ? `Primary ingredient — ${ingredientName}`
+                  : 'Full fish'
+            }
+          />
           <Meta label="Assumptions" value={assumptionsLabel} />
         </tbody>
       </table>
@@ -115,6 +132,7 @@ export function SkuCostSheet({
           wholeFish={domesticWholeFish}
           glazePct={glazePct}
           absorbed={absorbed}
+          ingredientName={ingredientName}
           pctFish={pctFish}
           pctMarinade={pctMarinade}
           showBaseCost={showBaseCost}
@@ -159,6 +177,7 @@ export function SkuCostSheet({
           wholeFish={exportWholeFish}
           glazePct={glazePct}
           absorbed={absorbed}
+          ingredientName={ingredientName}
           pctFish={pctFish}
           pctMarinade={pctMarinade}
           showBaseCost={showBaseCost}
@@ -248,6 +267,7 @@ function MarketSection({
   showBaseCost,
   glazePct,
   absorbed,
+  ingredientName,
   pctFish,
   pctMarinade,
   states,
@@ -260,6 +280,7 @@ function MarketSection({
   showBaseCost: boolean;
   glazePct: number;
   absorbed: boolean;
+  ingredientName?: string | null;
   pctFish: number;
   pctMarinade: number;
   states: { label: string; finalCost: number; rows: SheetStateRow[] }[];
@@ -277,7 +298,24 @@ function MarketSection({
         {heading} — {unit}
       </h2>
 
-      {wholeFish && (
+      {/* The farm build-up belongs to a fish. A SKU built from bought-in or
+          transferred-in input gets its own one-line price in the same slot,
+          and never the feed-and-FCR story behind a fish it never met. */}
+      {ingredientName ? (
+        <>
+          <h3 style={S.h3}>Primary ingredient</h3>
+          <table style={S.table}>
+            <tbody>
+              <Row
+                label={`${ingredientName} (${currency} per kg of input)`}
+                value={chain.inputCost}
+                fmt={money}
+                emphasis
+              />
+            </tbody>
+          </table>
+        </>
+      ) : wholeFish && (
         <>
           <h3 style={S.h3}>Whole fish, ex-farm</h3>
           <table style={S.table}>
@@ -308,7 +346,7 @@ function MarketSection({
             label={
               absorbed
                 ? 'Fish component — by-product, raw material absorbed by the main product'
-                : `Fish component — ${asPct(pctFish)} of pack, at ${asPct(chain.yieldUsed)} yield`
+                : `${ingredientName ?? 'Fish'} component — ${asPct(pctFish)} of pack, at ${asPct(chain.yieldUsed)} yield`
             }
             value={chain.fishComponent}
             fmt={money}

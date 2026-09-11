@@ -48,9 +48,11 @@ export function validateCostInput(input: CostInput): CostIssue[] {
     });
   }
 
-  // Yield only divides the fish component, so it only matters when the SKU
-  // actually carries fish. An absorbed by-product is unaffected by it.
-  if (sku.rawMaterialBasis === 'full_fish') {
+  // Yield only divides the raw input, so it only matters when the SKU carries
+  // one. An absorbed by-product is unaffected by it; an ingredient SKU needs
+  // it exactly as much as a fish one does, since it is what turns a kg of wet
+  // swim bladder into a kg of dried maw.
+  if (sku.rawMaterialBasis !== 'absorbed') {
     const y = resolveYield(sku, input.bucket);
     if (!(y > 0)) {
       issues.push({ code: 'invalid_yield', message: `yield must be greater than 0, got ${y}` });
@@ -83,9 +85,20 @@ export function costChain(input: CostInput): CostChain {
 
   const wholeFish = domestic ? wf.wholeFishLkr : wf.wholeFishUsd;
 
-  // Decisions §7: an absorbed by-product carries no raw material — the main
-  // product already paid for the fish. Its cost is downstream only.
-  const fishComponent = sku.rawMaterialBasis === 'absorbed' ? 0 : (sku.pctFish * wholeFish) / yieldUsed;
+  // Where the raw material line gets its input price. One formula, three
+  // sources: the farm's fish, nothing at all, or a cost typed on the SKU.
+  //
+  //   Decisions §7: an absorbed by-product carries no raw material — the main
+  //   product already paid for the fish. Its cost is downstream only.
+  //
+  //   An ingredient SKU (fish maw from wet swim bladder) never met a whole
+  //   fish. Its input is bought, or transferred in, per kg of INPUT — so the
+  //   yield divides it the same way, and a null cost reads as zero because an
+  //   input the main product has already paid for really is free to this SKU.
+  const inputCost =
+    sku.rawMaterialBasis === 'ingredient' ? (sku.primaryInputCost ?? 0) : wholeFish;
+  const fishComponent =
+    sku.rawMaterialBasis === 'absorbed' ? 0 : (sku.pctFish * inputCost) / yieldUsed;
 
   const fx = domestic ? a.fxRate : 1;
   const marinadeComponent = sku.pctMarinade * sku.marinadeUsdPerKg * fx;
@@ -107,6 +120,7 @@ export function costChain(input: CostInput): CostChain {
 
   return {
     wholeFish,
+    inputCost,
     fishComponent,
     marinadeComponent,
     rawMaterial,
@@ -161,7 +175,8 @@ function contribution(marketPrice: number | null | undefined, finalCost: number)
 interface WholeRoundBasis {
   conversionCost: number;
   yieldUsed: number;
-  wholeFish: number;
+  /** The raw input this SKU actually paid for — fish, or its own ingredient. */
+  inputCost: number;
   /** A by-product never paid for the fish (Decisions §7). */
   absorbed: boolean;
 }
@@ -185,17 +200,22 @@ interface WholeRoundBasis {
  * fish cost is the normal case, not an error.
  *
  * An absorbed by-product returns null rather than being charged a fish the main
- * product already bought (Decisions §7).
+ * product already bought (Decisions §7). An ingredient SKU answers the same
+ * question about its own input: what a kg of wet swim bladder earns, against
+ * what the bladder cost.
  */
 function wholeRoundMargin(basis: WholeRoundBasis, sellingPrice: number, glazePct: number) {
   if (basis.absorbed) return { wholeRoundMarginPerKg: null, wholeRoundMarginPct: null };
   // Glaze is sold weight, so a kilo of round fish leaves as that much more pack.
   const packPerKgFish = basis.yieldUsed * (1 + glazePct);
-  const marginPerKg = (sellingPrice - basis.conversionCost) * packPerKgFish - basis.wholeFish;
+  const marginPerKg = (sellingPrice - basis.conversionCost) * packPerKgFish - basis.inputCost;
   return {
     wholeRoundMarginPerKg: marginPerKg,
-    // Zero would mean a free fish, which is bad data rather than infinite return.
-    wholeRoundMarginPct: basis.wholeFish > 0 ? marginPerKg / basis.wholeFish : null,
+    // Zero would mean a free fish, which is bad data rather than infinite
+    // return — except on an ingredient SKU, where a zero input cost is a
+    // deliberate statement that the input was already paid for. Either way
+    // there is no denominator, so the percentage stays null.
+    wholeRoundMarginPct: basis.inputCost > 0 ? marginPerKg / basis.inputCost : null,
   };
 }
 
@@ -302,7 +322,7 @@ export function computeCost(input: CostInput): CostResult {
   const wholeRoundBasis: WholeRoundBasis = {
     conversionCost: chain.finalCost - chain.fishComponent,
     yieldUsed: chain.yieldUsed,
-    wholeFish: chain.wholeFish,
+    inputCost: chain.inputCost,
     absorbed: sku.rawMaterialBasis === 'absorbed',
   };
 
