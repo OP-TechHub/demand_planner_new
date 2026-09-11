@@ -517,6 +517,8 @@ function sheetProps(
     authorName: authorOf(row.sku, authors),
     glazePct: row.sku.glaze_pct,
     absorbed: row.sku.raw_material_basis === 'absorbed',
+    ingredientName:
+      row.sku.raw_material_basis === 'ingredient' ? row.sku.primary_input_name : null,
     productForm: row.sku.product_form,
     gradeLabel: bucketLabel,
     pctFish: row.sku.pct_fish,
@@ -717,8 +719,12 @@ function Grid({
             <th className={cn(thBase, 'text-left')}>Costed by</th>
             {showDestination && <th className={cn(thBase, 'text-left')}>Port</th>}
             <th className={thBase}>Yield</th>
-            <th className={thBase}>Whole fish</th>
-            <th className={thBase}>Fish comp</th>
+            {/* "Input" rather than "Whole fish": on a maw SKU this column is
+                the swim bladder, and on a by-product it is struck through. */}
+            <th className={thBase} title="Cost of a kg of raw input — the whole fish, or the SKU's own ingredient">
+              Input cost
+            </th>
+            <th className={thBase}>Input comp</th>
             <th className={thBase}>Marinade</th>
             <th className={thBase}>Raw matl</th>
             <th className={thBase}>Process</th>
@@ -796,6 +802,7 @@ function GridRow({
 }) {
   const { sku, destination, result } = row;
   const absorbed = sku.raw_material_basis === 'absorbed';
+  const ingredient = sku.raw_material_basis === 'ingredient';
   const inactive = sku.status === 'inactive';
   const span = domestic ? 19 : 26;
   const author = authorOf(sku, authors);
@@ -813,6 +820,7 @@ function GridRow({
         <span className="min-w-0 flex-1 truncate">
           {sku.name}
           {absorbed && <ByProductBadge />}
+          {ingredient && <IngredientBadge name={sku.primary_input_name} />}
         </span>
         {/*
           In the sticky column rather than a trailing one: this table is wide
@@ -878,7 +886,7 @@ function GridRow({
       {identityCells}
       {showDestination && <td className={cn(tdBase, 'text-left')}>{destination?.name}</td>}
       <td className={tdBase}>{(chain.yieldUsed * 100).toFixed(0)}%</td>
-      <td className={cn(tdBase, absorbed && 'text-muted-foreground line-through')}>{money(chain.wholeFish)}</td>
+      <td className={cn(tdBase, absorbed && 'text-muted-foreground line-through')}>{money(chain.inputCost)}</td>
       <td className={cn(tdBase, absorbed && 'text-muted-foreground')}>{money(chain.fishComponent)}</td>
       <td className={tdBase}>{money(chain.marinadeComponent)}</td>
       <td className={tdBase}>{money(chain.rawMaterial)}</td>
@@ -1121,6 +1129,22 @@ function Contribution({ value, fmt }: { value: number | null; fmt: (n: number) =
     return <span className="text-[10px] text-muted-foreground">set price</span>;
   }
   return <span className={value >= 0 ? 'text-success' : 'text-destructive'}>{fmt(value)}</span>;
+}
+
+/**
+ * A SKU that never met a whole fish, named by what it did start from. The fish
+ * columns on its row are about that input instead, and the badge is what says
+ * so before the reader assumes an unbelievably cheap fish.
+ */
+function IngredientBadge({ name }: { name: string | null }) {
+  return (
+    <span
+      className="ml-1.5 rounded bg-muted px-1 py-px text-[9px] font-normal uppercase tracking-wide text-muted-foreground"
+      title={`Built from ${name ?? 'a named ingredient'} rather than a whole fish. The input column is that ingredient's cost per kg, before yield.`}
+    >
+      {name ?? 'ingredient'}
+    </span>
+  );
 }
 
 function ByProductBadge() {
@@ -1522,8 +1546,8 @@ function csvMatrix(
     'Category',
     'Basis',
     'Yield %',
-    'Whole fish',
-    'Fish comp',
+    'Input cost',
+    'Input comp',
     'Marinade comp',
     'Raw material',
     'Process',
@@ -1572,7 +1596,11 @@ function csvMatrix(
       authorOf(r.sku, authors),
       ...(showDestination ? [r.destination?.name ?? ''] : []),
       r.sku.category,
-      r.sku.raw_material_basis === 'absorbed' ? 'by-product (absorbed)' : 'full fish',
+      r.sku.raw_material_basis === 'absorbed'
+        ? 'by-product (absorbed)'
+        : r.sku.raw_material_basis === 'ingredient'
+          ? `ingredient (${r.sku.primary_input_name ?? 'unnamed'})`
+          : 'full fish',
     ];
     if (!r.result.ok) {
       return [...base, r.result.issues.map((i) => i.message).join('; ')];
@@ -1580,7 +1608,7 @@ function csvMatrix(
     const { chain } = r.result.value.result;
     const nums: (string | number | null)[] = [
       round(chain.yieldUsed * 100),
-      round(chain.wholeFish),
+      round(chain.inputCost),
       round(chain.fishComponent),
       round(chain.marinadeComponent),
       round(chain.rawMaterial),

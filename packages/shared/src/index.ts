@@ -415,7 +415,7 @@ export type CostSkuStatus = 'active' | 'inactive';
 export type CostDestMode = 'single' | 'multi';
 /** Who can open a saved costing: everyone who can read costings, or its owner (and admins). */
 export type CostVisibility = 'public' | 'private';
-export type CostRawMaterialBasis = 'full_fish' | 'absorbed';
+export type CostRawMaterialBasis = 'full_fish' | 'absorbed' | 'ingredient';
 export type CostProductState = 'unglazed' | 'glazed' | 'frozen_plain' | 'frozen_glazed' | 'fresh';
 
 /** Frozen, fresh, or costed either way. Fresh cannot carry glaze — glaze is ice. */
@@ -508,6 +508,15 @@ export interface CostSkuRow {
   packing_usd_per_kg: number;
   pack_size: string | null;
   raw_material_basis: CostRawMaterialBasis;
+  /**
+   * The non-fish input this SKU is built from, and what a kg of it costs in
+   * each market. Read only when raw_material_basis is 'ingredient', where they
+   * replace the whole-fish cost in the raw material line. Per kg of INPUT, so
+   * base_yield divides them exactly as it divides the fish.
+   */
+  primary_input_name: string | null;
+  primary_input_cost_lkr: number | null;
+  primary_input_cost_usd: number | null;
   product_form: CostProductForm;
   market_scope: CostMarketScope;
   /**

@@ -22,7 +22,19 @@ export type SkuStatus = 'active' | 'inactive';
  *              freight). Used by the six by-product SKUs, which are priced on
  *              contribution against a market price rather than on margin.
  */
-export type RawMaterialBasis = 'full_fish' | 'absorbed';
+/**
+ * Where the raw material line gets its input cost.
+ *
+ *  full_fish  — the version's whole-fish cost, divided by the SKU's yield.
+ *               The workbook's only model, and the default.
+ *  absorbed   — nothing: a by-product whose fish the main product already
+ *               bought (Decisions §7).
+ *  ingredient — a cost carried on the SKU itself, for products that do not
+ *               start from a whole fish at all. Fish maw from wet swim
+ *               bladder is the case it was built for. Arithmetically it is
+ *               full_fish with a different source for one number.
+ */
+export type RawMaterialBasis = 'full_fish' | 'absorbed' | 'ingredient';
 
 export interface OdcComponent {
   name: string;
@@ -110,6 +122,15 @@ export interface CostSku {
   packingUsdPerKg: number;
   packSize: string | null;
   rawMaterialBasis: RawMaterialBasis;
+  /** Label for the 'ingredient' input, e.g. "wet swim bladder". */
+  primaryInputName?: string | null;
+  /**
+   * Cost per kg of INPUT, in the market's currency, for an 'ingredient' SKU.
+   * Divided by yield like the fish it stands in for. Zero is a legitimate
+   * value — an input already paid for elsewhere — so null reads as zero
+   * rather than as an error.
+   */
+  primaryInputCost?: number | null;
   /**
    * What the market pays, in the market's currency. Drives contribution for
    * absorbed SKUs. Null means contribution can't be computed yet.
@@ -162,6 +183,16 @@ export interface WholeFishCost {
 /** The cost build-up, in the market's currency. Glaze-free (Decisions §7). */
 export interface CostChain {
   wholeFish: number;
+  /**
+   * What one kg of raw input costs, whichever input the basis names: the
+   * whole fish, or the SKU's own ingredient. Equal to wholeFish on the
+   * full_fish and absorbed paths, so nothing about them changes.
+   */
+  inputCost: number;
+  /**
+   * The raw input in a kg of finished product: input cost x % input / yield.
+   * Still called the fish component because on 33 of 34 SKUs it is one.
+   */
   fishComponent: number;
   marinadeComponent: number;
   rawMaterial: number;

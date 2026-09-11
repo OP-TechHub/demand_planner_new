@@ -130,6 +130,33 @@ export async function saveCostSku(_prev: SkuFormState, fd: FormData): Promise<Sk
     return { error: 'The marinade ingredients could not be read. Reopen the marinade cost builder and apply it again.', ok: false };
   }
 
+  // A SKU built from something other than a whole fish needs a price for that
+  // something, in the currency of every market it sells in. Zero is a valid
+  // answer and is stored as zero — an input the main product already paid for
+  // is genuinely free to this SKU — but a BLANK is an omission, and would
+  // silently cost the product at nothing.
+  const basis = String(fd.get('raw_material_basis') ?? 'full_fish');
+  const inputName = String(fd.get('primary_input_name') ?? '').trim();
+  const inputLkr = optionalNumber(fd, 'primary_input_cost_lkr');
+  const inputUsd = optionalNumber(fd, 'primary_input_cost_usd');
+  if (basis === 'ingredient') {
+    if (!inputName) {
+      return { error: 'Name the primary ingredient this product is made from, e.g. wet swim bladder.', ok: false };
+    }
+    const scope = String(fd.get('market_scope') ?? 'both');
+    const needsLkr = scope === 'domestic' || scope === 'both';
+    const needsUsd = scope === 'export' || scope === 'both';
+    if ((needsLkr && inputLkr == null) || (needsUsd && inputUsd == null)) {
+      return {
+        error: `${inputName} needs a cost per kg in every market this SKU sells in. Enter 0 if the main product has already paid for it.`,
+        ok: false,
+      };
+    }
+    if ((inputLkr ?? 0) < 0 || (inputUsd ?? 0) < 0) {
+      return { error: 'The primary ingredient cost cannot be negative.', ok: false };
+    }
+  }
+
   const numeric = {
     marinade_usd_per_kg: requiredNumber(fd, 'marinade_usd_per_kg') ?? 0,
     process_usd_per_kg: requiredNumber(fd, 'process_usd_per_kg') ?? 0,
@@ -203,7 +230,13 @@ export async function saveCostSku(_prev: SkuFormState, fd: FormData): Promise<Sk
     // Blank is a real answer here, not a missing one: it is the flat reference
     // model, which is what every SKU was costed on before grades existed.
     default_bucket_id: String(fd.get('default_bucket_id') ?? '').trim() || null,
-    raw_material_basis: String(fd.get('raw_material_basis') ?? 'full_fish'),
+    raw_material_basis: basis,
+    // Kept on the row when the basis moves away from 'ingredient' rather than
+    // nulled: switching a SKU to full fish to see what it would cost should
+    // not throw away the ingredient price on the way back.
+    primary_input_name: inputName || null,
+    primary_input_cost_lkr: inputLkr ?? null,
+    primary_input_cost_usd: inputUsd ?? null,
     market_price_lkr: targetLkr ?? null,
     market_price_usd: targetUsd ?? null,
     // The divisor lives on the SKU so the recipe can be replayed; null says the

@@ -276,6 +276,10 @@ function RecipeTable({
                     <span className="text-muted-foreground" title="The main product already absorbed the fish cost. Costed on downstream costs only, priced on contribution.">
                       absorbed (by-product)
                     </span>
+                  ) : s.raw_material_basis === 'ingredient' ? (
+                    <span title="Built from a named input rather than a whole fish. Same arithmetic, different input price.">
+                      {s.primary_input_name || 'ingredient'}
+                    </span>
                   ) : (
                     'full fish'
                   )}
@@ -439,6 +443,8 @@ interface PreviewResult {
   category: string;
   customer: string;
   absorbed: boolean;
+  /** Named input this SKU is built from, when it is not built from a fish. */
+  ingredientName: string | null;
   productForm: CostProductForm;
   pctFish: number;
   pctMarinade: number;
@@ -492,7 +498,11 @@ function previewFromForm(
     processUsdPerKg: num('process_usd_per_kg'),
     packingUsdPerKg: num('packing_usd_per_kg'),
     packSize: null,
-    rawMaterialBasis: String(fd.get('raw_material_basis') ?? 'full_fish') as 'full_fish' | 'absorbed',
+    rawMaterialBasis: String(fd.get('raw_material_basis') ?? 'full_fish') as
+      | 'full_fish'
+      | 'absorbed'
+      | 'ingredient',
+    primaryInputName: String(fd.get('primary_input_name') ?? '').trim() || null,
     bucketYields,
     pricingMode,
     overrides: {
@@ -515,6 +525,12 @@ function previewFromForm(
   const marketPriceLkr = optional('market_price_lkr') ?? null;
   const marketPriceUsd = optional('market_price_usd') ?? null;
 
+  // Per kg of INPUT, one box per market — the same shape as the price pair
+  // above, and for the same reason: the input is bought in one currency and
+  // the product is often sold in the other.
+  const inputCostLkr = optional('primary_input_cost_lkr') ?? null;
+  const inputCostUsd = optional('primary_input_cost_usd') ?? null;
+
   const issues: string[] = [];
   let domesticOut: DomesticOutput | null = null;
   let exportOut: ExportOutput | null = null;
@@ -531,7 +547,7 @@ function previewFromForm(
     const res = computeCost({
       market: 'domestic',
       assumptions,
-      sku: { ...base, marketPrice: price, targetPrice: price },
+      sku: { ...base, marketPrice: price, targetPrice: price, primaryInputCost: inputCostLkr },
       bucket,
     });
     if (res.ok) {
@@ -555,7 +571,7 @@ function previewFromForm(
       const res = computeCost({
         market: 'export',
         assumptions,
-        sku: { ...base, marketPrice: price, targetPrice: price },
+        sku: { ...base, marketPrice: price, targetPrice: price, primaryInputCost: inputCostUsd },
         bucket,
         destination: { id: dest.id, name: dest.name, seaRatePer20ft: rate.sea, airRatePerLot: rate.air },
       });
@@ -592,6 +608,7 @@ function previewFromForm(
     category: base.category,
     customer: String(fd.get('customer') ?? ''),
     absorbed: base.rawMaterialBasis === 'absorbed',
+    ingredientName: base.rawMaterialBasis === 'ingredient' ? base.primaryInputName : null,
     productForm: String(fd.get('product_form') ?? 'both') as CostProductForm,
     gradeLabel: bucketRow?.label ?? null,
     destinationName,
@@ -1269,6 +1286,10 @@ function SkuDialog({
   }, [state.ok, onClose, router]);
 
   const absorbed = basis === 'absorbed';
+  // Built from a named input instead of a whole fish. Everything below the raw
+  // material line behaves exactly as it does for fish, so this only changes
+  // where the input price comes from and what the labels call it.
+  const ingredient = basis === 'ingredient';
 
   /** A different SKU already holding this name — the duplicate the list drifts on. */
   const duplicate =
@@ -1475,13 +1496,52 @@ function SkuDialog({
             options={[
               ['full_fish', 'Full fish — carries whole-fish cost ÷ yield'],
               ['absorbed', 'Absorbed — by-product, main product already paid for the fish'],
+              ['ingredient', 'Primary ingredient — not made from whole fish (e.g. fish maw)'],
             ]}
           />
           <p className="mt-1.5 text-[11px] text-muted-foreground">
             {absorbed
               ? 'This SKU carries no fish cost. Its cost is a floor — processing, packing, cold-hold and freight — and it is priced on contribution against the market price below, not on margin.'
-              : 'Co-products stay on full fish: each is costed at its own standalone yield, as though it were the target of its own run.'}
+              : ingredient
+                ? 'Costed exactly like a fish product, but the raw material is the ingredient below instead of a whole fish: its cost per kg of input, divided by the yield. Everything after that — marinade, processing, packing, cold-hold, freight and margins — is unchanged.'
+                : 'Co-products stay on full fish: each is costed at its own standalone yield, as though it were the target of its own run.'}
           </p>
+
+          {ingredient && (
+            <div className="mt-3 grid gap-3 sm:grid-cols-3">
+              <Field
+                label="Primary ingredient"
+                name="primary_input_name"
+                defaultValue={src?.primary_input_name ?? ''}
+                type="text"
+                hint="what this is made from, e.g. wet swim bladder"
+              />
+              {/* Per kg of INPUT, not of finished product: the yield above is
+                  what turns one into the other. Two boxes rather than one
+                  converted at FX, because the purchase and the sale are struck
+                  in different currencies, at rates that need not agree. */}
+              <Field
+                label="Ingredient cost — domestic (LKR/kg)"
+                name="primary_input_cost_lkr"
+                defaultValue={src?.primary_input_cost_lkr ?? ''}
+                step="0.01"
+                hint="per kg of input, before yield"
+              />
+              <Field
+                label="Ingredient cost — export (USD/kg)"
+                name="primary_input_cost_usd"
+                defaultValue={src?.primary_input_cost_usd ?? ''}
+                step="0.01"
+                hint="per kg of input, before yield"
+              />
+              <p className="text-[11px] text-muted-foreground sm:col-span-3">
+                If the ingredient comes off our own harvest and the main product has already paid for
+                the fish, this is a transfer price, not a purchase: enter what we give up by not
+                selling it raw, or 0 if we never do. Charging for the same fish twice overstates the
+                cost of both products.
+              </p>
+            </div>
+          )}
         </fieldset>
 
         <div className="grid gap-3 sm:grid-cols-3">
@@ -1493,7 +1553,18 @@ function SkuDialog({
             name="base_yield"
             defaultValue={src?.base_yield ?? 0.45}
             step="0.01"
-            hint="fraction — 0.45 = 45% of whole fish"
+            // Yield divides the fish cost, and an absorbed by-product has none.
+            // Dimmed rather than locked: the real recovery fraction is still
+            // worth recording, and it is what the SKU needs the day someone
+            // switches it back to full fish.
+            muted={absorbed}
+            hint={
+              absorbed
+                ? 'not used while absorbed — recorded for reference'
+                : ingredient
+                  ? 'fraction — kg of finished product per kg of the ingredient'
+                  : 'fraction — 0.45 = 45% of whole fish'
+            }
           />
           <GlazeField
             glazed={glazed}
@@ -1509,6 +1580,7 @@ function SkuDialog({
             // Locked rather than merely validated on save: offering a choice
             // that will be rejected is worse than not offering it.
             fresh={form === 'fresh'}
+            absorbed={absorbed}
           />
           <Field
             label="Pack size"
@@ -1519,7 +1591,7 @@ function SkuDialog({
             hint="label only, e.g. 500g or 3kg carton — not used in costing"
           />
           <Field
-            label="% fish"
+            label={ingredient ? '% primary input' : '% fish'}
             name="pct_fish"
             defaultValue={src?.pct_fish ?? 1}
             step="0.01"
@@ -1938,6 +2010,7 @@ function SkuDialog({
             assumptionsLabel={`v${version.version_no}${version.label ? ` · ${version.label}` : ''}`}
             glazePct={preview.glazePct}
             absorbed={preview.absorbed}
+            ingredientName={preview.ingredientName}
             productForm={preview.productForm}
             gradeLabel={preview.gradeLabel}
             destinationName={preview.destinationName}
@@ -2134,13 +2207,15 @@ function MarinadeCostField({
 }
 
 function Field({
-  label, name, defaultValue, step, hint, type = 'number', className,
+  label, name, defaultValue, step, hint, type = 'number', className, muted = false,
 }: {
   label: string; name: string; defaultValue: string | number; step?: string; hint?: string;
   type?: string; className?: string;
+  /** The current basis ignores this input: dimmed, but still editable and still submitted. */
+  muted?: boolean;
 }) {
   return (
-    <label className={cn('block', className)}>
+    <label className={cn('block', className, muted && 'opacity-60')}>
       <span className="text-xs font-medium">{label}</span>
       <input name={name} defaultValue={defaultValue} type={type} step={step} min={type === 'number' ? '0' : undefined} className={cn(inputCls, 'mt-1 w-full')} />
       {hint && <span className="mt-0.5 block text-[10px] text-muted-foreground">{hint}</span>}
@@ -2161,14 +2236,21 @@ function GlazeField({
   value,
   setValue,
   fresh,
+  absorbed,
 }: {
   glazed: boolean;
   setGlazed: (v: boolean) => void;
   value: string;
   setValue: (v: string) => void;
   fresh: boolean;
+  absorbed: boolean;
 }) {
-  const on = glazed && !fresh;
+  // Glaze works by diluting the fish cost, so on a by-product that carries no
+  // fish it is arithmetically inert — glazed and plain come out identical.
+  // Locked for the same reason fresh is: offering a switch that changes
+  // nothing is worse than not offering it.
+  const locked = fresh || absorbed;
+  const on = glazed && !locked;
   return (
     <div className="block">
       <span className="text-xs font-medium">Glaze</span>
@@ -2180,12 +2262,12 @@ function GlazeField({
           <button
             key={label}
             type="button"
-            disabled={fresh && v}
+            disabled={locked && v}
             onClick={() => setGlazed(v)}
             className={cn(
               'flex-1 rounded px-2 py-1 text-xs font-medium transition-colors',
               on === v ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground',
-              fresh && v && 'cursor-not-allowed opacity-50 hover:text-muted-foreground'
+              locked && v && 'cursor-not-allowed opacity-50 hover:text-muted-foreground'
             )}
           >
             {label}
@@ -2212,10 +2294,16 @@ function GlazeField({
         </>
       ) : (
         <>
-          {/* Still submitted, so the server sees the field it expects. */}
-          <input type="hidden" name="glaze_pct" value="0" />
+          {/* Still submitted, so the server sees the field it expects. A glaze
+              locked by the basis keeps its stored value instead of saving as 0
+              — switching back to full fish should find it where it was. */}
+          <input type="hidden" name="glaze_pct" value={absorbed && !fresh && glazed ? value || '0' : '0'} />
           <span className="mt-1.5 block text-[10px] text-muted-foreground">
-            {fresh ? 'Fresh product carries no glaze — it is added ice.' : 'No added ice.'}
+            {fresh
+              ? 'Fresh product carries no glaze — it is added ice.'
+              : absorbed
+                ? 'Glaze dilutes the fish cost, and a by-product carries none — it would change nothing.'
+                : 'No added ice.'}
           </span>
         </>
       )}

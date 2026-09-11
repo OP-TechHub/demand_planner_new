@@ -144,6 +144,11 @@ export function toSku(row: CostSkuRow, market: CostMarket, bucketYields?: Record
     packingUsdPerKg: row.packing_usd_per_kg,
     packSize: row.pack_size,
     rawMaterialBasis: row.raw_material_basis,
+    // Per kg of INPUT, and one column per market: the bladder is bought in
+    // rupees but the maw is sold in dollars, and the rate the purchase was
+    // actually struck at is not always the version's FX rate.
+    primaryInputName: row.primary_input_name,
+    primaryInputCost: domestic ? row.primary_input_cost_lkr : row.primary_input_cost_usd,
     // One number, two readings: what the market bears (drives by-product
     // contribution) and what we intend to charge (the target). Which one it
     // acts as is decided by pricing_mode, not by a second column.
