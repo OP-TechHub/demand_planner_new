@@ -20,11 +20,14 @@ export function ProgramsClient({
   programs,
   buckets,
   canEdit,
+  canExport,
 }: {
   planId: string;
   programs: Program[];
   buckets: Bucket[];
   canEdit: boolean;
+  /** Granted per user by an admin — editing a plan and taking a copy of it away are different rights. */
+  canExport: boolean;
 }) {
   const router = useRouter();
   const [panel, setPanel] = useState<PanelState>(null);
@@ -97,7 +100,9 @@ export function ProgramsClient({
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">Programs</h1>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={onExport}><Download />Export CSV</Button>
+          {canExport && (
+            <Button variant="outline" size="sm" onClick={onExport}><Download />Export CSV</Button>
+          )}
           {canEdit && (
             <Button variant="outline" size="sm" onClick={() => setImporting(true)}><Upload />Import CSV</Button>
           )}

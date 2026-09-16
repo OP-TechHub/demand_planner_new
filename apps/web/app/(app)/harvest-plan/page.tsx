@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { getActivePlan, getProfile, getMyPlanGrants } from '@/lib/plan';
 import {
   canEditPlanSection,
+  canExportData,
   type Bucket,
   type HarvestCell,
   type HarvestRequestCell,
@@ -60,6 +61,7 @@ export default async function HarvestPlanPage() {
       buckets={(buckets ?? []) as Bucket[]}
       harvestRows={rows as HarvestCell[]}
       canEdit={canEdit}
+      canExport={canExportData(me.role, profile?.edit_sections)}
       request={request}
       canEditRequest={canEditRequest}
     />

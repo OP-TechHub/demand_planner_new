@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { getActivePlan, getProfile, getMyPlanGrants } from '@/lib/plan';
-import { canEditPlanSection, type UserRole } from '@oceanpick/shared';
+import { canEditPlanSection, canExportData, type UserRole } from '@oceanpick/shared';
 import { fetchAllByPlan } from '@/lib/fetch-all';
 import { StalePlanNotice } from '../stale-banner';
 import { PoUpdateClient, type PoLine, type DemandCell, type ProgramRow } from './po-update-client';
@@ -80,6 +80,7 @@ export default async function PoUpdatePage() {
         lines={lines as PoLine[]}
         demand={demand as DemandCell[]}
         canEdit={canEdit}
+        canExport={canExportData((profile?.role ?? 'viewer') as UserRole, profile?.edit_sections)}
       />
     </div>
   );

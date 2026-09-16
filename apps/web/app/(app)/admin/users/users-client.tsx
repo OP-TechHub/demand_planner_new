@@ -7,6 +7,7 @@ import {
   ASSUMPTIONS_EDIT,
   BASE_COST_EDIT,
   BASE_COST_VIEW,
+  EXPORT_DATA,
   SECONDARY_PRODUCTS,
   type UserRole,
 } from '@oceanpick/shared';
@@ -81,6 +82,13 @@ function AccessCell({
         disabled={busy}
         title="By-product definitions (recovery rate and price) and the other products below them"
         onChange={(on) => onToggle(SECONDARY_PRODUCTS, on)}
+      />
+      <Grant
+        label="Can export input data"
+        checked={held.includes(EXPORT_DATA)}
+        disabled={busy}
+        title="Download Programs, Demand Plan, Harvest Plan and PO Update as CSV"
+        onChange={(on) => onToggle(EXPORT_DATA, on)}
       />
     </div>
   );

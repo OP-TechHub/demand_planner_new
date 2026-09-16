@@ -22,6 +22,7 @@ export function HarvestClient({
   buckets,
   harvestRows,
   canEdit,
+  canExport,
   request,
   canEditRequest,
 }: {
@@ -31,6 +32,8 @@ export function HarvestClient({
   buckets: Bucket[];
   harvestRows: HarvestCell[];
   canEdit: boolean;
+  /** Granted per user by an admin — editing a plan and taking a copy of it away are different rights. */
+  canExport: boolean;
   /** Processing plant's requested kg WR, one row per month and size. */
   request: HarvestRequestCell[];
   canEditRequest: boolean;
@@ -136,7 +139,9 @@ export function HarvestClient({
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">Monthly Harvest Plan</h1>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={onExport}><Download />Export CSV</Button>
+          {canExport && (
+            <Button variant="outline" size="sm" onClick={onExport}><Download />Export CSV</Button>
+          )}
           {canEdit && (
             <Button variant="outline" size="sm" onClick={() => setImporting(true)}><Upload />Import CSV</Button>
           )}
