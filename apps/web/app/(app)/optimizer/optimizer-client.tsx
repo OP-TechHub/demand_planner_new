@@ -4,7 +4,24 @@ import { useMemo, useState } from 'react';
 import { monthLabel } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 
-export interface OptProgram { rank: number; label: string; sublabel: string; demand: number[]; own: number[]; rolling: number[]; margin: number[] }
+export interface OptProgram {
+  rank: number;
+  label: string;
+  sublabel: string;
+  /** Size grades this program draws on: its own bucket, then its fallback. */
+  primaryBucket: string;
+  secondaryBucket: string;
+  demand: number[];
+  own: number[];
+  rolling: number[];
+  /**
+   * What the fulfilled kilos sell for, on the same basis as margin: these are
+   * the programs' own figures, so neither includes by-product revenue. The
+   * Revenue & Cost screen is where that gets folded in.
+   */
+  revenue: number[];
+  margin: number[];
+}
 export interface OptBucket { name: string; capacity: number[]; used: number[]; left: number[] }
 
 const num = (v: number) => Math.round(v).toLocaleString();
@@ -54,6 +71,7 @@ export function OptimizerClient({
   const rows = programs.filter((p) => over(p.demand) > 0);
   const totalDemand = programs.reduce((s, p) => s + over(p.demand), 0);
   const totalFulfilled = programs.reduce((s, p) => s + over(p.rolling), 0);
+  const totalRevenue = programs.reduce((s, p) => s + over(p.revenue), 0);
   const totalMargin = programs.reduce((s, p) => s + over(p.margin), 0);
   const totalCapacity = buckets.reduce((s, b) => s + over(b.capacity), 0);
   const totalUsed = buckets.reduce((s, b) => s + over(b.used), 0);
@@ -138,6 +156,8 @@ export function OptimizerClient({
               <thead className="text-left text-xs uppercase tracking-wide text-muted-foreground">
                 <tr>
                   <th className="py-1">Rank</th><th className="py-1">Program</th>
+                  <th className="py-1">Primary bucket</th>
+                  <th className="py-1">Secondary bucket</th>
                   <th className="py-1 text-right">Demand FP</th><th className="py-1 text-right">Own FP</th>
                   <th className="py-1 text-right">Borrowed</th><th className="py-1 text-right">Fulfilled</th><th className="py-1 text-right">%</th>
                 </tr>
@@ -151,6 +171,8 @@ export function OptimizerClient({
                     <tr key={p.rank + p.label} className="border-t">
                       <td className="py-1 text-muted-foreground">{p.rank}</td>
                       <td className="max-w-[16rem] truncate py-1" title={`${p.label} — ${p.sublabel}`}><span className="font-medium">{p.label}</span> <span className="text-muted-foreground">{p.sublabel}</span></td>
+                      <td className="whitespace-nowrap py-1">{p.primaryBucket}</td>
+                      <td className="whitespace-nowrap py-1 text-muted-foreground">{p.secondaryBucket}</td>
                       <td className="py-1 text-right tabular-nums">{num(dem)}</td>
                       <td className="py-1 text-right tabular-nums">{num(own)}</td>
                       <td className="py-1 text-right tabular-nums">{num(borrowed)}</td>
@@ -165,10 +187,13 @@ export function OptimizerClient({
         )}
       </Section>
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Stat label="Total demand FP" value={`${num(totalDemand)} kg`} />
         <Stat label="Total fulfilled" value={`${num(totalFulfilled)} kg`} sub={pctOf(totalFulfilled, totalDemand)} />
-        <Stat label="Total margin" value={`$${num(totalMargin)}`} />
+        <Stat label="Total revenue" value={`${num(totalRevenue)}`} />
+        {/* Margin as a share of revenue, which is the question the two cards
+            side by side invite — and it costs nothing to answer here. */}
+        <Stat label="Total margin" value={`${num(totalMargin)}`} sub={pctOf(totalMargin, totalRevenue)} />
       </div>
     </div>
   );

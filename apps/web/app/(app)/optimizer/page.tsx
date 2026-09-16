@@ -13,10 +13,14 @@ export default async function OptimizerPage() {
   const months = plan.horizon_months;
   const zero = () => new Array<number>(months).fill(0);
 
-  const [order, { data: buckets }, rr, uw] = await Promise.all([
+  const [order, { data: buckets }, { data: allBuckets }, rr, uw] = await Promise.all([
     programOrder(supabase, plan.id),
     supabase.from('buckets').select('id, name, sort_order').eq('is_archived', false).order('sort_order'),
-    fetchAllByPlan(supabase, 'rolling_results', 'program_id, month_index, demand_fp, own_fp, rolling_fp, rolling_margin', plan.id),
+    // Naming only, archived ones included: the harvest table below is about
+    // live capacity and stays active-only, but a program can still point at a
+    // bucket that has since been retired, and "—" would read as "none set".
+    supabase.from('buckets').select('id, name'),
+    fetchAllByPlan(supabase, 'rolling_results', 'program_id, month_index, demand_fp, own_fp, rolling_fp, revenue, rolling_margin', plan.id),
     fetchAllByPlan(supabase, 'unallocated_wr', 'bucket_id, month_index, plan_capacity_wr, own_consumption_wr, borrowings_into_wr, unallocated_wr', plan.id),
   ]);
 
@@ -29,13 +33,31 @@ export default async function OptimizerPage() {
     );
   }
 
+  const bucketName = new Map<string, string>((allBuckets ?? []).map((b: { id: string; name: string }) => [b.id, b.name]));
+
   const progById = new Map<string, OptProgram>();
-  for (const p of order) progById.set(p.id, { rank: p.rank, label: p.label, sublabel: p.sublabel, demand: zero(), own: zero(), rolling: zero(), margin: zero() });
+  for (const p of order) {
+    progById.set(p.id, {
+      rank: p.rank,
+      label: p.label,
+      sublabel: p.sublabel,
+      primaryBucket: p.primaryBucketId ? (bucketName.get(p.primaryBucketId) ?? '—') : '—',
+      // Null is a real answer here: a program with no second path is fished
+      // from one bucket only, and never borrows.
+      secondaryBucket: p.secondaryBucketId ? (bucketName.get(p.secondaryBucketId) ?? '—') : '—',
+      demand: zero(),
+      own: zero(),
+      rolling: zero(),
+      revenue: zero(),
+      margin: zero(),
+    });
+  }
   for (const r of rr) {
     const p = progById.get(r.program_id);
     if (!p) continue;
     const i = r.month_index - 1;
-    p.demand[i] = r.demand_fp; p.own[i] = r.own_fp; p.rolling[i] = r.rolling_fp; p.margin[i] = r.rolling_margin;
+    p.demand[i] = r.demand_fp; p.own[i] = r.own_fp; p.rolling[i] = r.rolling_fp;
+    p.revenue[i] = r.revenue ?? 0; p.margin[i] = r.rolling_margin;
   }
   // Insertion order is programOrder's alphabetical order; the rank column stays visible.
   const programs = [...progById.values()];
