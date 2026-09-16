@@ -82,6 +82,7 @@ export function PoUpdateClient({
   lines,
   demand,
   canEdit,
+  canExport,
 }: {
   planId: string;
   planStartDate: string;
@@ -90,6 +91,8 @@ export function PoUpdateClient({
   lines: PoLine[];
   demand: DemandCell[];
   canEdit: boolean;
+  /** Granted per user by an admin — editing a plan and taking a copy of it away are different rights. */
+  canExport: boolean;
 }) {
   const router = useRouter();
   const [modal, setModal] = useState<null | { programId: string; po: Po | null }>(null);
@@ -252,9 +255,11 @@ export function PoUpdateClient({
           <Stat label="Months" value={fullRange ? `All ${horizon}` : String(to - from + 1)} sub={rangeText} />
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={exportCsv} disabled={totals.withPos === 0}>
-            Export CSV
-          </Button>
+          {canExport && (
+            <Button variant="outline" size="sm" onClick={exportCsv} disabled={totals.withPos === 0}>
+              Export CSV
+            </Button>
+          )}
           {canEdit && (
             <Button variant="outline" size="sm" onClick={() => setImporting(true)}>
               <Upload /> Import CSV

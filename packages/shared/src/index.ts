@@ -183,6 +183,8 @@ export const EDITABLE_SECTIONS = [
   'base_cost_view',
   'base_cost_edit',
   'assumptions_edit',
+  'secondary_products',
+  'export_data',
 ] as const;
 export type EditableSection = (typeof EDITABLE_SECTIONS)[number];
 
@@ -209,6 +211,8 @@ export const SECTION_LABEL: Record<EditableSection, string> = {
   base_cost_view: 'Base cost — view',
   base_cost_edit: 'Base cost — edit',
   assumptions_edit: 'Assumptions — edit',
+  secondary_products: 'Secondary Products',
+  export_data: 'Export input data',
 };
 
 /**
@@ -264,6 +268,49 @@ export function canEditAssumptions(role: UserRole, editSections: string[] | null
  */
 export function canPublishAssumptions(role: UserRole, editSections: string[] | null | undefined): boolean {
   return canEditAssumptions(role, editSections) || canEditBaseCost(role, editSections);
+}
+
+/**
+ * The Secondary Products screen: the by-product definitions AND the
+ * other-products block beneath them.
+ *
+ * One grant for both halves, because they are one screen and in practice one
+ * person's job. Org-wide rather than per plan, like buckets: these definitions
+ * carry no plan_id, so there is no plan for a grant to hang off.
+ */
+export const SECONDARY_PRODUCTS = 'secondary_products';
+
+/** May this user change by-product definitions and other products? */
+export function canEditSecondaryProducts(
+  role: UserRole,
+  editSections: string[] | null | undefined
+): boolean {
+  if (role === 'admin') return true;
+  return (editSections ?? []).includes(SECONDARY_PRODUCTS);
+}
+
+/**
+ * Downloading the Inputs tabs as CSV: Programs, Demand Plan, Harvest Plan and
+ * PO Update.
+ *
+ * A grant rather than an open button, because a spreadsheet of the whole order
+ * book is the easiest thing in the app to walk out of the building with.
+ *
+ * Read it as "who may take this away", NOT as a containment boundary. The rows
+ * are already in the browser — they have to be, for the page to render — so
+ * this hides the convenient path, not every path. Anyone who must not see the
+ * numbers at all should not be able to open the tab in the first place, which
+ * is a read-access question, not this one.
+ */
+export const EXPORT_DATA = 'export_data';
+
+/** May this user download the input tabs as CSV? */
+export function canExportData(
+  role: UserRole,
+  editSections: string[] | null | undefined
+): boolean {
+  if (role === 'admin') return true;
+  return (editSections ?? []).includes(EXPORT_DATA);
 }
 
 /** Can this user edit a given section? Admin ⇒ everything; others ⇒ granted only. */

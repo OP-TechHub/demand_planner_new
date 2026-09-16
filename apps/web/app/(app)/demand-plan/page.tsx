@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { getActivePlan, getProfile, getMyPlanGrants } from '@/lib/plan';
-import { canEditPlanSection, type DemandCell, type Program, type UserRole } from '@oceanpick/shared';
+import { canEditPlanSection, canExportData, type DemandCell, type Program, type UserRole } from '@oceanpick/shared';
 import { fetchAllByPlan } from '@/lib/fetch-all';
 import { DemandClient } from './demand-client';
 
@@ -45,6 +45,7 @@ export default async function DemandPlanPage() {
       demandRows={rows as DemandCell[]}
       fulfilment={fulfilment}
       canEdit={canEdit}
+      canExport={canExportData((profile?.role ?? 'viewer') as UserRole, profile?.edit_sections)}
     />
   );
 }

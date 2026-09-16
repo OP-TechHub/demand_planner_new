@@ -24,6 +24,7 @@ export function DemandClient({
   demandRows,
   fulfilment,
   canEdit,
+  canExport,
 }: {
   planId: string;
   planStartDate: string;
@@ -32,6 +33,8 @@ export function DemandClient({
   demandRows: DemandCell[];
   fulfilment: FulfilCell[];
   canEdit: boolean;
+  /** Granted per user by an admin — editing a plan and taking a copy of it away are different rights. */
+  canExport: boolean;
 }) {
   const router = useRouter();
   const [editing, setEditing] = useState<Program | null>(null);
@@ -151,9 +154,11 @@ export function DemandClient({
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">Monthly Demand Plan</h1>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={onExport} title={`Export the ${EXPORT_LABEL[statusView]} programs shown`}>
-            <Download />Export {EXPORT_LABEL[statusView]}
-          </Button>
+          {canExport && (
+            <Button variant="outline" size="sm" onClick={onExport} title={`Export the ${EXPORT_LABEL[statusView]} programs shown`}>
+              <Download />Export {EXPORT_LABEL[statusView]}
+            </Button>
+          )}
           {canEdit && (
             <Button variant="outline" size="sm" onClick={() => setImporting(true)}><Upload />Import CSV</Button>
           )}
