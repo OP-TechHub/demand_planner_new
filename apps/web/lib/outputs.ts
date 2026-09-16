@@ -2,7 +2,15 @@
 // Shared loaders for the output pages.
 import type { GridRow } from '@/components/output-grid';
 
-export interface OrderedProgram { id: string; rank: number; label: string; sublabel: string }
+export interface OrderedProgram {
+  id: string;
+  rank: number;
+  label: string;
+  sublabel: string;
+  /** The bucket this program is fished from first, and the one it falls back to. */
+  primaryBucketId: string | null;
+  secondaryBucketId: string | null;
+}
 
 /** Build per-program month arrays from rolling_results rows, in rank order. */
 export function gridRowsFor(order: OrderedProgram[], rr: any[], months: number, valueKey: string): GridRow[] {
@@ -56,7 +64,11 @@ export function unitGridRowsFor(
 export async function programOrder(supabase: any, planId: string): Promise<OrderedProgram[]> {
   const [{ data: ranks }, { data: progs }] = await Promise.all([
     supabase.from('plan_rank').select('program_id, global_rank, in_scope').eq('plan_id', planId),
-    supabase.from('programs').select('id, customer, item_description').eq('plan_id', planId).is('deleted_at', null),
+    supabase
+      .from('programs')
+      .select('id, customer, item_description, primary_bucket_id, secondary_bucket_id')
+      .eq('plan_id', planId)
+      .is('deleted_at', null),
   ]);
   const nameById = new Map<string, any>((progs ?? []).map((p: any) => [p.id, p]));
   const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
@@ -67,6 +79,8 @@ export async function programOrder(supabase: any, planId: string): Promise<Order
       rank: r.global_rank,
       label: nameById.get(r.program_id)?.customer ?? '—',
       sublabel: nameById.get(r.program_id)?.item_description ?? '',
+      primaryBucketId: nameById.get(r.program_id)?.primary_bucket_id ?? null,
+      secondaryBucketId: nameById.get(r.program_id)?.secondary_bucket_id ?? null,
     }))
     .sort(
       (a: OrderedProgram, b: OrderedProgram) =>
