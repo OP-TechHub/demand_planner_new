@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, useTransition } from 'react';
+import { useMemo, useState, useTransition, type MouseEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Download, Upload, Boxes, Save, Factory } from 'lucide-react';
@@ -25,6 +25,7 @@ export function HarvestClient({
   canExport,
   request,
   canEditRequest,
+  required,
 }: {
   planId: string;
   planStartDate: string;
@@ -37,6 +38,8 @@ export function HarvestClient({
   /** Processing plant's requested kg WR, one row per month and size. */
   request: HarvestRequestCell[];
   canEditRequest: boolean;
+  /** kg WR the demand book needs, indexed month−1, split by how firm the demand is. */
+  required: RequiredHarvest;
 }) {
   const router = useRouter();
   const [editing, setEditing] = useState<Bucket | null>(null);
@@ -237,6 +240,18 @@ export function HarvestClient({
         </ScrollX>
       )}
 
+      {buckets.length > 0 && (
+        <RequiredHarvestTable
+          planStartDate={planStartDate}
+          visibleMonths={visibleMonths}
+          fullRange={fullRange}
+          horizon={horizon}
+          required={required}
+          stickyCol={stickyCol}
+          yearStart={yearStart}
+        />
+      )}
+
       {/* Harvest Plan — Request Plan: the processing plant's monthly requirement.
           Same month columns as the grid above, so the range filter lines them up. */}
       <section className="space-y-2">
@@ -377,4 +392,146 @@ export function HarvestClient({
   );
 }
 
-const filterCls = 'rounded-md border px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-primary';
+export type RequiredHarvest = { po: number[]; active: number[]; pipeline: number[] };
+
+/** Firmness colours — the Order Book's, so the two pages read the same. */
+const REQ_SEGMENTS = [
+  { key: 'po', label: 'PO received', color: '#3b82f6' },
+  { key: 'active', label: 'Active, no PO', color: '#ec4899' },
+  { key: 'pipeline', label: 'Pipeline', color: '#f59e0b' },
+] as const;
+
+/**
+ * Required harvest: one total per month, with a bar showing how much of it is
+ * firm (PO), forecast (active, no PO) or inquiry (pipeline). Hovering a month
+ * shows the split. Totals only — no size-bucket breakdown.
+ */
+function RequiredHarvestTable({
+  planStartDate,
+  visibleMonths,
+  fullRange,
+  horizon,
+  required,
+  stickyCol,
+  yearStart,
+}: {
+  planStartDate: string;
+  visibleMonths: number[];
+  fullRange: boolean;
+  horizon: number;
+  required: RequiredHarvest;
+  stickyCol: string;
+  yearStart: (mo: number) => boolean;
+}) {
+  // Floating rather than CSS-positioned: the scroll container would clip it.
+  const [hover, setHover] = useState<{ label: string; parts: number[]; x: number; y: number } | null>(null);
+
+  // Round each part once so the tooltip's parts add up to the total shown.
+  const partsFor = (mo: number) => REQ_SEGMENTS.map((s) => Math.round(required[s.key][mo - 1] ?? 0));
+  const rangeParts = REQ_SEGMENTS.map((_, i) => visibleMonths.reduce((sum, mo) => sum + partsFor(mo)[i], 0));
+
+  const show = (e: MouseEvent<HTMLElement>, label: string, parts: number[]) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    setHover({ label, parts, x: r.left + r.width / 2, y: r.bottom + 6 });
+  };
+
+  const cellContent = (parts: number[]) => {
+    const total = parts.reduce((s, v) => s + v, 0);
+    return (
+      <>
+        <div className={cn('tabular-nums', total === 0 && 'text-muted-foreground/40')}>{total.toLocaleString()}</div>
+        <div className="mt-1 flex h-1.5 w-full overflow-hidden rounded-full bg-muted">
+          {total > 0 &&
+            parts.map((v, i) =>
+              v > 0 ? (
+                <div key={REQ_SEGMENTS[i].key} style={{ width: `${(v / total) * 100}%`, background: REQ_SEGMENTS[i].color }} />
+              ) : null
+            )}
+        </div>
+      </>
+    );
+  };
+
+  return (
+    <section className="space-y-2">
+      <div>
+        <h2 className="text-lg font-semibold">Required Harvest</h2>
+        <p className="text-xs text-muted-foreground">
+          Whole round (kg WR) needed to fulfil the demand plan each month — demand ÷ primary yield, all sizes together.
+          Hover a month for the split.
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+        {REQ_SEGMENTS.map((s) => (
+          <span key={s.key} className="flex items-center gap-1.5">
+            <span className="h-2.5 w-2.5 rounded-sm" style={{ background: s.color }} /> {s.label}
+          </span>
+        ))}
+      </div>
+
+      <ScrollX className="rounded-lg border border-border">
+        <table className="w-max text-xs">
+          <thead className="bg-muted text-muted-foreground">
+            <tr>
+              <th className={cn(stickyCol, 'min-w-[10rem] border-b border-border bg-muted px-3 py-2 text-left font-semibold')}>&nbsp;</th>
+              {visibleMonths.map((mo) => (
+                <th key={mo} className={cn('min-w-[4.5rem] border-b border-border bg-muted px-2 py-2 text-right font-medium', yearStart(mo) && 'border-l border-border')}>
+                  {monthLabel(planStartDate, mo)}
+                </th>
+              ))}
+              <th className="min-w-[6rem] border-b border-l border-border bg-muted px-3 py-2 text-right font-semibold">
+                {fullRange ? `${horizon}mo total` : 'Range total'}
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr className="font-semibold">
+              <td className={cn(stickyCol, 'min-w-[10rem] border-r bg-card px-3 py-1.5')}>Required harvest</td>
+              {visibleMonths.map((mo) => (
+                <td
+                  key={mo}
+                  className={cn('cursor-default px-2 py-1.5 text-right hover:bg-muted/40', yearStart(mo) && 'border-l border-border/60')}
+                  onMouseEnter={(e) => show(e, monthLabel(planStartDate, mo), partsFor(mo))}
+                  onMouseLeave={() => setHover(null)}
+                >
+                  {cellContent(partsFor(mo))}
+                </td>
+              ))}
+              <td
+                className="cursor-default border-l px-3 py-1.5 text-right hover:bg-muted/40"
+                onMouseEnter={(e) => show(e, fullRange ? `${horizon}-month total` : 'Range total', rangeParts)}
+                onMouseLeave={() => setHover(null)}
+              >
+                {cellContent(rangeParts)}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </ScrollX>
+
+      {hover && (
+        <div
+          role="tooltip"
+          className="pointer-events-none fixed z-50 -translate-x-1/2 rounded-md border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md"
+          style={{ left: hover.x, top: hover.y }}
+        >
+          <div className="mb-1 font-semibold">{hover.label}</div>
+          {REQ_SEGMENTS.map((s, i) => (
+            <div key={s.key} className="flex items-center justify-between gap-4">
+              <span className="flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-sm" style={{ background: s.color }} /> {s.label}
+              </span>
+              <span className="tabular-nums">{hover.parts[i].toLocaleString()} kg</span>
+            </div>
+          ))}
+          <div className="mt-1 flex justify-between gap-4 border-t pt-1 font-semibold">
+            <span>Total</span>
+            <span className="tabular-nums">{hover.parts.reduce((s, v) => s + v, 0).toLocaleString()} kg</span>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+const filterCls ='rounded-md border px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-primary';

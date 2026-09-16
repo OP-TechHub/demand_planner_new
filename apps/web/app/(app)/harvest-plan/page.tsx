@@ -26,7 +26,7 @@ export default async function HarvestPlanPage() {
 
   const supabase = await createClient();
   // harvest_plan can exceed PostgREST's 1000-row cap (buckets × 60), so page it.
-  const [{ data: buckets }, rows, { data: requestRows }, profile, grants] = await Promise.all([
+  const [{ data: buckets }, rows, { data: requestRows }, profile, grants, { data: progs }, demand, poLines] = await Promise.all([
     supabase.from('buckets').select('*').eq('is_archived', false).order('sort_order'),
     fetchAllByPlan(supabase, 'harvest_plan', '*', plan.id),
     // buckets x 60 stays well under PostgREST's 1000-row cap, unlike capacity,
@@ -37,7 +37,47 @@ export default async function HarvestPlanPage() {
       .eq('plan_id', plan.id),
     getProfile(),
     getMyPlanGrants(plan.id),
+    supabase
+      .from('programs')
+      .select('id, status, primary_yield, max_monthly_demand_fp')
+      .eq('plan_id', plan.id).is('deleted_at', null),
+    fetchAllByPlan(supabase, 'demand_plan', 'program_id, month_index, demand_fp', plan.id),
+    fetchAllByPlan(supabase, 'po_updates', 'program_id, month_index', plan.id),
   ]);
+
+  // Required harvest: the whole round the demand book needs, demand_fp /
+  // primary_yield (spec §2.2), split by how firm the demand is — the same three
+  // groups the Order Book colours. Read straight from the demand plan, so it
+  // doesn't wait on a recalculation. Pipeline counts its full ask: this is what
+  // it would take to fulfil it, not what supply can cover.
+  const horizon = plan.horizon_months;
+  const required = {
+    po: new Array<number>(horizon).fill(0),
+    active: new Array<number>(horizon).fill(0),
+    pipeline: new Array<number>(horizon).fill(0),
+  };
+  const overrides = new Map<string, number>();
+  for (const d of demand as { program_id: string; month_index: number; demand_fp: number }[]) {
+    overrides.set(`${d.program_id}:${d.month_index}`, Number(d.demand_fp));
+  }
+  const hasPo = new Set(
+    (poLines as { program_id: string; month_index: number }[]).map((l) => `${l.program_id}:${l.month_index}`)
+  );
+  type Prog = { id: string; status: string; primary_yield: number; max_monthly_demand_fp: number };
+  for (const p of (progs ?? []) as Prog[]) {
+    const y = Number(p.primary_yield);
+    if (!(y > 0)) continue;
+    for (let m = 1; m <= horizon; m++) {
+      const k = `${p.id}:${m}`;
+      const dem = overrides.get(k) ?? Number(p.max_monthly_demand_fp);
+      if (!(dem > 0)) continue;
+      const wr = dem / y;
+      if (p.status === 'pipeline') required.pipeline[m - 1] += wr;
+      // A PO is firm whatever the program's status, as on the Order Book.
+      else if (hasPo.has(k)) required.po[m - 1] += wr;
+      else if (p.status === 'active') required.active[m - 1] += wr;
+    }
+  }
 
   const me = { id: profile?.id ?? '', role: (profile?.role ?? 'viewer') as UserRole };
   const canEdit = canEditPlanSection(plan, me, grants.has('harvest_plan'));
@@ -64,6 +104,7 @@ export default async function HarvestPlanPage() {
       canExport={canExportData(me.role, profile?.edit_sections)}
       request={request}
       canEditRequest={canEditRequest}
+      required={required}
     />
   );
 }
