@@ -151,7 +151,9 @@ export async function saveOtherQuantities(
 
 function friendly(message: string): string {
   if (/other_products_unique_name/.test(message)) return 'A product with that name already exists.';
-  if (/row-level security/i.test(message)) return 'Only an admin can change other products.';
+  if (/row-level security/i.test(message)) {
+    return 'You do not have access to change other products. An admin can grant it on the Users screen.';
+  }
   return message;
 }
 

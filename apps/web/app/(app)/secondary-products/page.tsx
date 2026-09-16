@@ -1,3 +1,4 @@
+import { canEditSecondaryProducts, type UserRole } from '@oceanpick/shared';
 import { createClient } from '@/lib/supabase/server';
 import { getActivePlan, getProfile } from '@/lib/plan';
 import { NotComputed } from '@/components/output-grid';
@@ -100,7 +101,13 @@ export default async function SecondaryProductsPage() {
   }
 
   const computed = rr.length > 0;
-  const canEdit = (profile?.role ?? 'viewer') === 'admin';
+  // Admins, plus anyone an admin has granted this one section. The database
+  // enforces the same rule, so a stale page can only ever offer an edit that
+  // then fails — never one that quietly succeeds.
+  const canEdit = canEditSecondaryProducts(
+    (profile?.role ?? 'viewer') as UserRole,
+    profile?.edit_sections
+  );
 
   return (
     <div className="space-y-4">

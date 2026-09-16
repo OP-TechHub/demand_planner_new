@@ -9,7 +9,9 @@ export type SecondaryFormState = { error: string | null; ok: boolean };
 const TOTAL_WR = '__total_wr__';
 
 /**
- * Create or update a by-product definition (admin only — enforced by RLS).
+ * Create or update a by-product definition. Writing is limited to admins and
+ * to users granted the 'secondary_products' section — enforced by RLS, so the
+ * check here would be belt and braces rather than the guard.
  * `yield_pct` is entered as a percentage in the form and stored as a fraction,
  * so 2 on screen is 0.02 in the column the engine arithmetic reads.
  */
@@ -83,7 +85,7 @@ function friendly(message: string): string {
     return 'That product already has a by-product with this name.';
   }
   if (m.includes('row-level security') || m.includes('violates row-level')) {
-    return 'Only an admin can change by-product definitions.';
+    return 'You do not have access to change by-product definitions. An admin can grant it on the Users screen.';
   }
   return message;
 }

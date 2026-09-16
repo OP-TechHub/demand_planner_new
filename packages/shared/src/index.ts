@@ -183,6 +183,7 @@ export const EDITABLE_SECTIONS = [
   'base_cost_view',
   'base_cost_edit',
   'assumptions_edit',
+  'secondary_products',
 ] as const;
 export type EditableSection = (typeof EDITABLE_SECTIONS)[number];
 
@@ -209,6 +210,7 @@ export const SECTION_LABEL: Record<EditableSection, string> = {
   base_cost_view: 'Base cost — view',
   base_cost_edit: 'Base cost — edit',
   assumptions_edit: 'Assumptions — edit',
+  secondary_products: 'Secondary Products',
 };
 
 /**
@@ -264,6 +266,25 @@ export function canEditAssumptions(role: UserRole, editSections: string[] | null
  */
 export function canPublishAssumptions(role: UserRole, editSections: string[] | null | undefined): boolean {
   return canEditAssumptions(role, editSections) || canEditBaseCost(role, editSections);
+}
+
+/**
+ * The Secondary Products screen: the by-product definitions AND the
+ * other-products block beneath them.
+ *
+ * One grant for both halves, because they are one screen and in practice one
+ * person's job. Org-wide rather than per plan, like buckets: these definitions
+ * carry no plan_id, so there is no plan for a grant to hang off.
+ */
+export const SECONDARY_PRODUCTS = 'secondary_products';
+
+/** May this user change by-product definitions and other products? */
+export function canEditSecondaryProducts(
+  role: UserRole,
+  editSections: string[] | null | undefined
+): boolean {
+  if (role === 'admin') return true;
+  return (editSections ?? []).includes(SECONDARY_PRODUCTS);
 }
 
 /** Can this user edit a given section? Admin ⇒ everything; others ⇒ granted only. */
