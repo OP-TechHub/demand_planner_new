@@ -202,6 +202,109 @@ export async function saveHarvestRequest(
   return { error: null };
 }
 
+/**
+ * Record what was actually harvested, cell by cell.
+ *
+ * Same contract as the request plan: every bucket-month on screen is sent, a
+ * zero or cleared cell is deleted so a missing row means "nothing recorded",
+ * and RLS enforces the separate 'harvest_actual' grant. Never an engine input,
+ * so saving here never marks the plan stale.
+ *
+ * Unlike the request, there is no sizeless row to tolerate — this table has
+ * always been per bucket, so an entry without one is a bug, not history.
+ */
+export async function saveHarvestActual(
+  planId: string,
+  entries: { bucket_id: string; month_index: number; quantity_kg_wr: number }[]
+): Promise<SaveResult> {
+  if (!planId) return { error: 'Missing plan.' };
+
+  for (const e of entries) {
+    if (!e.bucket_id) return { error: 'Missing bucket.' };
+    if (!Number.isInteger(e.month_index) || e.month_index < 1 || e.month_index > 60) {
+      return { error: `Invalid month ${e.month_index}.` };
+    }
+    if (!Number.isFinite(e.quantity_kg_wr) || e.quantity_kg_wr < 0) {
+      return { error: `Quantity for month ${e.month_index} must be zero or greater.` };
+    }
+  }
+
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: 'Your session expired. Sign in again.' };
+
+  // Whole kg WR, matching capacity and the request plan.
+  const rounded = entries.map((e) => ({ ...e, quantity_kg_wr: Math.round(e.quantity_kg_wr) }));
+  const upserts = rounded.filter((e) => e.quantity_kg_wr > 0);
+  const clears = rounded.filter((e) => e.quantity_kg_wr === 0);
+
+  const { data: existingRows } = await supabase
+    .from('harvest_actual')
+    .select('bucket_id, month_index, quantity_kg_wr')
+    .eq('plan_id', planId);
+  const key = (bucketId: string, month: number) => `${bucketId}:${month}`;
+  const existing = new Map<string, number>(
+    (existingRows ?? []).map((r: { bucket_id: string; month_index: number; quantity_kg_wr: number }) => [
+      key(r.bucket_id, r.month_index),
+      Number(r.quantity_kg_wr),
+    ])
+  );
+
+  if (upserts.length) {
+    const { error } = await supabase.from('harvest_actual').upsert(
+      upserts.map((e) => ({
+        plan_id: planId, bucket_id: e.bucket_id, month_index: e.month_index,
+        quantity_kg_wr: e.quantity_kg_wr, created_by: user.id, updated_by: user.id,
+      })),
+      { onConflict: 'plan_id,bucket_id,month_index' }
+    );
+    if (error) return { error: actualPermError(error.message) };
+  }
+
+  // One delete per bucket: a single `in` over months would take out every
+  // bucket in those months, including ones this save is not touching.
+  const byBucket = new Map<string, number[]>();
+  for (const c of clears) {
+    // Only delete what is actually there, so an empty grid doesn't send
+    // thousands of pointless deletes on every save.
+    if (!existing.has(key(c.bucket_id, c.month_index))) continue;
+    const list = byBucket.get(c.bucket_id) ?? [];
+    list.push(c.month_index);
+    byBucket.set(c.bucket_id, list);
+  }
+  for (const [bucketId, monthList] of byBucket) {
+    const { error } = await supabase
+      .from('harvest_actual').delete()
+      .eq('plan_id', planId).eq('bucket_id', bucketId).in('month_index', monthList);
+    if (error) return { error: actualPermError(error.message) };
+  }
+
+  const edits: { b: string; m: number; old: number; new: number }[] = [];
+  for (const e of rounded) {
+    const old = existing.get(key(e.bucket_id, e.month_index)) ?? 0;
+    if (old !== e.quantity_kg_wr) edits.push({ b: e.bucket_id, m: e.month_index, old, new: e.quantity_kg_wr });
+  }
+  edits.sort((a, b) => a.m - b.m);
+  const CAP = 40;
+  await logAudit(supabase, {
+    planId, entityType: 'harvest_actual', entityId: planId, action: 'update',
+    changes: {
+      set: upserts.length,
+      cleared: [...byBucket.values()].reduce((n, l) => n + l.length, 0),
+      edits: edits.slice(0, CAP),
+      more: Math.max(0, edits.length - CAP),
+    },
+  });
+  revalidatePath('/harvest-plan');
+  return { error: null };
+}
+
+function actualPermError(message: string): string {
+  return /row-level security|violates row-level/i.test(message)
+    ? 'Can’t record actual harvest — it needs the Actual Harvest permission on this plan, and the plan must be unlocked.'
+    : message;
+}
+
 function requestPermError(message: string): string {
   return /row-level security|violates row-level/i.test(message)
     ? 'Can’t edit the request plan — it needs the Harvest Request Plan permission on this plan, and the plan must be unlocked.'

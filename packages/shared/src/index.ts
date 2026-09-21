@@ -148,6 +148,18 @@ export interface HarvestRequestCell {
   quantity_kg_wr: number;
 }
 
+/**
+ * What was actually landed, per month and size bucket (kg WR). Always sized —
+ * unlike the request plan, this table starts empty and so has no pre-breakdown
+ * history to carry. Reference only: the engine never reads it.
+ */
+export interface HarvestActualCell {
+  plan_id: string;
+  bucket_id: string;
+  month_index: number;
+  quantity_kg_wr: number;
+}
+
 /** The fixed planning horizon (months). data-model.md fixes this at 60 for v1. */
 export const HORIZON_MONTHS = 60 as const;
 
@@ -180,6 +192,7 @@ export const EDITABLE_SECTIONS = [
   'buckets',
   'inquiry',
   'harvest_request',
+  'harvest_actual',
   'base_cost_view',
   'base_cost_edit',
   'assumptions_edit',
@@ -196,9 +209,11 @@ export type EditableSection = (typeof EDITABLE_SECTIONS)[number];
  *
  * 'harvest_request' is held by the processing plant and is intentionally
  * separate from 'harvest_plan': stating a monthly requirement and editing the
- * harvest capacity are different jobs, usually different people.
+ * harvest capacity are different jobs, usually different people. 'harvest_actual'
+ * is separate again — recording what was landed is the farm's job, and it is a
+ * record of fact rather than a plan anyone edits.
  */
-export const PLAN_EDITABLE_SECTIONS = ['programs', 'demand_plan', 'harvest_plan', 'inquiry', 'harvest_request'] as const;
+export const PLAN_EDITABLE_SECTIONS = ['programs', 'demand_plan', 'harvest_plan', 'inquiry', 'harvest_request', 'harvest_actual'] as const;
 export type PlanEditableSection = (typeof PLAN_EDITABLE_SECTIONS)[number];
 
 export const SECTION_LABEL: Record<EditableSection, string> = {
@@ -208,6 +223,7 @@ export const SECTION_LABEL: Record<EditableSection, string> = {
   buckets: 'Buckets',
   inquiry: 'New Inquiry',
   harvest_request: 'Harvest Request Plan',
+  harvest_actual: 'Actual Harvest',
   base_cost_view: 'Base cost — view',
   base_cost_edit: 'Base cost — edit',
   assumptions_edit: 'Assumptions — edit',

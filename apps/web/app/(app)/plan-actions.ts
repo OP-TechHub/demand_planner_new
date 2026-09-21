@@ -144,15 +144,28 @@ export async function createScenario(
     if (error) return fail(`cloning harvest: ${error.message}`);
   }
 
-  // The processing plant's request plan travels with the plan, same as capacity.
+  // The processing plant's request plan travels with the plan, same as capacity —
+  // bucket included, or a sized request would arrive in the clone as a sizeless one.
   const { data: srcReq } = await supabase
-    .from('harvest_request').select('month_index, quantity_kg_wr').eq('plan_id', source.id);
+    .from('harvest_request').select('bucket_id, month_index, quantity_kg_wr').eq('plan_id', source.id);
   const reqRows = (srcReq ?? [])
     .filter((r: any) => r.month_index <= horizon)
-    .map((r: any) => ({ plan_id: sid, month_index: r.month_index, quantity_kg_wr: r.quantity_kg_wr, created_by: user.id, updated_by: user.id }));
+    .map((r: any) => ({ plan_id: sid, bucket_id: r.bucket_id, month_index: r.month_index, quantity_kg_wr: r.quantity_kg_wr, created_by: user.id, updated_by: user.id }));
   if (reqRows.length) {
     const { error } = await supabase.from('harvest_request').insert(reqRows);
     if (error) return fail(`cloning request plan: ${error.message}`);
+  }
+
+  // What was actually landed travels too: a scenario built off this plan should
+  // show the same history behind it.
+  const { data: srcAct } = await supabase
+    .from('harvest_actual').select('bucket_id, month_index, quantity_kg_wr').eq('plan_id', source.id);
+  const actRows = (srcAct ?? [])
+    .filter((r: any) => r.month_index <= horizon)
+    .map((r: any) => ({ plan_id: sid, bucket_id: r.bucket_id, month_index: r.month_index, quantity_kg_wr: r.quantity_kg_wr, created_by: user.id, updated_by: user.id }));
+  if (actRows.length) {
+    const { error } = await supabase.from('harvest_actual').insert(actRows);
+    if (error) return fail(`cloning actual harvest: ${error.message}`);
   }
 
   // POs travel with the plan: without them the clone's demand would be right on
@@ -302,15 +315,27 @@ export async function createPlan(input: {
       if (error) return fail(`copying harvest: ${error.message}`);
     }
 
-    // The processing plant's request plan travels with the plan, same as capacity.
+    // The processing plant's request plan travels with the plan, same as capacity —
+    // bucket included, or a sized request would arrive as a sizeless one.
     const { data: srcReq } = await supabase
-      .from('harvest_request').select('month_index, quantity_kg_wr').eq('plan_id', source.id);
+      .from('harvest_request').select('bucket_id, month_index, quantity_kg_wr').eq('plan_id', source.id);
     const reqRows = (srcReq ?? [])
       .filter((r: any) => r.month_index <= horizon)
-      .map((r: any) => ({ plan_id: pid, month_index: r.month_index, quantity_kg_wr: r.quantity_kg_wr, created_by: user.id, updated_by: user.id }));
+      .map((r: any) => ({ plan_id: pid, bucket_id: r.bucket_id, month_index: r.month_index, quantity_kg_wr: r.quantity_kg_wr, created_by: user.id, updated_by: user.id }));
     if (reqRows.length) {
       const { error } = await supabase.from('harvest_request').insert(reqRows);
       if (error) return fail(`copying request plan: ${error.message}`);
+    }
+
+    // And what was actually landed, for the same reason.
+    const { data: srcAct } = await supabase
+      .from('harvest_actual').select('bucket_id, month_index, quantity_kg_wr').eq('plan_id', source.id);
+    const actRows = (srcAct ?? [])
+      .filter((r: any) => r.month_index <= horizon)
+      .map((r: any) => ({ plan_id: pid, bucket_id: r.bucket_id, month_index: r.month_index, quantity_kg_wr: r.quantity_kg_wr, created_by: user.id, updated_by: user.id }));
+    if (actRows.length) {
+      const { error } = await supabase.from('harvest_actual').insert(actRows);
+      if (error) return fail(`copying actual harvest: ${error.message}`);
     }
 
     // POs travel with the plan: without them the clone's demand would be right on
@@ -406,15 +431,27 @@ async function snapshotPlan(svc: any, plan: any, userId: string, name: string, d
     if (error) throw new Error(`snapshot harvest: ${error.message}`);
   }
 
-  // The processing plant's request plan is part of the plan, so it's part of the snapshot.
+  // The processing plant's request plan is part of the plan, so it's part of the
+  // snapshot — with its bucket, or restoring would lose the sizes.
   const { data: srcReq } = await svc
-    .from('harvest_request').select('month_index, quantity_kg_wr').eq('plan_id', plan.id);
+    .from('harvest_request').select('bucket_id, month_index, quantity_kg_wr').eq('plan_id', plan.id);
   const reqRows = (srcReq ?? []).map((r: any) => ({
-    plan_id: aid, month_index: r.month_index, quantity_kg_wr: r.quantity_kg_wr, created_by: userId, updated_by: userId,
+    plan_id: aid, bucket_id: r.bucket_id, month_index: r.month_index, quantity_kg_wr: r.quantity_kg_wr, created_by: userId, updated_by: userId,
   }));
   if (reqRows.length) {
     const { error } = await svc.from('harvest_request').insert(reqRows);
     if (error) throw new Error(`snapshot request plan: ${error.message}`);
+  }
+
+  // So is the record of what was actually landed.
+  const { data: srcAct } = await svc
+    .from('harvest_actual').select('bucket_id, month_index, quantity_kg_wr').eq('plan_id', plan.id);
+  const actRows = (srcAct ?? []).map((r: any) => ({
+    plan_id: aid, bucket_id: r.bucket_id, month_index: r.month_index, quantity_kg_wr: r.quantity_kg_wr, created_by: userId, updated_by: userId,
+  }));
+  if (actRows.length) {
+    const { error } = await svc.from('harvest_actual').insert(actRows);
+    if (error) throw new Error(`snapshot actual harvest: ${error.message}`);
   }
 
   return aid;
