@@ -21,7 +21,7 @@ import {
  * Turn a set of costed products into a price list for the customer.
  *
  * The costing is the working; this is the answer. The sender picks which
- * products go on it and whether the price is quoted FOB or CIF, and gets a
+ * products go on it and whether the price is quoted FOB or C&F, and gets a
  * document carrying nothing but those prices — see quote-sheet.tsx.
  *
  * Used from both places a price is arrived at: a saved costing, and the SKU
@@ -55,7 +55,6 @@ export function QuoteBuilder({
     reference: `QT-${isoInDays(0).replace(/-/g, '')}`,
     incoterm: 'FOB',
     loadPort: 'Colombo',
-    insurancePct: 0,
     validUntil: isoInDays(30),
     paymentTerms: '',
     notes: '',
@@ -105,7 +104,7 @@ export function QuoteBuilder({
       return next;
     });
 
-  // A product with no price cannot be quoted on this basis — CIF needs the
+  // A product with no price cannot be quoted on this basis — C&F needs the
   // freight it was costed with. Say so rather than dropping it silently.
   const unpriceable = chosen.filter((i) => quotePrice(i, terms, market) == null);
 
@@ -162,10 +161,10 @@ export function QuoteBuilder({
           {!domestic && (
             <Choice
               label="Quote on"
-              options={(['FOB', 'CIF'] as Incoterm[]).map((t) => ({
+              options={(['FOB', 'C&F'] as Incoterm[]).map((t) => ({
                 key: t,
                 label: t,
-                hint: t === 'FOB' ? 'at our port' : 'delivered to their port',
+                hint: t === 'FOB' ? 'at our port' : 'freight to their port, no insurance',
               }))}
               value={terms.incoterm}
               onChange={(v) => set('incoterm', v as Incoterm)}
@@ -188,17 +187,6 @@ export function QuoteBuilder({
                 <Input value={terms.loadPort} onChange={(e) => set('loadPort', e.target.value)} />
               </Field>
             )}
-            {!domestic && terms.incoterm === 'CIF' && (
-              <Field label="Marine insurance (% of goods + freight)">
-                <Input
-                  type="number"
-                  min={0}
-                  step={0.05}
-                  value={terms.insurancePct * 100}
-                  onChange={(e) => set('insurancePct', (Number(e.target.value) || 0) / 100)}
-                />
-              </Field>
-            )}
             <Field label="Valid until">
               <Input type="date" value={terms.validUntil} onChange={(e) => set('validUntil', e.target.value)} />
             </Field>
@@ -210,19 +198,6 @@ export function QuoteBuilder({
               />
             </Field>
           </div>
-
-          {/*
-            The costing's freight takes the goods to the port and no further, so
-            a CIF price with no insurance loaded is really cost-and-freight. The
-            document says exactly that when this is zero — but the sender should
-            know before it goes out.
-          */}
-          {!domestic && terms.incoterm === 'CIF' && terms.insurancePct === 0 && (
-            <p className="rounded-md border border-warning/40 bg-warning/5 px-3 py-2 text-xs text-warning">
-              No insurance is loaded, so this price covers the goods and the freight only. The quotation will say
-              freight is included and will not claim insurance. Enter a rate if your CIF terms include cover.
-            </p>
-          )}
 
           <Field label="Notes to the customer (optional)">
             <Textarea
@@ -282,7 +257,7 @@ export function QuoteBuilder({
                       />
                       <span className="min-w-0 flex-1 truncate">{i.product}</span>
                       <span className="shrink-0 text-muted-foreground">{i.presentation}</span>
-                      {!domestic && terms.incoterm === 'CIF' && i.destination && (
+                      {!domestic && terms.incoterm === 'C&F' && i.destination && (
                         <span className="shrink-0 text-muted-foreground">{i.destination}</span>
                       )}
                       <span className="w-20 shrink-0 text-right tabular-nums">
@@ -356,7 +331,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-/** A row of exclusive chips — market, and the FOB/CIF basis. */
+/** A row of exclusive chips — market, and the FOB/C&F basis. */
 function Choice({
   label,
   options,
