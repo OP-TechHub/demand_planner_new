@@ -9,7 +9,7 @@ export async function logAudit(
   supabase: any,
   entry: {
     planId: string | null;
-    entityType: 'programs' | 'demand_plan' | 'harvest_plan' | 'harvest_request' | 'po_updates' | 'buckets' | 'plans';
+    entityType: 'programs' | 'demand_plan' | 'harvest_plan' | 'harvest_request' | 'harvest_actual' | 'po_updates' | 'buckets' | 'plans';
     entityId: string;
     action: 'insert' | 'update' | 'delete';
     changes?: Record<string, unknown>;

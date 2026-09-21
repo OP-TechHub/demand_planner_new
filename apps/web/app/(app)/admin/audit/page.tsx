@@ -8,6 +8,8 @@ const SECTION: Record<string, string> = {
   programs: 'Programs',
   demand_plan: 'Demand Plan',
   harvest_plan: 'Harvest Plan',
+  harvest_request: 'Harvest Request Plan',
+  harvest_actual: 'Actual Harvest',
   buckets: 'Buckets',
   plans: 'Scenarios',
   users: 'Users & Roles',

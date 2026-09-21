@@ -6,6 +6,7 @@ import {
   type Bucket,
   type HarvestCell,
   type HarvestRequestCell,
+  type HarvestActualCell,
   type UserRole,
 } from '@oceanpick/shared';
 import { fetchAllByPlan } from '@/lib/fetch-all';
@@ -26,13 +27,18 @@ export default async function HarvestPlanPage() {
 
   const supabase = await createClient();
   // harvest_plan can exceed PostgREST's 1000-row cap (buckets × 60), so page it.
-  const [{ data: buckets }, rows, { data: requestRows }, profile, grants, { data: progs }, demand, poLines] = await Promise.all([
+  const [{ data: buckets }, rows, { data: requestRows }, { data: actualRows }, profile, grants, { data: progs }, demand, poLines] = await Promise.all([
     supabase.from('buckets').select('*').eq('is_archived', false).order('sort_order'),
     fetchAllByPlan(supabase, 'harvest_plan', '*', plan.id),
     // buckets x 60 stays well under PostgREST's 1000-row cap, unlike capacity,
     // because a request is stated for the months the plant is actually asking about.
     supabase
       .from('harvest_request')
+      .select('plan_id, bucket_id, month_index, quantity_kg_wr')
+      .eq('plan_id', plan.id),
+    // Same size as the request — a month only has a row once something is recorded.
+    supabase
+      .from('harvest_actual')
       .select('plan_id, bucket_id, month_index, quantity_kg_wr')
       .eq('plan_id', plan.id),
     getProfile(),
@@ -84,11 +90,18 @@ export default async function HarvestPlanPage() {
   // The request plan is the processing plant's, on its own grant — holding
   // harvest_plan does not confer it.
   const canEditRequest = canEditPlanSection(plan, me, grants.has('harvest_request'));
+  // Recording what was landed is the farm's job — its own grant again, so holding
+  // neither capacity nor the request confers it.
+  const canEditActual = canEditPlanSection(plan, me, grants.has('harvest_actual'));
 
   // Passed as rows rather than a keyed object: the grid needs the size too, and
   // a null bucket has to survive the trip intact rather than collapsing into a
   // month key that cannot tell "no size stated" from a bucket named nothing.
   const request = ((requestRows ?? []) as HarvestRequestCell[]).map((r) => ({
+    ...r,
+    quantity_kg_wr: Number(r.quantity_kg_wr),
+  }));
+  const actual = ((actualRows ?? []) as HarvestActualCell[]).map((r) => ({
     ...r,
     quantity_kg_wr: Number(r.quantity_kg_wr),
   }));
@@ -104,6 +117,8 @@ export default async function HarvestPlanPage() {
       canExport={canExportData(me.role, profile?.edit_sections)}
       request={request}
       canEditRequest={canEditRequest}
+      actual={actual}
+      canEditActual={canEditActual}
       required={required}
     />
   );
