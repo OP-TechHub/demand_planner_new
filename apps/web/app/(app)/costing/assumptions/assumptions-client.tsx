@@ -218,7 +218,7 @@ export function AssumptionsClient({
         </Section>
 
         <Section title="Destination freight" hint="Rates are per shipment. Changing a fill weight reprices every port at once. Adding or retiring a port saves straight away — only the rates in the table wait for you to publish.">
-          <Field label="Container fill weight" unit="kg per 20ft reefer" name="container_fill_kg" value={version.container_fill_kg} step="1" disabled={!canEditAssumptions} onChange={onNum('container_fill_kg')} />
+          <Field label="Container fill weight" unit="kg per 40ft reefer" name="container_fill_kg" value={version.container_fill_kg} step="1" disabled={!canEditAssumptions} onChange={onNum('container_fill_kg')} />
           <Field label="Air lot weight" unit="kg per air consignment" name="air_lot_kg" value={version.air_lot_kg} step="1" disabled={!canEditAssumptions} onChange={onNum('air_lot_kg')} />
 
           <div className="col-span-full">
@@ -344,7 +344,8 @@ function DestinationFreight({
           <thead className="text-left text-[10px] uppercase tracking-wide text-muted-foreground">
             <tr>
               <th className="py-1 pr-3 font-medium">Destination</th>
-              <th className="py-1 pr-3 text-right font-medium">Sea $ / 20ft</th>
+              {/* Stored as sea_rate_per_20ft for history; the business ships 40ft, and only the ratio to the fill weight matters. */}
+              <th className="py-1 pr-3 text-right font-medium">Sea $ / 40ft</th>
               <th className="py-1 pr-3 text-right font-medium">Air $ / lot</th>
               <th className="py-1 pr-3 text-right font-medium">→ Sea $/kg</th>
               <th className="py-1 text-right font-medium">→ Air $/kg</th>
