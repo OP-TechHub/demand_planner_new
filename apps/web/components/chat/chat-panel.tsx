@@ -7,6 +7,8 @@ import remarkGfm from 'remark-gfm';
 import { Loader2, MessageSquare, RotateCcw, Send, Square, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
+type Budget = { spent_usd: number; budget_usd: number; resets_at: string; exhausted: boolean };
+
 type Message = {
   role: 'user' | 'assistant';
   content: string;
@@ -32,6 +34,8 @@ export function ChatPanel() {
   const [messages, setMessages] = React.useState<Message[]>([]);
   const [input, setInput] = React.useState('');
   const [busy, setBusy] = React.useState(false);
+  // The organisation's monthly allowance, as last reported by the server.
+  const [budget, setBudget] = React.useState<Budget | null>(null);
   const abortRef = React.useRef<AbortController | null>(null);
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const inputRef = React.useRef<HTMLTextAreaElement>(null);
@@ -85,6 +89,7 @@ export function ChatPanel() {
 
       if (!res.ok || !res.body) {
         const body = await res.json().catch(() => null);
+        if (body?.budget) setBudget(body.budget);
         updateLast((m) => ({ ...m, error: body?.error ?? `Request failed (${res.status}).` }));
         return;
       }
@@ -100,8 +105,10 @@ export function ChatPanel() {
         buffered = lines.pop() ?? '';
         for (const line of lines) {
           if (!line.trim()) continue;
-          const event = JSON.parse(line) as { type: string; text?: string; label?: string; message?: string };
-          if (event.type === 'text') {
+          const event = JSON.parse(line) as { type: string; text?: string; label?: string; message?: string; budget?: Budget };
+          if (event.type === 'done') {
+            if (event.budget) setBudget(event.budget);
+          } else if (event.type === 'text') {
             updateLast((m) => ({ ...m, content: m.content + event.text }));
           } else if (event.type === 'tool') {
             // Text written before a lookup and text after it are separate paragraphs.
@@ -252,13 +259,23 @@ export function ChatPanel() {
                   <Square />
                 </Button>
               ) : (
-                <Button type="submit" size="icon" disabled={!input.trim()} title="Send">
+                <Button type="submit" size="icon" disabled={!input.trim() || !!budget?.exhausted} title="Send">
                   <Send />
                 </Button>
               )}
             </div>
             <p className="mt-1.5 text-[11px] text-muted-foreground">
               Can make mistakes. Check important figures on the page before acting on them.
+              {budget && (
+                <>
+                  {' · '}
+                  <span className={budget.exhausted ? 'text-destructive' : undefined}>
+                    {budget.exhausted
+                      ? `Monthly allowance used; resets ${resetDay(budget.resets_at)}`
+                      : `Company allowance: ${Math.min(100, Math.round((budget.spent_usd / budget.budget_usd) * 100))}% used this month`}
+                  </span>
+                </>
+              )}
             </p>
           </form>
         </aside>
@@ -266,6 +283,10 @@ export function ChatPanel() {
     </>
   );
 }
+
+/** "1 Oct", for the allowance line. */
+const resetDay = (iso: string) =>
+  new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
 
 /** Markdown styling without a typography plugin: just the elements answers use. */
 const markdown: Components = {
