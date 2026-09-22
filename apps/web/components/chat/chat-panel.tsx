@@ -135,14 +135,23 @@ export function ChatPanel() {
 
   return (
     <>
-      <Button variant="outline" size="sm" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
-        <MessageSquare />
-        Ask
-      </Button>
+      {!open && (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          title="Ask the assistant"
+          aria-label="Ask the assistant"
+          className="fixed bottom-5 right-5 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition-transform hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45"
+        >
+          <MessageSquare className="h-5 w-5" />
+          {busy && <span className="absolute right-0 top-0 h-3 w-3 animate-pulse rounded-full bg-accent ring-2 ring-card" />}
+        </button>
+      )}
 
       {open && (
+        // Below dialogs (z-50) so a confirm raised by the page still sits on top.
         <aside
-          className="fixed inset-y-0 right-0 z-40 flex w-full flex-col border-l border-border bg-card shadow-xl sm:w-[440px]"
+          className="fixed inset-y-0 right-0 z-[45] flex w-full flex-col border-l border-border bg-card shadow-xl sm:w-[440px]"
           aria-label="Assistant"
         >
           <div className="flex h-14 shrink-0 items-center justify-between border-b border-border px-4">

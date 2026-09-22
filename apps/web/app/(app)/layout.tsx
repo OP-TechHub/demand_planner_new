@@ -116,7 +116,6 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             {activePlan && <RecalculateButton planId={activePlan.id} label="Recalculate" size="sm" variant="outline" />}
           </div>
           <div className="flex items-center gap-2.5">
-            <ChatPanel />
             <ThemeToggle />
             <div className="mx-0.5 h-6 w-px bg-border" />
             <div className="flex items-center gap-2.5">
@@ -158,6 +157,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         )}
         <main className="min-h-0 flex-1 overflow-y-auto p-6">{children}</main>
       </div>
+      {/* Outside the header on purpose: its backdrop-blur makes it the containing
+          block for fixed children, which would squash the panel to header height. */}
+      <ChatPanel />
       <Toaster />
       <ConfirmHost />
     </div>

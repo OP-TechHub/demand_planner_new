@@ -15,10 +15,8 @@ type CookiesToSet = Parameters<SetAllCookies>[0];
 const PUBLIC_ROUTES = ['/login', '/signup', '/auth', '/forgot-password', '/offline'];
 
 export async function updateSession(request: NextRequest) {
-  // API routes authenticate themselves (API key for /api/v1, the caller's own
-  // session inside /api/recompute). They must return JSON, never a 307 to the
-  // HTML login page — so skip the browser session/redirect dance entirely.
-  if (request.nextUrl.pathname.startsWith('/api')) {
+  // /api/v1 authenticates by API key and has no browser session to refresh.
+  if (request.nextUrl.pathname.startsWith('/api/v1')) {
     return NextResponse.next({ request });
   }
 
@@ -48,6 +46,12 @@ export async function updateSession(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
 
   const { pathname } = request.nextUrl;
+
+  // The session-backed APIs (/api/chat, /api/recompute) get the refreshed
+  // token too — a panel left open past the token's hour would otherwise arrive
+  // with an expired one — but they check it themselves and must answer in
+  // JSON, never with a 307 to the HTML login page.
+  if (pathname.startsWith('/api')) return response;
   const isPublic = PUBLIC_ROUTES.some((p) => pathname.startsWith(p));
 
   if (!user && !isPublic) {

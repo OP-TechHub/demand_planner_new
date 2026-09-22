@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { getActivePlan, getCurrentUser, getProfile } from '@/lib/plan';
+import { getActivePlan } from '@/lib/plan';
 import { SYSTEM_PROMPT } from '@/lib/chat/system-prompt';
 import { TOOLS, TOOL_LABELS, runTool } from '@/lib/chat/tools';
 
@@ -66,9 +66,22 @@ function parseBody(body: unknown): { messages: ChatMessage[]; page: string } | n
 }
 
 export async function POST(req: Request) {
-  const user = await getCurrentUser();
-  if (!user) return NextResponse.json({ error: 'Not signed in.' }, { status: 401 });
-  const profile = await getProfile();
+  // Read straight off this request's session. The request-cached helpers in
+  // lib/plan are built for page renders, not route handlers.
+  const db = await createClient();
+  const { data: { user }, error: authError } = await db.auth.getUser();
+  if (!user) {
+    console.warn('[chat] no session:', authError?.message ?? 'no auth cookie on the request');
+    return NextResponse.json(
+      { error: 'Your session has expired. Refresh the page (or sign in again) and ask again.' },
+      { status: 401 }
+    );
+  }
+  const { data: profile } = await db
+    .from('users')
+    .select('full_name, email, role, is_active')
+    .eq('id', user.id)
+    .maybeSingle();
   if (!profile?.is_active) return NextResponse.json({ error: 'Account not active.' }, { status: 403 });
 
   if (!process.env.ANTHROPIC_API_KEY) {
@@ -81,7 +94,6 @@ export async function POST(req: Request) {
   const parsed = parseBody(await req.json().catch(() => null));
   if (!parsed) return NextResponse.json({ error: 'Bad request.' }, { status: 400 });
 
-  const db = await createClient();
   const activePlan = await getActivePlan();
   const toolCtx = { db, activePlan };
 

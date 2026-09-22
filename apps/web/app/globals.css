@@ -160,6 +160,10 @@
   .print-sheet,
   .print-sheet * {
     visibility: visible !important;
+    /* Grid exports are colour-coded; print the fills even when the browser's
+       "Background graphics" option is off. */
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
   #offer-sheet,
   #cost-sheet,
