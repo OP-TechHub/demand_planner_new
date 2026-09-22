@@ -2,13 +2,13 @@
 
 import { useActionState, useCallback, useEffect, useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Download, Plus, Settings2, Upload } from 'lucide-react';
+import { Plus, Settings2, Upload } from 'lucide-react';
 import { monthLabel } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { OutputGrid, type FmtKey } from '@/components/output-grid';
-import { toCsv, downloadCsv } from '@/lib/csv';
-import { gridCsvRows, type Aggregate, type GridRow } from '@/lib/grid-csv';
+import { ExportMenu } from '@/components/export-menu';
+import { type Aggregate, type GridRow } from '@/lib/grid-csv';
 import { WideGridImport } from '@/components/wide-grid-import';
 import { saveOtherProduct, setOtherArchived, saveOtherQuantities, importOtherQuantities, type OtherFormState } from './other-actions';
 
@@ -222,19 +222,21 @@ export function OtherProductsClient({
                 {metrics.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
               </select>
             </label>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() =>
-                downloadCsv(
-                  `other-products-${metric.key}.csv`,
-                  toCsv(gridCsvRows('Product', planStartDate, horizon, metric.rows, true, [], metric.aggregate ?? 'sum'))
-                )
-              }
-            >
-              <Download />
-              Export CSV
-            </Button>
+            <ExportMenu
+              build={() => ({
+                filename: `other-products-${metric.key}`,
+                title: `Other products — ${metric.label}`,
+                firstCol: 'Product',
+                planStartDate,
+                horizon,
+                rows: metric.rows,
+                range,
+                format: metric.format,
+                aggregate: metric.aggregate ?? 'sum',
+                rowTotals: true,
+                columnTotals: true,
+              })}
+            />
           </div>
           <OutputGrid
             planStartDate={planStartDate}

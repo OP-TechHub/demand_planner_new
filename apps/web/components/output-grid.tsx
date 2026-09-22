@@ -10,6 +10,8 @@ import { ProgramLabel } from '@/components/program-label';
 import { useResizableColumn } from '@/components/resizable-column';
 import { useMonthRange } from '@/components/month-range';
 import { weightedTotal, type Aggregate, type GridRow } from '@/lib/grid-csv';
+import type { CellStyle, LegendItem } from '@/lib/grid-export';
+import { ExportMenu } from '@/components/export-menu';
 
 export type { GridRow, Aggregate };
 
@@ -35,10 +37,33 @@ const COLOR = {
 export type ColorKey = keyof typeof COLOR;
 
 /**
+ * The same scales as hex, for exports (Excel and the print sheet can't read
+ * Tailwind classes). Values are Tailwind's own -100 / -800 shades, so a
+ * download matches the screen.
+ */
+const EXPORT_COLOR: Record<ColorKey, { cell: (v: number | null) => CellStyle | null; legend: LegendItem[] }> = {
+  fulfilment: {
+    cell: (v) =>
+      v == null
+        ? null
+        : v >= 0.95
+          ? { bg: '#dcfce7', fg: '#166534' }
+          : v >= 0.8
+            ? { bg: '#fef3c7', fg: '#92400e' }
+            : { bg: '#fee2e2', fg: '#991b1b' },
+    legend: [
+      { label: '≥ 95% fulfilled', bg: '#dcfce7' },
+      { label: '80–95%', bg: '#fef3c7' },
+      { label: '< 80%', bg: '#fee2e2' },
+    ],
+  },
+};
+
+/**
  * Read-only wide grid used by the output pages: frozen first column, one column
  * per month, an optional total column, and optional column totals. The
- * month-range filter narrows which columns render (view-only — the page's
- * Export CSV still covers the full horizon).
+ * month-range filter narrows which columns render, and the Export menu follows
+ * it: a download carries the months on screen, not the whole horizon.
  */
 export function OutputGrid({
   planStartDate,
@@ -55,6 +80,7 @@ export function OutputGrid({
   onRangeChange,
   cellTitle,
   cellBg,
+  exportAs,
 }: {
   planStartDate: string;
   horizon: number;
@@ -87,6 +113,13 @@ export function OutputGrid({
   cellTitle?: Map<string, string>;
   /** Optional per-cell CSS `background` (e.g. a fulfilment gradient), keyed `${rowKey}:${month}`. */
   cellBg?: Map<string, string>;
+  /**
+   * Show an Export menu (CSV / Excel / PDF) beside the month selector. It
+   * exports the months on screen, with this grid's colours — the menu lives
+   * here, rather than on the page, because this is where both are known.
+   * `legend` defaults to the colour scale's own when `colorFor` is set.
+   */
+  exportAs?: { filename: string; title: string; subtitle?: string; legend?: LegendItem[] };
 }) {
   // A page-level MonthRangeProvider, where there is one, filters every grid on
   // the page at once; this grid's own selector then has nothing left to do and
@@ -164,8 +197,10 @@ export function OutputGrid({
 
   return (
     <div className="space-y-2">
-      {!shared && (
+      {(!shared || exportAs) && (
       <div className="flex flex-wrap items-center gap-1.5">
+        {!shared && (
+        <>
         <span className="text-xs font-medium text-muted-foreground">Months</span>
         <select value={fromMonth} onChange={(e) => onFrom(Number(e.target.value))} className={filterCls} aria-label="From month">
           {months.map((mo) => <option key={mo} value={mo}>{monthLabel(planStartDate, mo)}</option>)}
@@ -185,6 +220,33 @@ export function OutputGrid({
             </button>
             <span className="text-xs text-muted-foreground">Showing {visibleMonths.length} of {horizon} months.</span>
           </>
+        )}
+        </>
+        )}
+        {exportAs && rows.length > 0 && (
+          <div className="ml-auto">
+            <ExportMenu
+              build={() => ({
+                ...exportAs,
+                legend: exportAs.legend ?? (colorFor ? EXPORT_COLOR[colorFor].legend : undefined),
+                firstCol: firstColLabel,
+                extraCols: extraCols?.map((c) => c.label),
+                planStartDate,
+                horizon,
+                rows,
+                range: { from: fromMonth, to: toMonth },
+                format,
+                aggregate,
+                rowTotals: !hideTotals,
+                columnTotals: !hideTotals && showColumnTotals,
+                cellStyle: (r, mo) => {
+                  const bg = cellBg?.get(`${r.key}:${mo}`);
+                  if (bg) return { bg, fg: '#1e293b' };
+                  return colorFor ? EXPORT_COLOR[colorFor].cell(r.values[mo - 1] ?? null) : null;
+                },
+              })}
+            />
+          </div>
         )}
       </div>
       )}

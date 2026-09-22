@@ -1,12 +1,12 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Check, ChevronDown, Download, Search, X } from 'lucide-react';
+import { Check, ChevronDown, Search, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { Button } from '@/components/ui/button';
 import { OutputGrid } from '@/components/output-grid';
-import { gridCsvRows, type GridRow } from '@/lib/grid-csv';
-import { toCsv, downloadCsv } from '@/lib/csv';
+import { ExportMenu } from '@/components/export-menu';
+import { type GridRow } from '@/lib/grid-csv';
+import type { LegendItem } from '@/lib/grid-export';
 
 /**
  * The order book's three states, as a row filter.
@@ -34,6 +34,7 @@ export function OrderBookGrid({
   poMonths,
   cellBg,
   cellTitle,
+  legend,
 }: {
   planStartDate: string;
   horizon: number;
@@ -43,6 +44,8 @@ export function OrderBookGrid({
   poMonths: Record<string, number[]>;
   cellBg: Map<string, string>;
   cellTitle: Map<string, string>;
+  /** What the cell colours mean, printed on the Excel and PDF exports. */
+  legend: LegendItem[];
 }) {
   const [tab, setTab] = useState<Tab>('all');
   // An empty set means "every program" — the picker flips back to that when the
@@ -104,20 +107,27 @@ export function OrderBookGrid({
           </div>
           <ProgramPicker rows={rows} picked={picked} onChange={setPicked} />
         </div>
-        <Button
-          variant="outline"
-          size="sm"
+        <ExportMenu
           disabled={visible.length === 0}
-          onClick={() =>
-            downloadCsv(
-              `order-book${tab === 'all' ? '' : `-${tab}`}.csv`,
-              toCsv(gridCsvRows('Program', planStartDate, horizon, visible))
-            )
-          }
-        >
-          <Download />
-          Export CSV
-        </Button>
+          build={() => ({
+            filename: `order-book${tab === 'all' ? '' : `-${tab}`}`,
+            title: tab === 'all' ? 'Order book' : `Order book — ${TABS.find((t) => t.key === tab)?.label}`,
+            subtitle: 'kg FP',
+            firstCol: 'Program',
+            planStartDate,
+            horizon,
+            rows: visible,
+            range,
+            format: 'num0',
+            rowTotals: true,
+            columnTotals: true,
+            cellStyle: (r, mo) => {
+              const bg = cellBg.get(`${r.key}:${mo}`);
+              return bg ? { bg, fg: '#1e293b' } : null;
+            },
+            legend,
+          })}
+        />
       </div>
 
       {visible.length === 0 ? (

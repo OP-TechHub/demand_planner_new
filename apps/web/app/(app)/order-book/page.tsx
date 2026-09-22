@@ -162,6 +162,11 @@ export default async function OrderBookPage() {
           poMonths={poMonths}
           cellBg={cellBg}
           cellTitle={cellTitle}
+          legend={[
+            { label: 'PO received — firm', bg: BLUE },
+            { label: 'Active, no PO — forecast', bg: PINK },
+            { label: 'Pipeline — what the plan can fulfil', bg: YELLOW },
+          ]}
         />
       )}
 

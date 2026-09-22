@@ -1,9 +1,8 @@
 import { createClient } from '@/lib/supabase/server';
 import { getActivePlan } from '@/lib/plan';
 import { OutputGrid, NotComputed } from '@/components/output-grid';
-import { gridCsvRows, type GridRow } from '@/lib/grid-csv';
+import { type GridRow } from '@/lib/grid-csv';
 import { StalePlanNotice } from '../stale-banner';
-import { ExportCsvButton } from '@/components/export-csv-button';
 import { PrintableGrid } from '@/components/printable-grid';
 import { MonthRangeProvider } from '@/components/month-range';
 import { fetchAllByPlan } from '@/lib/fetch-all';
@@ -24,6 +23,13 @@ const BORROW_CHANNELS: { col: string; offset: number; pathIdx: 0 | 1 | 2 }[] =
     }))
   );
 const BORROW_COLS = BORROW_CHANNELS.map((c) => c.col);
+
+/** What the inquiry-fulfilment shading means, for its exports. */
+const INQUIRY_LEGEND = [
+  { label: 'Fully fulfilled', bg: '#bbf7d0' },
+  { label: 'Short', bg: '#fecaca' },
+  { label: 'Partly fulfilled (green share = fulfilled)', bg: 'linear-gradient(90deg, #bbf7d0 0 50%, #fecaca 50% 100%)' },
+];
 
 export default async function OpenToBuyPage() {
   const plan = await getActivePlan();
@@ -180,13 +186,12 @@ export default async function OpenToBuyPage() {
             rows={otbRows}
             firstColLabel="Bucket"
             cellTitle={otbTitles}
-            csvFilename="total-otb.csv"
-            csvRows={gridCsvRows('Bucket', plan.plan_start_date, plan.horizon_months, otbRows)}
+            csvFilename="total-otb"
             description={
               <>
                 Everything still available to sell (kg WR) per bucket × month: <b>unallocated WR</b> plus the WR held by
                 <b> unconfirmed inquiries</b> (pipeline programs — confirming one promotes it to active and drops it out of OTB).
-                Hover a value for the split. <b>Print / PDF</b> covers the months on screen; <b>Export CSV</b> covers the whole horizon.
+                Hover a value for the split. <b>Print / PDF</b> and <b>Export CSV</b> cover the months selected above.
               </>
             }
           />
@@ -200,42 +205,32 @@ export default async function OpenToBuyPage() {
             rows={otbTotalRows}
             firstColLabel="Open to buy"
             showColumnTotals={false}
-            csvFilename="total-otb-all-buckets.csv"
-            csvRows={gridCsvRows('Open to buy', plan.plan_start_date, plan.horizon_months, otbTotalRows)}
+            csvFilename="total-otb-all-buckets"
             description={
               <>
                 The table above with the size buckets collapsed away — everything still available to sell (kg WR) per
-                month across every bucket. <b>Print / PDF</b> covers the months on screen.
+                month across every bucket. <b>Print / PDF</b> and <b>Export CSV</b> cover the months selected above.
               </>
             }
           />
 
           {/* Unallocated WR */}
           <section className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold">Unallocated WR</h2>
-              {uw.length > 0 && <ExportCsvButton filename="unallocated-wr.csv" rows={gridCsvRows('Bucket', plan.plan_start_date, plan.horizon_months, unallocatedRows)} />}
-            </div>
+            <h2 className="text-lg font-semibold">Unallocated WR</h2>
             <p className="text-xs text-muted-foreground">Spare whole-round capacity (kg WR) per bucket × month, after own-month consumption and all borrowings.</p>
-            <OutputGrid planStartDate={plan.plan_start_date} horizon={plan.horizon_months} rows={unallocatedRows} format="num0" firstColLabel="Bucket" />
+            <OutputGrid planStartDate={plan.plan_start_date} horizon={plan.horizon_months} rows={unallocatedRows} format="num0" firstColLabel="Bucket" exportAs={uw.length > 0 ? { filename: 'unallocated-wr', title: 'Unallocated WR', subtitle: `${plan.name} · kg WR` } : undefined} />
           </section>
 
           {/* Allocated with inquiries (formerly Pipeline WR) */}
           <section className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold">Allocated with inquiries</h2>
-              {pw.length > 0 && <ExportCsvButton filename="allocated-with-inquiries.csv" rows={gridCsvRows('Bucket', plan.plan_start_date, plan.horizon_months, allocatedRows)} />}
-            </div>
+            <h2 className="text-lg font-semibold">Allocated with inquiries</h2>
             <p className="text-xs text-muted-foreground">Whole-round (kg WR) consumed from each month&apos;s harvest by <b>pipeline / inquiry</b> programs (own-month + forward-borrowings sourcing here). Hover a value to see which inquiries make it up.</p>
-            <OutputGrid planStartDate={plan.plan_start_date} horizon={plan.horizon_months} rows={allocatedRows} format="num0" firstColLabel="Bucket" cellTitle={allocatedTitles} />
+            <OutputGrid planStartDate={plan.plan_start_date} horizon={plan.horizon_months} rows={allocatedRows} format="num0" firstColLabel="Bucket" cellTitle={allocatedTitles} exportAs={pw.length > 0 ? { filename: 'allocated-with-inquiries', title: 'Allocated with inquiries', subtitle: `${plan.name} · kg WR` } : undefined} />
           </section>
 
           {/* Inquiry fulfilment — which pipeline orders can be met */}
           <section className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold">Inquiry fulfilment</h2>
-              {anyFulfil && <ExportCsvButton filename="inquiry-fulfilment.csv" rows={gridCsvRows('Program', plan.plan_start_date, plan.horizon_months, fulfilRows)} />}
-            </div>
+            <h2 className="text-lg font-semibold">Inquiry fulfilment</h2>
             <p className="text-xs text-muted-foreground">
               Each pipeline order&apos;s demand (kg FP) per month, shaded by how much the plan can fulfil —
               <span className="mx-1 rounded px-1" style={{ background: '#bbf7d0', color: '#1e293b' }}>fully</span>,
@@ -243,7 +238,7 @@ export default async function OpenToBuyPage() {
               or a green/red split for partial. Hover a value for the fulfilled vs short split.
             </p>
             {anyFulfil ? (
-              <OutputGrid planStartDate={plan.plan_start_date} horizon={plan.horizon_months} rows={fulfilRows} format="num0" firstColLabel="Program" cellTitle={fulfilTitle} cellBg={fulfilBg} />
+              <OutputGrid planStartDate={plan.plan_start_date} horizon={plan.horizon_months} rows={fulfilRows} format="num0" firstColLabel="Program" cellTitle={fulfilTitle} cellBg={fulfilBg} exportAs={{ filename: 'inquiry-fulfilment', title: 'Inquiry fulfilment', subtitle: `${plan.name} · demand kg FP`, legend: INQUIRY_LEGEND }} />
             ) : (
               <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
                 No pipeline demand is being computed. Pipeline orders are fulfilled only when the plan&apos;s Scope is <b>Active + Pipeline</b> (Settings) — set that and Recalculate to see this.

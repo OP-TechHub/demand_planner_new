@@ -1,11 +1,11 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Download, Search, X } from 'lucide-react';
+import { Search, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { toCsv, downloadCsv } from '@/lib/csv';
-import { gridCsvRows, type Aggregate, type GridRow } from '@/lib/grid-csv';
-import { Button } from '@/components/ui/button';
+import { type Aggregate, type GridRow } from '@/lib/grid-csv';
+import { rowLabel } from '@/lib/grid-export';
+import { ExportMenu } from '@/components/export-menu';
 import { OutputGrid, type FmtKey } from './output-grid';
 
 export type { FmtKey };
@@ -72,6 +72,8 @@ export function MetricGrid({
   const [status, setStatus] = useState<StatusFilter>('combined');
   const [part, setPart] = useState(ALL_PARTS);
   const [pick, setPick] = useState(ALL_ROWS);
+  // Mirrors the grid's month selectors, so Export CSV carries the months on screen.
+  const [range, setRange] = useState({ from: 1, to: horizon });
   const m = metrics.find((x) => x.key === sel) ?? metrics[0];
   if (!m) return null;
 
@@ -139,24 +141,37 @@ export function MetricGrid({
             />
           )}
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => downloadCsv(
-            `${filenameBase}-${m.key}${activePart ? `-${activePart.key}` : ''}${statusFilter && status !== 'combined' ? `-${status}` : ''}.csv`,
-            toCsv(gridCsvRows(firstColLabel, planStartDate, horizon, rows, true, extraCols?.map((c) => c.label) ?? [], m.aggregate ?? 'sum'))
-          )}
-        >
-          <Download />
-          Export CSV
-        </Button>
+        <ExportMenu
+          disabled={rows.length === 0}
+          build={() => ({
+            filename: `${filenameBase}-${m.key}${activePart ? `-${activePart.key}` : ''}${statusFilter && status !== 'combined' ? `-${status}` : ''}`,
+            title: [m.label, activePart?.label].filter(Boolean).join(' — '),
+            subtitle: [
+              statusFilter && status !== 'combined' ? `${status[0]!.toUpperCase()}${status.slice(1)} only` : '',
+              picked ? rowLabel(picked) : '',
+            ].filter(Boolean).join(' · ') || undefined,
+            firstCol: firstColLabel,
+            extraCols: extraCols?.map((c) => c.label),
+            planStartDate,
+            horizon,
+            rows,
+            range,
+            format: m.format,
+            aggregate: m.aggregate ?? 'sum',
+            rowTotals: true,
+            columnTotals: true,
+          })}
+        />
       </div>
       {rows.length === 0 ? (
         <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
           No {firstColLabel.toLowerCase()}s in this view.
         </p>
       ) : (
-        <OutputGrid planStartDate={planStartDate} horizon={horizon} rows={rows} format={m.format} aggregate={m.aggregate} firstColLabel={firstColLabel} extraCols={extraCols} onRangeChange={onRangeChange} />
+        <OutputGrid planStartDate={planStartDate} horizon={horizon} rows={rows} format={m.format} aggregate={m.aggregate} firstColLabel={firstColLabel} extraCols={extraCols} onRangeChange={(from, to) => {
+          setRange((prev) => (prev.from === from && prev.to === to ? prev : { from, to }));
+          onRangeChange?.(from, to);
+        }} />
       )}
     </div>
   );

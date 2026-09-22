@@ -61,21 +61,30 @@ export function gridCsvRows(
   /** Headers for the grid's extra descriptive columns, in the same order as `row.extra`. */
   extraCols: string[] = [],
   /** Match the grid: a rate column's Total is a weighted average, not a sum. */
-  aggregate: Aggregate = 'sum'
+  aggregate: Aggregate = 'sum',
+  /**
+   * The months on screen (1-based, inclusive). The export then carries only
+   * those columns, and Total covers only them — the same figures the grid's own
+   * Total shows. Omitted means the whole horizon.
+   */
+  range?: { from: number; to: number }
 ): (string | number | null)[][] {
+  const from = Math.max(1, range?.from ?? 1);
+  const to = Math.min(horizon, range?.to ?? horizon);
+  const months = Array.from({ length: Math.max(0, to - from + 1) }, (_, i) => from + i);
   const header = [
     firstCol,
     ...extraCols,
-    ...Array.from({ length: horizon }, (_, i) => monthLabel(planStartDate, i + 1)),
+    ...months.map((mo) => monthLabel(planStartDate, mo)),
     ...(includeTotal ? ['Total'] : []),
   ];
-  const allMonths = Array.from({ length: horizon }, (_, i) => i + 1);
   const body = rows.map((r) => {
     const label = r.sublabel ? `${r.label} — ${r.sublabel}` : r.label;
     const extra = extraCols.map((_, i) => r.extra?.[i] ?? '');
+    const values = months.map((mo) => r.values[mo - 1] ?? null);
     const total =
-      aggregate === 'ratio' ? weightedTotal(r, allMonths) : r.values.reduce((s: number, v) => s + (v ?? 0), 0);
-    return [label, ...extra, ...r.values, ...(includeTotal ? [total] : [])];
+      aggregate === 'ratio' ? weightedTotal(r, months) : values.reduce((s: number, v) => s + (v ?? 0), 0);
+    return [label, ...extra, ...values, ...(includeTotal ? [total] : [])];
   });
   return [header, ...body];
 }

@@ -1,12 +1,9 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { Download } from 'lucide-react';
+import { useCallback, useMemo, useState } from 'react';
 import { cn } from '@/lib/utils';
-import { Button } from '@/components/ui/button';
-import { toCsv, downloadCsv } from '@/lib/csv';
-import { gridCsvRows } from '@/lib/grid-csv';
 import { OutputGrid, type FmtKey, type GridRow } from '@/components/output-grid';
+import { ExportMenu } from '@/components/export-menu';
 import type { CompareMetric, CompareSeries, MonthlyCompare as Data } from '@/lib/plan-compare';
 
 /** What the grid shows: each plan on its own, or the movement between them. */
@@ -79,6 +76,13 @@ export function MonthlyCompare({ data, aName, bName }: { data: Data; aName: stri
 
   const rows = useMemo(() => buildRows(series, view), [series, view]);
 
+  // The grid owns the month selectors; the export follows whatever it shows.
+  const [range, setRange] = useState({ from: 1, to: data.horizon });
+  const onRangeChange = useCallback(
+    (from: number, to: number) => setRange((prev) => (prev.from === from && prev.to === to ? prev : { from, to })),
+    []
+  );
+
   if (!metric) return null;
 
   const pctView = view === 'changePct';
@@ -131,20 +135,24 @@ export function MonthlyCompare({ data, aName, bName }: { data: Data; aName: stri
           ))}
         </div>
 
-        <Button
-          variant="outline"
-          size="sm"
-          className="ml-auto"
-          onClick={() =>
-            downloadCsv(
-              `compare-${metric.key}${activePart ? `-${activePart.key}` : ''}-${view}.csv`,
-              toCsv(gridCsvRows(metric.rowLabel, data.startDate, data.horizon, rows, true, [], pctView ? 'ratio' : 'sum'))
-            )
-          }
-        >
-          <Download />
-          Export CSV
-        </Button>
+        <div className="ml-auto">
+          <ExportMenu
+            build={() => ({
+              filename: `compare-${metric.key}${activePart ? `-${activePart.key}` : ''}-${view}`,
+              title,
+              subtitle: view === 'a' ? aName : view === 'b' ? bName : `${bName} − ${aName}`,
+              firstCol: metric.rowLabel,
+              planStartDate: data.startDate,
+              horizon: data.horizon,
+              rows,
+              range,
+              format,
+              aggregate: pctView ? 'ratio' : 'sum',
+              rowTotals: true,
+              columnTotals: true,
+            })}
+          />
+        </div>
       </div>
 
       <p className="text-xs text-muted-foreground">
@@ -170,6 +178,7 @@ export function MonthlyCompare({ data, aName, bName }: { data: Data; aName: stri
         aggregate={pctView ? 'ratio' : 'sum'}
         rightLabel="Total"
         firstColLabel={metric.rowLabel}
+        onRangeChange={onRangeChange}
       />
 
       <p className="text-xs text-muted-foreground">{metric.note}</p>
