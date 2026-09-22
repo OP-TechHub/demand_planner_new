@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server';
 import { getActivePlan } from '@/lib/plan';
 import { SYSTEM_PROMPT } from '@/lib/chat/system-prompt';
 import { TOOLS, TOOL_LABELS, runTool } from '@/lib/chat/tools';
+import { budgetStatus, recordUsage, type TokenUsage } from '@/lib/chat/budget';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -21,13 +22,18 @@ export const maxDuration = 120;
  *   { type: 'text', text }        a fragment of the answer
  *   { type: 'tool', label }       a tool started (for a status line)
  *   { type: 'error', message }    the turn failed; shown in place of an answer
- *   { type: 'done' }
+ *   { type: 'done', budget }      always last; budget = the org's month so far
+ *
+ * A 429 with `budget` in the body means the organisation's monthly allowance
+ * is spent (lib/chat/budget.ts).
  */
 
 const MODEL = process.env.CHAT_MODEL || 'claude-opus-5';
 const EFFORT = (process.env.CHAT_EFFORT || 'medium') as 'low' | 'medium' | 'high';
 /** Model round trips per question before giving up — a loop guard, not a budget. */
 const MAX_STEPS = 10;
+/** Output tokens per model turn. Caps what one question can cost. */
+const MAX_OUTPUT_TOKENS = 8000;
 const MAX_MESSAGE_CHARS = 4000;
 const MAX_HISTORY = 40;
 
@@ -79,7 +85,7 @@ export async function POST(req: Request) {
   }
   const { data: profile } = await db
     .from('users')
-    .select('full_name, email, role, is_active')
+    .select('org_id, full_name, email, role, is_active')
     .eq('id', user.id)
     .maybeSingle();
   if (!profile?.is_active) return NextResponse.json({ error: 'Account not active.' }, { status: 403 });
@@ -89,6 +95,30 @@ export async function POST(req: Request) {
   }
   if (rateLimited(user.id)) {
     return NextResponse.json({ error: 'Too many questions in a short time. Try again in a few minutes.' }, { status: 429 });
+  }
+
+  // The monthly cap, for the whole organisation. Checked before every answer;
+  // the question that crosses the line is the last one until next month.
+  let budget;
+  try {
+    budget = await budgetStatus(profile.org_id);
+  } catch (err) {
+    // Without the ledger the cap can't be enforced, so refuse rather than
+    // answer for free — most likely the chat_usage migration hasn't been run.
+    console.error('[chat] budget check failed', err);
+    return NextResponse.json(
+      { error: 'The assistant can’t check its usage allowance right now. Ask an admin to check the chat_usage table exists.' },
+      { status: 503 }
+    );
+  }
+  if (budget.exhausted) {
+    return NextResponse.json(
+      {
+        error: `The assistant has used this month’s allowance (US$${budget.budget_usd.toFixed(2)}). It resets on ${resetLabel(budget.resets_at)}.`,
+        budget,
+      },
+      { status: 429 }
+    );
   }
 
   const parsed = parseBody(await req.json().catch(() => null));
@@ -117,7 +147,7 @@ export async function POST(req: Request) {
     async start(controller) {
       const send = (event: Record<string, unknown>) => controller.enqueue(encoder.encode(JSON.stringify(event) + '\n'));
       const toolsUsed: string[] = [];
-      const usage = { input: 0, output: 0, cache_read: 0 };
+      const usage: TokenUsage = { input: 0, output: 0, cache_read: 0, cache_write: 0 };
       let jsonRetries = 0;
 
       try {
@@ -125,7 +155,10 @@ export async function POST(req: Request) {
           const turn = client.beta.messages.stream(
             {
               model: MODEL,
-              max_tokens: 32000,
+              // Also a per-question cost ceiling: output is the expensive
+              // token, and an answer over a few thousand of them is a table
+              // that should have been narrowed, not a longer answer.
+              max_tokens: MAX_OUTPUT_TOKENS,
               betas: ['server-side-fallback-2026-07-01'],
               fallbacks: 'default',
               output_config: { effort: EFFORT },
@@ -151,6 +184,7 @@ export async function POST(req: Request) {
           usage.input += message.usage.input_tokens;
           usage.output += message.usage.output_tokens;
           usage.cache_read += message.usage.cache_read_input_tokens ?? 0;
+          usage.cache_write += message.usage.cache_creation_input_tokens ?? 0;
 
           if (message.stop_reason === 'refusal') {
             send({ type: 'text', text: '\n\nI can’t help with that request.' });
@@ -187,15 +221,26 @@ export async function POST(req: Request) {
             send({ type: 'text', text: '\n\nThat needed more lookups than I’m allowed per question. Try asking something narrower.' });
           }
         }
-        send({ type: 'done' });
       } catch (err) {
         if (!req.signal.aborted) {
           console.error('[chat] turn failed', err);
           send({ type: 'error', message: errorMessage(err) });
         }
       } finally {
-        // One line per question, for spotting cost and misbehaving tools in the logs.
-        console.info(JSON.stringify({ event: 'chat', user: user.id, model: MODEL, tools: toolsUsed, usage }));
+        // Charged even when the turn failed or was stopped: the tokens were
+        // still consumed. Recorded before `done` so the panel's allowance
+        // line includes this question.
+        const cost = await recordUsage({ orgId: profile.org_id, userId: user.id, model: MODEL, usage, tools: toolsUsed });
+        const spent = budget.spent_usd + cost;
+        console.info(JSON.stringify({ event: 'chat', user: user.id, model: MODEL, tools: toolsUsed, usage, cost_usd: cost }));
+        try {
+          send({
+            type: 'done',
+            budget: { spent_usd: spent, budget_usd: budget.budget_usd, resets_at: budget.resets_at, exhausted: spent >= budget.budget_usd },
+          });
+        } catch {
+          // The client went away mid-answer; nothing to tell it.
+        }
         controller.close();
       }
     },
@@ -204,6 +249,11 @@ export async function POST(req: Request) {
   return new Response(stream, {
     headers: { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store' },
   });
+}
+
+/** "1 October 2026", for the allowance message. */
+function resetLabel(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
 }
 
 function errorMessage(err: unknown): string {

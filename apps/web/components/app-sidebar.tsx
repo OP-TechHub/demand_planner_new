@@ -30,6 +30,7 @@ import {
   ArchiveRestore,
   ListOrdered,
   type LucideIcon,
+  MessageSquare,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { InstallAppButton } from '@/components/pwa/install-app-button';
@@ -94,6 +95,7 @@ const SECTIONS: Section[] = [
       { label: 'Plans', href: '/admin/plans', icon: GitFork },
       { label: 'Users', href: '/admin/users', icon: Users },
       { label: 'Audit log', href: '/admin/audit', icon: ScrollText },
+      { label: 'Assistant usage', href: '/admin/assistant', icon: MessageSquare },
       { label: 'Deleted costings', href: '/costing/archived', icon: ArchiveRestore },
     ],
   },
