@@ -6,6 +6,8 @@ import { monthLabel } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 import { kg, usd, usd0, usd2, num0, pct } from '@/lib/format';
 import { ScrollX } from '@/components/ui/scroll-x';
+import { ProgramLabel } from '@/components/program-label';
+import { useResizableColumn } from '@/components/resizable-column';
 import { useMonthRange } from '@/components/month-range';
 import { weightedTotal, type Aggregate, type GridRow } from '@/lib/grid-csv';
 
@@ -155,6 +157,8 @@ export function OutputGrid({
   };
   // A vertical divider at each fiscal-year boundary (M13, M25, …) to orient the eye.
   const yearStart = (mo: number) => mo > 1 && (mo - 1) % 12 === 0;
+  // 15rem, the width this column has always had; drag its header edge to change it.
+  const nameCol = useResizableColumn('output-grid', 240);
   const stickyCol =
     'sticky left-0 z-10 transition-shadow group-data-[scrolled=true]/scrollx:shadow-[6px_0_8px_-6px_rgba(0,0,0,0.18)]';
 
@@ -195,7 +199,10 @@ export function OutputGrid({
           */}
           <thead className="bg-muted text-muted-foreground">
             <tr>
-              <th className={cn(stickyCol, 'sticky top-0 z-30 min-w-[15rem] max-w-[15rem] border-b border-border bg-muted px-3 py-2 text-left font-semibold')}>{firstColLabel}</th>
+              <th style={nameCol.style} className={cn(stickyCol, 'sticky top-0 z-30 border-b border-border bg-muted px-3 py-2 text-left font-semibold')}>
+                {firstColLabel}
+                {nameCol.handle}
+              </th>
               {extraCols?.map((c) => (
                 <th
                   key={c.label}
@@ -221,9 +228,8 @@ export function OutputGrid({
           <tbody>
             {rows.map((r) => (
               <tr key={r.key} className="border-t hover:bg-muted/30">
-                <td className={cn(stickyCol, 'min-w-[15rem] max-w-[15rem] truncate border-r bg-card px-3 py-1.5')} title={`${r.label}${r.sublabel ? ' — ' + r.sublabel : ''}`}>
-                  <span className="font-medium">{r.label}</span>
-                  {r.sublabel && <span className="ml-1 text-muted-foreground">{r.sublabel}</span>}
+                <td style={nameCol.style} className={cn(stickyCol, 'border-r bg-card px-3 py-1.5')}>
+                  <ProgramLabel name={r.label} detail={r.sublabel} />
                 </td>
                 {extraCols?.map((c, i) => (
                   <td

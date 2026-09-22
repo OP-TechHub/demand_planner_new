@@ -3,6 +3,8 @@
 import { useMemo, useState } from 'react';
 import { monthLabel } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
+import { ProgramLabel } from '@/components/program-label';
+import { useResizableColumn } from '@/components/resizable-column';
 
 export interface OptProgram {
   rank: number;
@@ -50,6 +52,7 @@ export function OptimizerClient({
   // constraint most plainly, and the range is there to widen it.
   const [from, setFrom] = useState(firstActive);
   const [to, setTo] = useState(firstActive);
+  const nameCol = useResizableColumn('optimizer-program', 256);
 
   // Keep the range coherent: pushing one end past the other carries the other with it.
   const onFrom = (v: number) => { setFrom(v); if (v > to) setTo(v); };
@@ -155,7 +158,7 @@ export function OptimizerClient({
             <table className="w-full text-sm">
               <thead className="text-left text-xs uppercase tracking-wide text-muted-foreground">
                 <tr>
-                  <th className="py-1">Rank</th><th className="py-1">Program</th>
+                  <th className="py-1">Rank</th><th style={nameCol.style} className="relative py-1 pr-2">Program{nameCol.handle}</th>
                   <th className="py-1">Primary bucket</th>
                   <th className="py-1">Secondary bucket</th>
                   <th className="py-1 text-right">Demand FP</th><th className="py-1 text-right">Own FP</th>
@@ -170,7 +173,7 @@ export function OptimizerClient({
                   return (
                     <tr key={p.rank + p.label} className="border-t">
                       <td className="py-1 text-muted-foreground">{p.rank}</td>
-                      <td className="max-w-[16rem] truncate py-1" title={`${p.label} — ${p.sublabel}`}><span className="font-medium">{p.label}</span> <span className="text-muted-foreground">{p.sublabel}</span></td>
+                      <td style={nameCol.style} className="py-1 pr-2"><ProgramLabel name={p.label} detail={p.sublabel} /></td>
                       <td className="whitespace-nowrap py-1">{p.primaryBucket}</td>
                       <td className="whitespace-nowrap py-1 text-muted-foreground">{p.secondaryBucket}</td>
                       <td className="py-1 text-right tabular-nums">{num(dem)}</td>

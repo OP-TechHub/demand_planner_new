@@ -98,6 +98,59 @@ export async function saveHarvestCapacity(
 }
 
 /**
+ * Save capacity cells edited on the grid itself — pasted from Excel or cleared
+ * with Delete — across any number of buckets in one go. Kept sparse like the
+ * single-bucket editor: a positive value is upserted in whole kg WR, and null
+ * or zero deletes the row, which reads as no capacity.
+ */
+export async function saveHarvestCells(
+  planId: string,
+  cells: { bucket_id: string; month_index: number; capacity_kg_wr: number | null }[]
+): Promise<SaveResult & { count: number }> {
+  if (!planId) return { error: 'Missing plan.', count: 0 };
+  for (const c of cells) {
+    if (!c.bucket_id) return { error: 'Missing bucket.', count: 0 };
+    if (!Number.isInteger(c.month_index) || c.month_index < 1 || c.month_index > 60) {
+      return { error: `Invalid month ${c.month_index}.`, count: 0 };
+    }
+    if (c.capacity_kg_wr !== null && (!Number.isFinite(c.capacity_kg_wr) || c.capacity_kg_wr < 0)) {
+      return { error: `Capacity for month ${c.month_index} must be zero or greater.`, count: 0 };
+    }
+  }
+
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: 'Your session expired. Sign in again.', count: 0 };
+
+  const rounded = cells.map((c) => ({ ...c, capacity_kg_wr: Math.round(c.capacity_kg_wr ?? 0) }));
+  const upserts = rounded.filter((c) => c.capacity_kg_wr > 0).map((c) => ({
+    plan_id: planId, bucket_id: c.bucket_id, month_index: c.month_index,
+    capacity_kg_wr: c.capacity_kg_wr, created_by: user.id, updated_by: user.id,
+  }));
+  if (upserts.length) {
+    const { error } = await supabase.from('harvest_plan').upsert(upserts, { onConflict: 'plan_id,bucket_id,month_index' });
+    if (error) return { error: permError(error.message), count: 0 };
+  }
+
+  // One delete per bucket, for the same reason as the request plan below.
+  const clears = new Map<string, number[]>();
+  for (const c of rounded) if (c.capacity_kg_wr === 0) clears.set(c.bucket_id, [...(clears.get(c.bucket_id) ?? []), c.month_index]);
+  for (const [bucketId, monthList] of clears) {
+    const { error } = await supabase.from('harvest_plan').delete()
+      .eq('plan_id', planId).eq('bucket_id', bucketId).in('month_index', monthList);
+    if (error) return { error: permError(error.message), count: 0 };
+  }
+
+  const cleared = [...clears.values()].reduce((n, l) => n + l.length, 0);
+  await logAudit(supabase, {
+    planId, entityType: 'harvest_plan', entityId: planId, action: 'update',
+    changes: { grid_set: upserts.length, grid_cleared: cleared },
+  });
+  revalidatePath('/harvest-plan');
+  return { error: null, count: upserts.length + cleared };
+}
+
+/**
  * Save the processing plant's requested whole round per month.
  *
  * Sparse like the harvest plan itself: a zero or cleared month is stored as a

@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.127.0",
     "@oceanpick/engine": "*",
     "@oceanpick/shared": "*",
     "@supabase/ssr": "^0.5.2",
@@ -20,7 +21,9 @@
     "next": "^15.0.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-markdown": "^9.1.0",
     "recharts": "^2.15.0",
+    "remark-gfm": "^4.0.1",
     "tailwind-merge": "^2.5.4"
   },
   "devDependencies": {

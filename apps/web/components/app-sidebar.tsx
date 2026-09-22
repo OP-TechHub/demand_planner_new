@@ -28,6 +28,7 @@ import {
   FileSpreadsheet,
   Tags,
   ArchiveRestore,
+  ListOrdered,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -62,6 +63,7 @@ const SECTIONS: Section[] = [
       { label: 'Revenue & Cost', href: '/revenue-cost', icon: DollarSign },
       { label: 'Secondary products', href: '/secondary-products', icon: Recycle },
       { label: 'Fulfilment Optimizer', href: '/optimizer', icon: SlidersHorizontal },
+      { label: 'Program Ranking', href: '/ranking', icon: ListOrdered },
       { label: 'Inquiry management', href: '/inquiry-management', icon: ClipboardList },
       { label: 'Inquiries', href: '/inquiries', icon: ClipboardCheck },
     ],

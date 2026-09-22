@@ -95,6 +95,58 @@ export async function saveDemandOverrides(
 }
 
 /**
+ * Save cells edited on the grid itself — pasted from Excel or cleared with
+ * Delete — across any number of programs in one go. A number sets that month's
+ * override; null clears it, so the month falls back to the program baseline,
+ * exactly as clearing a box in the single-program editor does.
+ */
+export async function saveDemandCells(
+  planId: string,
+  cells: { program_id: string; month_index: number; demand_fp: number | null }[]
+): Promise<SaveResult & { count: number }> {
+  if (!planId) return { error: 'Missing plan.', count: 0 };
+  for (const c of cells) {
+    if (!c.program_id) return { error: 'Missing program.', count: 0 };
+    if (!Number.isInteger(c.month_index) || c.month_index < 1 || c.month_index > 60) {
+      return { error: `Invalid month ${c.month_index}.`, count: 0 };
+    }
+    if (c.demand_fp !== null && (!Number.isFinite(c.demand_fp) || c.demand_fp < 0)) {
+      return { error: `Demand for month ${c.month_index} must be zero or greater.`, count: 0 };
+    }
+  }
+
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: 'Your session expired. Sign in again.', count: 0 };
+
+  const upserts = cells.filter((c) => c.demand_fp !== null).map((c) => ({
+    plan_id: planId, program_id: c.program_id, month_index: c.month_index,
+    demand_fp: c.demand_fp as number, created_by: user.id, updated_by: user.id,
+  }));
+  if (upserts.length) {
+    const { error } = await supabase.from('demand_plan').upsert(upserts, { onConflict: 'program_id,month_index' });
+    if (error) return { error: permError(error.message), count: 0 };
+  }
+
+  // One delete per program: a single `in` over months would clear those months
+  // for every program, including ones this save is not touching.
+  const clears = new Map<string, number[]>();
+  for (const c of cells) if (c.demand_fp === null) clears.set(c.program_id, [...(clears.get(c.program_id) ?? []), c.month_index]);
+  for (const [programId, monthList] of clears) {
+    const { error } = await supabase.from('demand_plan').delete().eq('program_id', programId).in('month_index', monthList);
+    if (error) return { error: permError(error.message), count: 0 };
+  }
+
+  const cleared = [...clears.values()].reduce((n, l) => n + l.length, 0);
+  await logAudit(supabase, {
+    planId, entityType: 'demand_plan', entityId: planId, action: 'update',
+    changes: { grid_set: upserts.length, grid_cleared: cleared },
+  });
+  revalidatePath('/demand-plan');
+  return { error: null, count: upserts.length + cleared };
+}
+
+/**
  * Bulk import demand overrides from a wide CSV (item_code × M1..M60). Keys
  * resolve to program ids; non-blank cells upsert into demand_plan. Unknown
  * item_codes are skipped and reported.

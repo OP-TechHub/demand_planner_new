@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, type CSSProperties } from 'react';
+import { useMemo, useState, useTransition, type CSSProperties } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Download, Upload, LineChart } from 'lucide-react';
@@ -10,9 +10,12 @@ import { toCsv, downloadCsv } from '@/lib/csv';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ScrollX } from '@/components/ui/scroll-x';
+import { useResizableColumn } from '@/components/resizable-column';
 import { WideGridImport } from '@/components/wide-grid-import';
+import { usePasteGrid, pasteCellCls, PendingPasteBar } from '@/components/paste-grid';
+import { toast } from '@/components/ui/toast';
 import { DemandEditor } from './demand-editor';
-import { importDemand } from './actions';
+import { importDemand, saveDemandCells } from './actions';
 
 export type FulfilCell = { program_id: string; month_index: number; demand_fp: number; rolling_fp: number };
 
@@ -58,11 +61,16 @@ export function DemandClient({
   const onTo = (v: number) => { setToMonth(v); if (v < fromMonth) setFromMonth(v); };
 
   const yearStart = (mo: number) => mo > 1 && (mo - 1) % 12 === 0;
-  // Two frozen left columns: Customer (left-0, 12rem) then Product (left-12rem,
-  // 16rem). The scroll shadow rides the rightmost (Product) column only.
-  const custCol = 'sticky left-0 z-10 min-w-[12rem] max-w-[12rem]';
+  // Two frozen left columns: Customer (left 0, 12rem by default) then Product
+  // (16rem), which is pinned at the Customer column's width so dragging one
+  // wider carries the other along. The scroll shadow rides Product only.
+  const cust = useResizableColumn('demand-customer', 192);
+  const prod = useResizableColumn('demand-product', 256);
+  const custCol = 'sticky left-0 z-10';
   const prodCol =
-    'sticky left-[12rem] z-10 min-w-[16rem] max-w-[16rem] transition-shadow group-data-[scrolled=true]/scrollx:shadow-[6px_0_8px_-6px_rgba(0,0,0,0.18)]';
+    'sticky z-10 transition-shadow group-data-[scrolled=true]/scrollx:shadow-[6px_0_8px_-6px_rgba(0,0,0,0.18)]';
+  const custStyle = cust.style;
+  const prodStyle: CSSProperties = { ...prod.style, left: cust.width };
 
   // override lookup: `${programId}:${month}` -> demand_fp
   const overrides = useMemo(() => {
@@ -71,8 +79,13 @@ export function DemandClient({
     return m;
   }, [demandRows]);
 
-  const effective = (p: Program, month: number) =>
-    overrides.get(`${p.id}:${month}`) ?? p.max_monthly_demand_fp;
+  // An unsaved change on the grid wins, so the totals move as you paste. A
+  // cleared cell drops its override and shows the baseline again.
+  const effective = (p: Program, month: number) => {
+    const pv = paste.pendingValue(p.id, month);
+    if (pv !== undefined) return pv ?? p.max_monthly_demand_fp;
+    return overrides.get(`${p.id}:${month}`) ?? p.max_monthly_demand_fp;
+  };
 
   // Fulfilment from the last recompute: `${programId}:${month}` -> {demand, fulfilled}.
   const fulfil = useMemo(() => {
@@ -119,11 +132,27 @@ export function DemandClient({
     });
   }, [programs, statusView, customer, search]);
 
+  // Select month cells, then Ctrl+V a block copied from Excel (it lands from
+  // the top-left cell rightwards and down) or Delete to clear them.
+  const rowIds = useMemo(() => visible.map((p) => p.id), [visible]);
+  const paste = usePasteGrid({ rowIds, months: visibleMonths, enabled: canEdit });
+  const [savingPaste, startSavePaste] = useTransition();
+  function savePaste() {
+    const cells = paste.entries.map((e) => ({ program_id: e.rowId, month_index: e.month, demand_fp: e.value }));
+    startSavePaste(async () => {
+      const res = await saveDemandCells(planId, cells);
+      if (res.error) { toast.error(res.error); return; }
+      toast.success(`Saved ${res.count} cell${res.count === 1 ? '' : 's'}`);
+      paste.discard();
+      router.refresh();
+    });
+  }
+
   // TOTAL row: sum of effective demand across in-scope (non-inactive) visible
   // programs — so the 'All' view still excludes inactive from the total.
   const totals = useMemo(
     () => visibleMonths.map((mo) => visible.filter((p) => p.status !== 'inactive').reduce((s, p) => s + effective(p, mo), 0)),
-    [visibleMonths, visible, overrides] // eslint-disable-line react-hooks/exhaustive-deps
+    [visibleMonths, visible, overrides, paste.entries] // eslint-disable-line react-hooks/exhaustive-deps
   );
   // Per-program total, over the VISIBLE months — so it always adds up to the
   // cells beside it rather than to a 60-month figure the grid isn't showing.
@@ -219,7 +248,7 @@ export function DemandClient({
         <span className="text-xs text-muted-foreground">
           {!fullRange && <>Showing {visibleMonths.length} of {horizon} months. </>}
           Effective demand (override where set, else program baseline); the right-hand total covers the months shown.
-          {canEdit ? ' Click a program to edit its timeline.' : ''}
+          {canEdit ? ' Click a program to edit its timeline. Click or drag across month cells to select them, then paste (Ctrl+V) from Excel or press Delete to clear back to baseline.' : ''}
         </span>
       </div>
 
@@ -238,6 +267,8 @@ export function DemandClient({
           }
         />
       ) : (
+        <>
+        <PendingPasteBar count={paste.entries.length} saving={savingPaste} onSave={savePaste} onDiscard={paste.discard} />
         <ScrollX className="max-h-[70vh] rounded-lg border border-border">
           <table className="w-max text-xs">
             {/*
@@ -248,11 +279,13 @@ export function DemandClient({
             */}
             <thead className="bg-muted text-muted-foreground">
               <tr>
-                <th className={cn(custCol, 'sticky top-0 z-30 border-b border-border bg-muted px-3 py-2 text-left font-semibold')}>
+                <th style={custStyle} className={cn(custCol, 'sticky top-0 z-30 border-b border-border bg-muted px-3 py-2 text-left font-semibold')}>
                   Customer
+                  {cust.handle}
                 </th>
-                <th className={cn(prodCol, 'sticky top-0 z-30 border-b border-border bg-muted px-3 py-2 text-left font-semibold')}>
+                <th style={prodStyle} className={cn(prodCol, 'sticky top-0 z-30 border-b border-border bg-muted px-3 py-2 text-left font-semibold')}>
                   Product
+                  {prod.handle}
                 </th>
                 {visibleMonths.map((mo) => (
                   <th key={mo} className={cn('sticky top-0 z-20 min-w-[4.5rem] border-b border-border bg-muted px-2 py-2 text-right font-medium', yearStart(mo) && 'border-l border-border')}>
@@ -265,13 +298,14 @@ export function DemandClient({
               </tr>
             </thead>
             <tbody>
-              {visible.map((p) => (
+              {visible.map((p, ri) => (
                 <tr
                   key={p.id}
                   className={cn('border-t hover:bg-muted/30', canEdit && 'cursor-pointer', p.status === 'inactive' && 'opacity-60')}
                   onClick={canEdit ? () => setEditing(p) : undefined}
                 >
                   <td
+                    style={custStyle}
                     className={cn(
                       custCol,
                       'truncate border-l-4 border-r bg-card px-3 py-1.5 font-medium',
@@ -282,6 +316,7 @@ export function DemandClient({
                     {p.customer}
                   </td>
                   <td
+                    style={prodStyle}
                     className={cn(prodCol, 'truncate border-r bg-card px-3 py-1.5 text-muted-foreground')}
                     title={p.item_description}
                   >
@@ -295,15 +330,25 @@ export function DemandClient({
                       </span>
                     )}
                   </td>
-                  {visibleMonths.map((mo) => {
+                  {visibleMonths.map((mo, ci) => {
                     const isOverride = overrides.has(`${p.id}:${mo}`);
-                    const f = fulfilCell(p, mo);
+                    const pasted = paste.pendingValue(p.id, mo) !== undefined;
+                    // The fulfilment gradient is an inline background, which would hide both tints.
+                    const f = pasted || paste.isSelected(ri, ci) ? {} : fulfilCell(p, mo);
                     return (
                       <td
                         key={mo}
+                        {...paste.cellProps(ri, ci)}
                         style={f.style}
-                        className={cn('px-2 py-1.5 text-right tabular-nums', yearStart(mo) && 'border-l border-border/60', isOverride && !f.style && 'font-semibold text-primary')}
-                        title={f.title ?? (isOverride ? 'Overridden (baseline: ' + p.max_monthly_demand_fp.toLocaleString() + ')' : 'Baseline')}
+                        className={cn(
+                          'px-2 py-1.5 text-right tabular-nums',
+                          yearStart(mo) && 'border-l border-border/60',
+                          isOverride && !f.style && !pasted && 'font-semibold text-primary',
+                          canEdit && pasteCellCls.base,
+                          pasted && pasteCellCls.pending,
+                          paste.isSelected(ri, ci) && pasteCellCls.selected
+                        )}
+                        title={pasted ? 'Changed — not saved yet' : f.title ?? (isOverride ? 'Overridden (baseline: ' + p.max_monthly_demand_fp.toLocaleString() + ')' : 'Baseline')}
                       >
                         {effective(p, mo).toLocaleString()}
                       </td>
@@ -324,6 +369,7 @@ export function DemandClient({
             </tbody>
           </table>
         </ScrollX>
+        </>
       )}
 
       {hasFulfil ? (

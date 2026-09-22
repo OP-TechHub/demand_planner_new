@@ -29,6 +29,7 @@ so if you know the spreadsheet the terms here will feel familiar.
    - [60-Month Summary](#60-month-summary)
    - [Revenue & Cost](#revenue--cost)
    - [Fulfilment Optimizer](#fulfilment-optimizer)
+   - [Program Ranking](#program-ranking)
 8. [Scenarios](#8-scenarios)
 9. [Admin](#9-admin)
 10. [Importing & exporting CSV](#10-importing--exporting-csv)
@@ -284,6 +285,21 @@ A single-month operational drill-down. Pick a month and see, for that month, how
 supply was distributed across programs and buckets — the detailed "who got what
 from where" view for operational planning.
 
+### Program Ranking
+
+Every program in the plan (active, pipeline and inactive), ranked 1…N on the measure
+chosen in the **Rank by** dropdown, with the shaded column showing that measure:
+
+- **Per kg**: margin per kg FP, margin %, margin per kg WR, price per kg.
+- **Over the horizon**: total contribution (margin per kg × demand), plan margin $,
+  plan revenue $, plan GP %.
+- **Plan priority**: the order the engine actually allocates supply in (locked first).
+
+The per-kg figures are primary-path price and loaded cost. The plan figures come
+from the last Recalculate and read "—" for programs the engine didn't allocate;
+those drop to the bottom, unranked, when you rank on a plan figure. The **Status**
+dropdown narrows the list to active, pipeline or inactive programs.
+
 ---
 
 ## 8. Scenarios
@@ -316,13 +332,46 @@ admin) and **activate/deactivate** accounts. Deactivated users can't sign in.
 ### Audit log
 
 An append-only record of changes across the app — user role/status changes and
-input edits (programs, demand, harvest), showing **who** did **what** and
-**when**, with a summary of the change. Use it to trace how the plan reached its
-current state.
+input edits (programs, demand, harvest, POs, plans). Each entry shows:
+
+- **When** — the date and time in your own timezone, plus how long ago.
+- **Who** — the user who made the change.
+- **Where** — the section (Demand Plan, Harvest Plan, Programs…) and the plan it
+  was made in (the master plan or a named scenario).
+- **What changed** — the item (e.g. the program's item code and customer, or the
+  bucket) and a **Before → After** table. Grid edits are listed per month using
+  the real calendar month (e.g. *Mar 26 (M3)*), and per bucket where relevant.
+  Long edits show the first few rows with a *Show all* link. Bulk CSV imports
+  only record how many cells changed, not each value.
+
+Use it to trace how the plan reached its current state. The CSV export includes
+the same when / who / where / what columns.
 
 ---
 
 ## 10. Importing & exporting CSV
+
+### Pasting from Excel
+
+Copy a block of numbers in Excel (Ctrl+C) and paste it (Ctrl+V) straight into a grid:
+
+- **Selecting cells** works as in Excel: click a cell, then **drag**, **Shift+click**
+  or **Shift+arrow** to select a block. Plain arrow keys move around Demand Plan and
+  the capacity grid.
+- **Demand Plan** and **Harvest Plan capacity** — select, then paste: the block fills
+  rightwards across months and down across the rows on screen, from the selection's
+  top-left cell. **Delete** or **Backspace** clears every selected cell; on Demand
+  Plan a cleared month goes back to the program's baseline, on capacity it becomes 0.
+  Changed cells turn amber and the totals update; nothing is saved until you click
+  **Save changes** (or **Discard**). Blank cells in a copied block leave the cell as it was.
+- **Harvest Request Plan** and **Actual Harvest** — select the boxes and paste, or press
+  **Delete** / **Backspace** to empty them all. Save with the table's own Save button.
+- **Edit demand / Edit harvest capacity** (the per-row editors) — paste a row *or* a
+  column of months into any box; the values run forward month by month from it.
+
+Excel's formatting is read as you'd expect: `1,234`, `$1,234.50` and `-` (zero) all
+work. Text and negative numbers are skipped, and anything beyond the last row or
+month shown is left out. A pop-up says how many cells were pasted.
 
 ### Importing
 

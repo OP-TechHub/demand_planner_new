@@ -6,6 +6,7 @@ import { getActivePlan, getSelectablePlans, getCurrentUser, getProfileResult, ge
 import { PlanSelector } from './plan-selector';
 import { ScenarioBanner, OfficialPlanBanner, type ScenarioAccess } from './scenario-banner';
 import { ThemeToggle } from '@/components/theme-toggle';
+import { ChatPanel } from '@/components/chat/chat-panel';
 import { Toaster } from '@/components/ui/toast';
 import { ConfirmHost } from '@/components/ui/confirm';
 import { RecalculateButton } from './recalculate-button';
@@ -115,6 +116,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             {activePlan && <RecalculateButton planId={activePlan.id} label="Recalculate" size="sm" variant="outline" />}
           </div>
           <div className="flex items-center gap-2.5">
+            <ChatPanel />
             <ThemeToggle />
             <div className="mx-0.5 h-6 w-px bg-border" />
             <div className="flex items-center gap-2.5">

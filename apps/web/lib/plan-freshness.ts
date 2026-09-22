@@ -6,11 +6,17 @@ export type Freshness = { computed: boolean; stale: boolean };
  * Are the computed outputs out of date? True if the plan was never computed, or
  * if any input row (programs / demand / harvest) was edited after the last
  * recompute. Uses each table's updated_at (maintained by touch triggers).
+ *
+ * Runs on the caller's session client unless one is passed in.
  */
-export async function getPlanFreshness(planId: string, lastComputedAt: string | null): Promise<Freshness> {
+export async function getPlanFreshness(
+  planId: string,
+  lastComputedAt: string | null,
+  db?: Pick<Awaited<ReturnType<typeof createClient>>, 'from'>
+): Promise<Freshness> {
   if (!lastComputedAt) return { computed: false, stale: true };
 
-  const supabase = await createClient();
+  const supabase = db ?? (await createClient());
   const computedMs = new Date(lastComputedAt).getTime();
 
   // Run the three freshness probes in parallel (was sequential).
