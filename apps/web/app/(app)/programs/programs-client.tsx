@@ -9,6 +9,7 @@ import { toCsv, downloadCsv } from '@/lib/csv';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/components/ui/toast';
 import { confirmDialog } from '@/components/ui/confirm';
+import { useResizableColumn } from '@/components/resizable-column';
 import { archiveProgram } from './actions';
 import { ProgramPanel } from './program-panel';
 import { ImportPrograms, PROGRAM_CSV_HEADER } from './import-programs';
@@ -37,6 +38,7 @@ export function ProgramsClient({
   const [status, setStatus] = useState<'all' | ProgramStatus>('all');
   const [customer, setCustomer] = useState('all');
   const [search, setSearch] = useState('');
+  const productCol = useResizableColumn('programs-product', 288);
 
   const bucketName = useMemo(() => {
     const m = new Map(buckets.map((b) => [b.id, b.name]));
@@ -140,7 +142,7 @@ export function ProgramsClient({
               <th className="w-8 px-3 py-2" />
               <th className="px-3 py-2">Status</th>
               <th className="px-3 py-2">Customer</th>
-              <th className="px-3 py-2">Product</th>
+              <th style={productCol.style} className="relative px-3 py-2">Product{productCol.handle}</th>
               <th className="px-3 py-2">Export code</th>
               <th className="px-3 py-2">Primary bucket</th>
               <th className="px-3 py-2 text-right">Demand (kg/mo)</th>
@@ -153,7 +155,7 @@ export function ProgramsClient({
                 <td className="px-3 py-2">{p.locked ? '🔒' : ''}</td>
                 <td className="px-3 py-2"><StatusChip status={p.status} /></td>
                 <td className="px-3 py-2">{p.customer}</td>
-                <td className="max-w-[18rem] truncate px-3 py-2" title={p.item_description}>{p.item_description}</td>
+                <td style={productCol.style} className="truncate px-3 py-2" title={p.item_description}>{p.item_description}</td>
                 <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
                   {p.export_code ?? <span className="text-muted-foreground/50">—</span>}
                 </td>

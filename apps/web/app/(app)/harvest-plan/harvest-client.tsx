@@ -12,8 +12,9 @@ import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ScrollX } from '@/components/ui/scroll-x';
 import { WideGridImport } from '@/components/wide-grid-import';
+import { usePasteGrid, useInputGridSelection, pasteCellCls, PendingPasteBar } from '@/components/paste-grid';
 import { HarvestEditor } from './harvest-editor';
-import { importHarvest, saveHarvestRequest, saveHarvestActual } from './actions';
+import { importHarvest, saveHarvestCells, saveHarvestRequest, saveHarvestActual } from './actions';
 
 export function HarvestClient({
   planId,
@@ -94,6 +95,23 @@ export function HarvestClient({
     [months, req] // eslint-disable-line react-hooks/exhaustive-deps
   );
 
+  const reqRows = [
+    ...buckets.map((b) => ({ id: b.id as string | null, name: b.name })),
+    // Kept last and only while it holds something: it is history, not
+    // a bucket, and it must not read as one more size.
+    ...(hasSizeless ? [{ id: null, name: 'No size stated' }] : []),
+  ];
+  const setReqCell = (row: number, col: number, v: string) =>
+    setReq((prev) => ({ ...prev, [reqKey(reqRows[row].id, visibleMonths[col])]: v }));
+  // Drag or Shift+click across the boxes, then Delete clears them all; a paste lands at the top-left.
+  const reqSel = useInputGridSelection({
+    rows: reqRows.length,
+    cols: visibleMonths.length,
+    resetKey: `${reqRows.length}|${visibleMonths.join()}`,
+    clear: (r, c) => setReqCell(r, c, ''),
+    paste: (r, c, v) => setReqCell(r, c, v === null ? '' : String(Math.round(v))),
+  });
+
   const reqBucketTotal = (bucketId: string | null) =>
     visibleMonths.reduce((sum, mo) => sum + reqValue(bucketId, mo), 0);
   const reqMonthTotal = (mo: number) =>
@@ -122,13 +140,34 @@ export function HarvestClient({
   // Capacity is stored numeric(18,4); whole kilos are the useful unit, so round
   // once here — every cell, total and export below derives from this, which keeps
   // the columns adding up exactly as shown.
-  const cell = (bucketId: string, month: number) => Math.round(capacity.get(`${bucketId}:${month}`) ?? 0);
+  // An unsaved change on the grid wins, so the totals move as you paste; a
+  // cleared cell is no capacity.
+  const cell = (bucketId: string, month: number) => {
+    const pv = paste.pendingValue(bucketId, month);
+    return Math.round(pv !== undefined ? pv ?? 0 : capacity.get(`${bucketId}:${month}`) ?? 0);
+  };
+
+  // Select month cells, then Ctrl+V a block copied from Excel (it lands from
+  // the top-left cell rightwards and down) or Delete to clear them.
+  const bucketIds = useMemo(() => buckets.map((b) => b.id), [buckets]);
+  const paste = usePasteGrid({ rowIds: bucketIds, months: visibleMonths, enabled: canEdit });
+  const [savingPaste, startSavePaste] = useTransition();
+  function savePaste() {
+    const cells = paste.entries.map((e) => ({ bucket_id: e.rowId, month_index: e.month, capacity_kg_wr: e.value }));
+    startSavePaste(async () => {
+      const res = await saveHarvestCells(planId, cells);
+      if (res.error) { toast.error(res.error); return; }
+      toast.success(`Saved ${res.count} cell${res.count === 1 ? '' : 's'}`);
+      paste.discard();
+      router.refresh();
+    });
+  }
   // Totals cover the visible range, so the row total always matches the cells beside it.
   const bucketTotal = (b: Bucket) => visibleMonths.reduce((s, mo) => s + cell(b.id, mo), 0);
 
   const monthTotals = useMemo(
     () => visibleMonths.map((mo) => buckets.reduce((s, b) => s + cell(b.id, mo), 0)),
-    [visibleMonths, buckets, capacity] // eslint-disable-line react-hooks/exhaustive-deps
+    [visibleMonths, buckets, capacity, paste.entries] // eslint-disable-line react-hooks/exhaustive-deps
   );
 
   // Exports what's on screen — the month range still round-trips through import,
@@ -179,7 +218,7 @@ export function HarvestClient({
         <span className="text-xs text-muted-foreground">
           {!fullRange && <>Showing {visibleMonths.length} of {horizon} months. </>}
           Harvest capacity (kg WR) by bucket. Empty cells are 0.
-          {canEdit ? ' Click a bucket to edit its timeline.' : ''}
+          {canEdit ? ' Click a bucket to edit its timeline. Click or drag across month cells to select them, then paste (Ctrl+V) from Excel or press Delete to clear them.' : ''}
         </span>
       </div>
 
@@ -198,6 +237,8 @@ export function HarvestClient({
           }
         />
       ) : (
+        <>
+        <PendingPasteBar count={paste.entries.length} saving={savingPaste} onSave={savePaste} onDiscard={paste.discard} />
         <ScrollX className="max-h-[70vh] rounded-lg border border-border">
           <table className="w-max text-xs">
             {/* Sticky month row — see the note in components/output-grid.tsx. */}
@@ -213,17 +254,30 @@ export function HarvestClient({
               </tr>
             </thead>
             <tbody>
-              {buckets.map((b) => (
+              {buckets.map((b, ri) => (
                 <tr
                   key={b.id}
                   className={cn('border-t hover:bg-muted/30', canEdit && 'cursor-pointer')}
                   onClick={canEdit ? () => setEditing(b) : undefined}
                 >
                   <td className={cn(stickyCol, 'min-w-[10rem] border-r bg-card px-3 py-1.5 font-medium')}>{b.name}</td>
-                  {visibleMonths.map((mo) => {
+                  {visibleMonths.map((mo, ci) => {
                     const v = cell(b.id, mo);
+                    const pasted = paste.pendingValue(b.id, mo) !== undefined;
                     return (
-                      <td key={mo} className={cn('px-2 py-1.5 text-right tabular-nums', yearStart(mo) && 'border-l border-border/60', v === 0 && 'text-muted-foreground/40')}>
+                      <td
+                        key={mo}
+                        {...paste.cellProps(ri, ci)}
+                        title={pasted ? 'Changed — not saved yet' : undefined}
+                        className={cn(
+                          'px-2 py-1.5 text-right tabular-nums',
+                          yearStart(mo) && 'border-l border-border/60',
+                          v === 0 && !pasted && 'text-muted-foreground/40',
+                          canEdit && pasteCellCls.base,
+                          pasted && pasteCellCls.pending,
+                          paste.isSelected(ri, ci) && pasteCellCls.selected
+                        )}
+                      >
                         {v.toLocaleString()}
                       </td>
                     );
@@ -243,6 +297,7 @@ export function HarvestClient({
             </tbody>
           </table>
         </ScrollX>
+        </>
       )}
 
       {buckets.length > 0 && (
@@ -296,12 +351,7 @@ export function HarvestClient({
               </tr>
             </thead>
             <tbody>
-              {[
-                ...buckets.map((b) => ({ id: b.id as string | null, name: b.name })),
-                // Kept last and only while it holds something: it is history, not
-                // a bucket, and it must not read as one more size.
-                ...(hasSizeless ? [{ id: null, name: 'No size stated' }] : []),
-              ].map((row) => (
+              {reqRows.map((row, ri) => (
                 <tr key={row.id ?? 'sizeless'} className="border-t hover:bg-muted/30">
                   <td
                     className={cn(
@@ -317,7 +367,7 @@ export function HarvestClient({
                   >
                     {row.name}
                   </td>
-                  {visibleMonths.map((mo) => (
+                  {visibleMonths.map((mo, ci) => (
                     <td key={mo} className={cn('px-1 py-1 text-right tabular-nums', yearStart(mo) && 'border-l border-border/60')}>
                       {canEditRequest ? (
                         <input
@@ -328,9 +378,10 @@ export function HarvestClient({
                           onChange={(e) =>
                             setReq((prev) => ({ ...prev, [reqKey(row.id, mo)]: e.target.value }))
                           }
+                          {...reqSel.inputProps(ri, ci)}
                           placeholder="0"
                           aria-label={`Requested ${row.name} for ${monthLabel(planStartDate, mo)}`}
-                          className="w-[4rem] rounded-md border px-1.5 py-0.5 text-right text-xs tabular-nums outline-none focus:ring-2 focus:ring-primary"
+                          className={cn(inputCellCls, reqSel.isSelected(ri, ci) && pasteCellCls.selected)}
                         />
                       ) : (
                         <span className={cn(reqValue(row.id, mo) === 0 && 'text-muted-foreground/40')}>
@@ -467,6 +518,17 @@ function ActualHarvestTable({
   }, [initial, vals]);
 
   const value = (bucketId: string, mo: number) => Number(vals[key(bucketId, mo)] ?? '') || 0;
+
+  const setCell = (row: number, col: number, v: string) =>
+    setVals((prev) => ({ ...prev, [key(buckets[row].id, visibleMonths[col])]: v }));
+  // Drag or Shift+click across the boxes, then Delete clears them all; a paste lands at the top-left.
+  const sel = useInputGridSelection({
+    rows: buckets.length,
+    cols: visibleMonths.length,
+    resetKey: `${buckets.length}|${visibleMonths.join()}`,
+    clear: (r, c) => setCell(r, c, ''),
+    paste: (r, c, v) => setCell(r, c, v === null ? '' : String(Math.round(v))),
+  });
   // A month counts as recorded once any bucket in it carries a figure. Variance
   // against a month nobody has reported yet would just be the whole plan.
   const recorded = (mo: number) => buckets.some((b) => (vals[key(b.id, mo)] ?? '') !== '');
@@ -543,10 +605,10 @@ function ActualHarvestTable({
             </tr>
           </thead>
           <tbody>
-            {buckets.map((b) => (
+            {buckets.map((b, ri) => (
               <tr key={b.id} className="border-t hover:bg-muted/30">
                 <td className={cn(stickyCol, 'min-w-[10rem] border-r bg-card px-3 py-1.5 font-medium')}>{b.name}</td>
-                {visibleMonths.map((mo) => {
+                {visibleMonths.map((mo, ci) => {
                   const planned = planCell(b.id, mo);
                   const title = `Planned ${planned.toLocaleString()} kg WR`;
                   return (
@@ -558,9 +620,10 @@ function ActualHarvestTable({
                           step="1"
                           value={vals[key(b.id, mo)] ?? ''}
                           onChange={(e) => setVals((prev) => ({ ...prev, [key(b.id, mo)]: e.target.value }))}
+                          {...sel.inputProps(ri, ci)}
                           placeholder="—"
                           aria-label={`Actual ${b.name} for ${monthLabel(planStartDate, mo)}`}
-                          className="w-[4rem] rounded-md border px-1.5 py-0.5 text-right text-xs tabular-nums outline-none focus:ring-2 focus:ring-primary"
+                          className={cn(inputCellCls, sel.isSelected(ri, ci) && pasteCellCls.selected)}
                         />
                       ) : (
                         <span className={cn((vals[key(b.id, mo)] ?? '') === '' && 'text-muted-foreground/40')}>
@@ -760,3 +823,4 @@ function RequiredHarvestTable({
 }
 
 const filterCls ='rounded-md border px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-primary';
+const inputCellCls = 'w-[4rem] rounded-md border px-1.5 py-0.5 text-right text-xs tabular-nums outline-none focus:ring-2 focus:ring-primary';

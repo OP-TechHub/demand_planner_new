@@ -4,6 +4,7 @@ import { useMemo, useState, useTransition } from 'react';
 import { monthLabel, type Bucket, type HarvestCell } from '@oceanpick/shared';
 import { MonthlyLineChart } from '@/components/charts/monthly-line-chart';
 import { toast } from '@/components/ui/toast';
+import { pasteIntoGrid } from '@/components/paste-grid';
 import { saveHarvestCapacity } from './actions';
 
 type Cells = Record<number, string>; // month -> capacity string ('' = 0/none)
@@ -77,7 +78,7 @@ export function HarvestEditor({
         <div className="flex items-center justify-between border-b px-5 py-3">
           <div>
             <h2 className="text-sm font-semibold">Edit harvest capacity — {bucket.name}</h2>
-            <p className="text-xs text-muted-foreground">Capacity in kg WR. Blank = 0 (no capacity).</p>
+            <p className="text-xs text-muted-foreground">Capacity in kg WR. Blank = 0 (no capacity). Paste a row or column of months from Excel into any box to fill forward from it.</p>
           </div>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground">✕</button>
         </div>
@@ -114,6 +115,10 @@ export function HarvestEditor({
                       min={0}
                       value={cells[mo] ?? ''}
                       onChange={(e) => setMonth(mo, e.target.value)}
+                      onPaste={(e) =>
+                        pasteIntoGrid(e, { row: 0, col: mo - 1 }, { rows: 1, cols: horizon }, (_, c, v) =>
+                          setMonth(c + 1, v === null ? '' : String(Math.round(v))), { flatten: true })
+                      }
                       placeholder="0"
                       className="w-28 rounded-md border px-2 py-1 text-right text-sm outline-none focus:ring-2 focus:ring-primary"
                     />

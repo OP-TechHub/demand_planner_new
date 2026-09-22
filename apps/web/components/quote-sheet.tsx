@@ -5,8 +5,13 @@ import { Meta, S, SheetHeader } from '@/components/cost-sheet-parts';
 /** The id the print rules in globals.css reveal, and the Word export reads. */
 export const QUOTE_SHEET_ID = 'quote-sheet';
 
-/** The delivery basis a price is quoted on. Export only; domestic has neither. */
-export type Incoterm = 'FOB' | 'CIF';
+/**
+ * The delivery basis a price is quoted on. Export only; domestic has neither.
+ *
+ * C&F (Incoterms 2020: CFR), not CIF: we pay the freight to the port but do not
+ * insure the goods, so quoting CIF would promise cover the buyer never gets.
+ */
+export type Incoterm = 'FOB' | 'C&F';
 
 export type QuoteMarket = 'domestic' | 'export';
 
@@ -24,11 +29,11 @@ export interface QuoteItem {
   product: string;
   /** Pack state as the customer would read it: "Frozen — 10% glaze", "Fresh (air)". */
   presentation: string;
-  /** Port of discharge, named on a CIF quote. Null when none applies. */
+  /** Port of discharge, named on a C&F quote. Null when none applies. */
   destination: string | null;
   /** The price we sell at — rack for domestic, FOB for export. Null: not quotable. */
   price: number | null;
-  /** Freight per kg to that port. Null means CIF cannot be quoted for this item. */
+  /** Freight per kg to that port. Null means C&F cannot be quoted for this item. */
   freightPerKg: number | null;
 }
 
@@ -44,8 +49,6 @@ export interface QuoteTerms {
   incoterm: Incoterm;
   /** Port of loading, named on an FOB quote. */
   loadPort: string;
-  /** Marine insurance as a fraction of the goods-and-freight value. 0 loads none. */
-  insurancePct: number;
   /** ISO date the offer lapses. Empty means no expiry is stated. */
   validUntil: string;
   /** Free text, printed only when filled. */
@@ -62,27 +65,24 @@ export const quoteMoney = (market: QuoteMarket) =>
 /**
  * The price to quote for one product, on the chosen basis.
  *
- * FOB is the selling price as it stands. CIF is built up from that same price
- * plus the freight to the port — never read off a stored `cif`, because a
- * by-product is priced at what the market bears while the chain's CIF was built
- * on a cost-plus FOB the product is never actually sold at. Deriving it keeps
- * the quoted CIF consistent with the quoted FOB in every case.
+ * FOB is the selling price as it stands. C&F is that same price plus the
+ * freight to the port — never read off the costing's stored `cif`, because a
+ * by-product is priced at what the market bears while the costing chain was
+ * built on a cost-plus FOB the product is never actually sold at. Deriving it
+ * keeps the quoted C&F consistent with the quoted FOB in every case.
  *
  * Returns null when there is nothing honest to quote, so the sheet can leave
  * the row out rather than print a zero.
  */
 export function quotePrice(
   item: QuoteItem,
-  terms: Pick<QuoteTerms, 'incoterm' | 'insurancePct'>,
+  terms: Pick<QuoteTerms, 'incoterm'>,
   market: QuoteMarket
 ): number | null {
   if (item.price == null) return null;
   if (market === 'domestic' || terms.incoterm === 'FOB') return item.price;
   if (item.freightPerKg == null) return null;
-  // Insurance is a gross-up on the cost-and-freight value, which is how a
-  // marine policy is rated. At 0% this is exactly C&F, and the sheet's terms
-  // say only that freight is included.
-  return (item.price + item.freightPerKg) * (1 + terms.insurancePct);
+  return item.price + item.freightPerKg;
 }
 
 /**
@@ -128,11 +128,11 @@ export function QuoteSheet({
     ? 'Delivered, domestic market'
     : terms.incoterm === 'FOB'
       ? `FOB ${terms.loadPort || 'port of loading'}`
-      : 'CIF, named port of discharge';
+      : 'C&F, named port of discharge';
 
-  // A CIF quote is per port, so the port has to be on the row. An FOB quote is
+  // A C&F quote is per port, so the port has to be on the row. An FOB quote is
   // one price wherever it ships, and a destination column would only confuse.
-  const showDestination = !domestic && terms.incoterm === 'CIF' && priced.some((p) => p.item.destination);
+  const showDestination = !domestic && terms.incoterm === 'C&F' && priced.some((p) => p.item.destination);
 
   return (
     <div id={elementId} style={S.sheet}>
@@ -189,9 +189,7 @@ export function QuoteSheet({
             ? 'Prices are quoted per kilogram of finished product, delivered. '
             : terms.incoterm === 'FOB'
               ? `Prices are quoted per kilogram of finished product, FOB ${terms.loadPort || 'port of loading'} (Incoterms 2020). Ocean freight, insurance, duties, clearing and onward delivery are for the buyer’s account. `
-              : terms.insurancePct > 0
-                ? 'Prices are quoted per kilogram of finished product, CIF the named port of discharge (Incoterms 2020), and include ocean freight and marine insurance. Import duties, clearing and onward delivery are for the buyer’s account. '
-                : 'Prices are quoted per kilogram of finished product and include ocean freight to the named port of discharge. Import duties, clearing and onward delivery are for the buyer’s account. '}
+              : 'Prices are quoted per kilogram of finished product, C&F (CFR, Incoterms 2020) the named port of discharge, and include ocean freight to that port. Marine insurance, import duties, clearing and onward delivery are for the buyer’s account. '}
           {terms.validUntil
             ? `This quotation is valid until ${longDate(terms.validUntil)} and is `
             : 'This quotation is '}

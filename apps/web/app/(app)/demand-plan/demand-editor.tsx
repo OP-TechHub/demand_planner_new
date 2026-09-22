@@ -5,6 +5,7 @@ import { monthLabel, type DemandCell, type Program } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 import { MonthlyLineChart } from '@/components/charts/monthly-line-chart';
 import { toast } from '@/components/ui/toast';
+import { pasteIntoGrid } from '@/components/paste-grid';
 import { PromoteDialog } from '../promote-dialog';
 import { saveDemandOverrides } from './actions';
 
@@ -86,7 +87,7 @@ export function DemandEditor({
         <div className="flex items-center justify-between border-b px-5 py-3">
           <div>
             <h2 className="text-sm font-semibold">Edit demand — {program.customer} · {program.item_description}</h2>
-            <p className="text-xs text-muted-foreground">Baseline {baseline.toLocaleString()} kg FP/month. Blank override = use baseline.</p>
+            <p className="text-xs text-muted-foreground">Baseline {baseline.toLocaleString()} kg FP/month. Blank override = use baseline. Paste a row or column of months from Excel into any box to fill forward from it.</p>
           </div>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground">✕</button>
         </div>
@@ -135,6 +136,10 @@ export function DemandEditor({
                         step="any"
                         value={raw}
                         onChange={(e) => setMonth(mo, e.target.value)}
+                        onPaste={(e) =>
+                          pasteIntoGrid(e, { row: 0, col: mo - 1 }, { rows: 1, cols: horizon }, (_, c, v) =>
+                            setMonth(c + 1, v === null ? '' : String(v)), { flatten: true })
+                        }
                         placeholder="—"
                         className="w-24 rounded-md border px-2 py-1 text-right text-sm outline-none focus:ring-2 focus:ring-primary"
                       />

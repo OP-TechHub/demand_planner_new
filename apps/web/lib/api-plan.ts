@@ -1,5 +1,4 @@
 import type { createServiceClient } from '@/lib/supabase/service';
-import { monthLabel } from '@oceanpick/shared';
 
 /** The service client, with its `demand_planner` schema typing preserved. */
 type Svc = ReturnType<typeof createServiceClient>;
@@ -46,9 +45,4 @@ export function planMeta(plan: ApiPlan) {
     start_date: plan.plan_start_date,
     horizon_months: plan.horizon_months,
   };
-}
-
-/** A month index paired with its calendar label, e.g. { month_index: 10, month: "Jan 27" }. */
-export function monthCol(plan: ApiPlan, monthIndex: number) {
-  return { month_index: monthIndex, month: monthLabel(plan.plan_start_date, monthIndex) };
 }
