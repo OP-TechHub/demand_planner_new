@@ -28,7 +28,9 @@ export const maxDuration = 120;
  * is spent (lib/chat/budget.ts).
  */
 
-const MODEL = process.env.CHAT_MODEL || 'claude-opus-5';
+// Sonnet 5: the tools and the engine do the hard work, so the model's job is
+// mostly reading results and writing them up — Opus costs 2.5x for little gain.
+const MODEL = process.env.CHAT_MODEL || 'claude-sonnet-5';
 const EFFORT = (process.env.CHAT_EFFORT || 'medium') as 'low' | 'medium' | 'high';
 /** Model round trips per question before giving up — a loop guard, not a budget. */
 const MAX_STEPS = 10;
@@ -164,7 +166,10 @@ export async function POST(req: Request) {
               output_config: { effort: EFFORT },
               system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
               tools: TOOLS,
-              messages: history,
+              // The conversation so far is cached at its tail, so a second
+              // or third step re-reads the earlier tool results at a tenth of
+              // the price instead of paying for them again in full.
+              messages: withCacheBreakpoint(history),
             },
             { signal: req.signal }
           );
@@ -248,6 +253,26 @@ export async function POST(req: Request) {
 
   return new Response(stream, {
     headers: { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store' },
+  });
+}
+
+/**
+ * The history with one cache breakpoint, on the last block of the last
+ * message. A breakpoint only on the system prompt leaves every tool result
+ * re-billed at full price on each step; one at the tail lets the next step
+ * read everything before it from cache. Kept to a single moving breakpoint
+ * (the API allows four per request) — the system prompt holds the other.
+ */
+function withCacheBreakpoint(history: Anthropic.Beta.BetaMessageParam[]): Anthropic.Beta.BetaMessageParam[] {
+  return history.map((m, i) => {
+    if (i !== history.length - 1) return m;
+    const blocks = typeof m.content === 'string' ? [{ type: 'text' as const, text: m.content }] : m.content;
+    return {
+      ...m,
+      content: blocks.map((b, j) =>
+        j === blocks.length - 1 ? { ...b, cache_control: { type: 'ephemeral' as const } } : b
+      ),
+    };
   });
 }
 
