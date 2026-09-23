@@ -4,7 +4,7 @@ import { NotComputed } from '@/components/output-grid';
 import type { GridRow } from '@/lib/grid-csv';
 import { StalePlanNotice } from '../stale-banner';
 import { MetricGrid, type Metric } from '@/components/metric-grid';
-import { fetchAllByPlan } from '@/lib/fetch-all';
+import { fetchAllByPlan, fetchAllPaged } from '@/lib/fetch-all';
 import { programOrder, gridRowsFor, unitGridRowsFor } from '@/lib/outputs';
 
 export default async function RevenueCostPage() {
@@ -13,7 +13,7 @@ export default async function RevenueCostPage() {
   const supabase = await createClient();
   const m = plan.horizon_months;
 
-  const [order, rr, { data: progs }, { data: secDefs }] = await Promise.all([
+  const [order, rr, { data: progs }, { data: secDefs }, { data: otherDefs }, otherMonths] = await Promise.all([
     programOrder(supabase, plan.id),
     fetchAllByPlan(supabase, 'rolling_results', 'program_id, month_index, rolling_fp, rolling_wr, revenue, cost, rolling_margin, rolling_margin_per_path', plan.id),
     supabase.from('programs')
@@ -23,6 +23,18 @@ export default async function RevenueCostPage() {
     supabase.from('secondary_products')
       .select('basis, source_item_code, yield_pct, price_per_kg')
       .eq('is_archived', false).order('sort_order'),
+    // Other products are org-scoped too: traded lines outside the harvest plan,
+    // with a quantity typed in per month at flat per-unit cost and revenue rates.
+    supabase.from('other_products')
+      .select('id, name, unit_label, unit_cost, unit_revenue')
+      .eq('is_archived', false).order('sort_order'),
+    // Tolerated rather than thrown, as on the Annual Summary: on a database
+    // without the other_products migration the page still renders, minus those rows.
+    fetchAllPaged(
+      (from: number, to: number) =>
+        supabase.from('other_product_months').select('product_id, month_index, quantity').range(from, to),
+      'other_product_months'
+    ).catch(() => [] as { product_id: string; month_index: number; quantity: number }[]),
   ]);
   type CostProg = {
     id: string; status: string; item_code: string; primary_yield: number; barra_cost_wr: number;
@@ -143,16 +155,55 @@ export default async function RevenueCostPage() {
     values,
   }));
 
+  /**
+   * Other products — one row per product, named after it, so the sheet says
+   * exactly what is being sold rather than lumping them into one line. Same
+   * arithmetic as the Secondary products page and the Annual Summary:
+   * revenue = quantity × unit revenue, cost = quantity × unit cost, margin is
+   * the difference. Unlike by-products they carry a cost, so they appear on
+   * Cost as well, and margin is not simply their revenue. Nothing about them
+   * is pipeline, so they sit under Active (and Combined). A product with no
+   * quantity in any month is left off rather than shown as a row of zeros.
+   */
+  type OtherDef = { id: string; name: string; unit_label: string; unit_cost: number; unit_revenue: number };
+  const otherRowsFor = (of: (q: number, p: OtherDef) => number): GridRow[] => {
+    const rows: GridRow[] = [];
+    for (const p of (otherDefs ?? []) as OtherDef[]) {
+      const values = new Array<number>(m).fill(0);
+      let any = false;
+      for (const r of otherMonths as { product_id: string; month_index: number; quantity: number }[]) {
+        if (r.product_id !== p.id) continue;
+        const i = r.month_index - 1;
+        if (i < 0 || i >= m) continue;
+        const q = Number(r.quantity) || 0;
+        if (q > 0) any = true;
+        values[i] += of(q, p);
+      }
+      if (!any) continue;
+      rows.push({ key: `__other__${p.id}`, label: p.name, sublabel: `Other product · per ${p.unit_label}`, group: 'active', values });
+    }
+    return rows;
+  };
+  const otherRevRows = otherRowsFor((q, p) => q * Number(p.unit_revenue));
+  const otherCostRows = otherRowsFor((q, p) => q * Number(p.unit_cost));
+  const otherMarginRows = otherRowsFor((q, p) => q * (Number(p.unit_revenue) - Number(p.unit_cost)));
+  // The Cost dropdown must still sum back to the Cost total, so the other
+  // products' cost is its own component beside the six program ones.
+  const costBreakdownAll = otherCostRows.length > 0
+    ? [...costBreakdown, { key: 'other_products', label: 'Other products', rows: otherCostRows }]
+    : costBreakdown;
+
   const metrics: Metric[] = [
-    { key: 'revenue', label: 'Revenue', format: 'usd', rows: [...tag(gridRowsFor(order, rr, m, 'revenue')), ...secRows] },
-    // Cost is the only tab without a Secondary products row — there is no secondary
-    // cost to add, which is exactly why their revenue carries straight into margin.
-    { key: 'cost', label: 'Cost', format: 'usd', rows: tag(gridRowsFor(order, rr, m, 'cost')), breakdown: costBreakdown },
-    { key: 'margin', label: 'Margin', format: 'usd', rows: [...tag(gridRowsFor(order, rr, m, 'rolling_margin')), ...secRows] },
+    { key: 'revenue', label: 'Revenue', format: 'usd', rows: [...tag(gridRowsFor(order, rr, m, 'revenue')), ...secRows, ...otherRevRows] },
+    // No Secondary products row here — there is no secondary cost to add, which is
+    // exactly why their revenue carries straight into margin. Other products do
+    // cost something, so each of them has a row.
+    { key: 'cost', label: 'Cost', format: 'usd', rows: [...tag(gridRowsFor(order, rr, m, 'cost')), ...otherCostRows], breakdown: costBreakdownAll },
+    { key: 'margin', label: 'Margin', format: 'usd', rows: [...tag(gridRowsFor(order, rr, m, 'rolling_margin')), ...secRows, ...otherMarginRows] },
     // Same volume, costed at the path that actually supplied each kilo (spec §5.5)
     // rather than the primary path throughout. Excel does the latter, so `Margin`
     // stays the parity figure and this sits beside it.
-    { key: 'margin_path', label: 'Margin (per-path)', format: 'usd', rows: [...tag(gridRowsFor(order, rr, m, 'rolling_margin_per_path')), ...secRows] },
+    { key: 'margin_path', label: 'Margin (per-path)', format: 'usd', rows: [...tag(gridRowsFor(order, rr, m, 'rolling_margin_per_path')), ...secRows, ...otherMarginRows] },
     // Per kilo of finished product. Program rows only: secondary products are
     // recovered from round weight, so their revenue has no kg of finished
     // product behind it and cannot share this denominator.
@@ -178,9 +229,13 @@ export default async function RevenueCostPage() {
         splits the total into its components — barra, packing, processing, storage, freight and other — which sum back to
         the total. <b>Revenue</b> and both <b>Margin</b> tabs carry a <b>Secondary products</b> row beneath the programs,
         taken from the Secondary products page. Secondary products carry no cost of their own, so every dollar they
-        earn is also a dollar of margin — which makes the <b>TOTAL</b> row on Margin the plan&apos;s total margin,
-        programs and secondary products together. The program rows above it are untouched, so the parity figures are
-        still there to read.
+        earn is also a dollar of margin. Beneath that, each <b>other product</b> from the same page (fingerling, or any
+        other line traded outside the harvest plan) has its own row, named after the product, on <b>Revenue</b>,{' '}
+        <b>Cost</b> and both <b>Margin</b> tabs: its typed-in quantity × the per-unit revenue and cost it was set up
+        with. On <b>Cost</b> the dropdown gains an <b>Other products</b> component so the parts still sum to the total.
+        Together these make the <b>TOTAL</b> row on each tab the plan&apos;s whole figure — programs, secondary products and
+        other products — and match the Total rows on the Annual Summary. The program rows above are untouched, so the
+        parity figures are still there to read.
       </p>
       <p className="text-xs text-muted-foreground">
         <b>Unit revenue</b>, <b>Unit cost</b> and <b>Unit margin</b> are the same three figures divided by the kilos of
@@ -189,9 +244,9 @@ export default async function RevenueCostPage() {
         <b>weighted average</b>: total dollars ÷ total kilos, which lets a large program pull the average its way
         instead of counting equally with a small one. A month a program ships nothing has no rate, so it reads $0.00 and
         is left out of the averages rather than dragging them down. <b>Unit cost</b> splits into the same six components
-        through the dropdown. These three tabs carry <b>no Secondary products row</b>: by-products are recovered from
-        round weight, so their revenue has no kilo of finished product behind it and can&apos;t share this denominator —
-        read them on the dollar tabs above.
+        through the dropdown. These three tabs carry <b>no Secondary products or other product rows</b>: by-products
+        are recovered from round weight, and other products are counted in their own units, so neither has a kilo of
+        finished product behind it and can&apos;t share this denominator — read them on the dollar tabs above.
       </p>
       {hasMargin && !perPathReady && (
         <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
