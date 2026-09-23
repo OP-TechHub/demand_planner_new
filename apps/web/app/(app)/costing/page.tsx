@@ -1,11 +1,12 @@
 import { createClient } from '@/lib/supabase/server';
 import { getProfile } from '@/lib/plan';
-import { forClient, getBaseCostAccess, loadCostingContext } from '@/lib/costing';
+import { canPublishAssumptions, type UserRole } from '@oceanpick/shared';
+import { forClient, forClientByVersion, getBaseCostAccess, loadCostingContext } from '@/lib/costing';
 import { CostingSetupNotice } from './setup-notice';
 import { CostGridClient } from './cost-grid-client';
 
 /**
- * The live cost grid — every SKU at the current assumptions.
+ * The live cost grid — every SKU on the assumptions version it is costed on.
  *
  * The grid computes in the browser, not here: the engine is pure and small, so
  * switching market, bucket or destination is instant rather than a round trip.
@@ -38,11 +39,22 @@ export default async function CostingPage() {
   // an equivalent-but-masked set of assumptions rather than simply not drawing
   // the numbers — they'd still be in the page payload.
   const { version, odc } = forClient(ctx, baseCost);
+  // Each SKU is priced on its own version, so every version in play goes to
+  // the browser — masked one by one, since an older feed price is still the
+  // feed price.
+  const byVersion = forClientByVersion(ctx, baseCost);
+  // Moving a SKU onto new assumptions is gated like publishing them (the DB
+  // policy is the enforcement; this only decides whether to draw the buttons).
+  const role = (profile?.role ?? 'viewer') as UserRole;
+  const canRecost = canPublishAssumptions(role, profile?.edit_sections);
 
   return (
     <CostGridClient
       version={version}
       odc={odc}
+      costedVersions={Object.fromEntries(ctx.costedVersions.entries())}
+      byVersion={byVersion}
+      canRecost={canRecost}
       buckets={ctx.buckets}
       destinations={ctx.destinations}
       rates={rates}

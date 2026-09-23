@@ -19,6 +19,7 @@ import type {
   CostOdcComponentRow,
   CostSizeBucket,
   CostSkuBucketYield,
+  CostSkuCostedVersion,
   CostSkuMarinadeLine,
   CostSkuRow,
 } from '@oceanpick/shared';
@@ -63,6 +64,13 @@ export function forClient(
     : maskBaseCost(ctx.version, ctx.odc);
 }
 
+/** One assumptions version with everything needed to price on it. */
+export interface VersionContext {
+  version: CostAssumptionVersion;
+  odc: CostOdcComponentRow[];
+  rates: Map<string, CostDestinationRate>;
+}
+
 /** Everything a costing screen needs, in one round of queries. */
 export interface CostingContext {
   version: CostAssumptionVersion;
@@ -73,6 +81,18 @@ export interface CostingContext {
   destinations: CostDestinationRow[];
   rates: Map<string, CostDestinationRate>;
   skus: CostSkuRow[];
+  /**
+   * skuId -> the version that SKU is costed on. A SKU missing here is treated
+   * as costed on `version` — the state of a database that has not run the
+   * backfill, and what the grid showed before SKUs carried a version at all.
+   */
+  costedVersions: Map<string, string>;
+  /**
+   * Every version some SKU is costed on, plus `version` itself, keyed by id.
+   * The grid prices each row on its own entry; `odc` and `rates` above are
+   * this map's entry for `version`.
+   */
+  byVersion: Map<string, VersionContext>;
   /** skuId -> bucketId -> yield */
   yields: Map<string, Record<string, number>>;
   /** skuId -> its marinade recipe, in entry order. Absent means it has none. */
@@ -103,17 +123,35 @@ export async function loadCostingContext(versionId?: string | null): Promise<Cos
     ? (allVersions.find((v) => v.id === versionId) ?? allVersions.find((v) => v.is_current) ?? allVersions[0]!)
     : (allVersions.find((v) => v.is_current) ?? allVersions[0]!);
 
+  // Which version each SKU is costed on has to be known before the
+  // assumptions are fetched, because it decides WHICH versions' ODC rows and
+  // freight rates are needed. One small table read, then one batched query
+  // each rather than a round trip per version.
+  const { data: costedRows } = await supabase.from('cost_sku_costed_versions').select('*');
+  const knownIds = new Set(allVersions.map((v) => v.id));
+  const costedVersions = new Map<string, string>();
+  for (const c of (costedRows ?? []) as CostSkuCostedVersion[]) {
+    if (knownIds.has(c.version_id)) costedVersions.set(c.sku_id, c.version_id);
+  }
+  const versionIds = [...new Set([version.id, ...costedVersions.values()])];
+
   const [{ data: odc }, { data: rates }, { data: yields }, { data: marinade }] = await Promise.all([
-    supabase.from('cost_odc_components').select('*').eq('version_id', version.id).order('sort_order'),
-    supabase.from('cost_destination_rates').select('*').eq('version_id', version.id),
+    supabase.from('cost_odc_components').select('*').in('version_id', versionIds).order('sort_order'),
+    supabase.from('cost_destination_rates').select('*').in('version_id', versionIds),
     // 34 SKUs x 7 buckets = 238 rows, comfortably under PostgREST's 1000 cap.
     supabase.from('cost_sku_bucket_yields').select('*'),
     // Only marinated SKUs carry any, a dozen rows each at the outside.
     supabase.from('cost_sku_marinade_lines').select('*').order('sort_order'),
   ]);
 
-  const rateMap = new Map<string, CostDestinationRate>();
-  for (const r of (rates ?? []) as CostDestinationRate[]) rateMap.set(r.destination_id, r);
+  const byVersion = new Map<string, VersionContext>();
+  for (const id of versionIds) {
+    const v = allVersions.find((x) => x.id === id)!;
+    byVersion.set(id, { version: v, odc: [], rates: new Map() });
+  }
+  for (const o of (odc ?? []) as CostOdcComponentRow[]) byVersion.get(o.version_id)?.odc.push(o);
+  for (const r of (rates ?? []) as CostDestinationRate[]) byVersion.get(r.version_id)?.rates.set(r.destination_id, r);
+  const loaded = byVersion.get(version.id)!;
 
   const yieldMap = new Map<string, Record<string, number>>();
   for (const y of (yields ?? []) as CostSkuBucketYield[]) {
@@ -132,12 +170,44 @@ export async function loadCostingContext(versionId?: string | null): Promise<Cos
   return {
     version,
     versions: allVersions,
-    odc: (odc ?? []) as CostOdcComponentRow[],
+    odc: loaded.odc,
     buckets: (buckets ?? []) as CostSizeBucket[],
     destinations: (destinations ?? []) as CostDestinationRow[],
-    rates: rateMap,
+    rates: loaded.rates,
     skus: (skus ?? []) as CostSkuRow[],
+    costedVersions,
+    byVersion,
     yields: yieldMap,
     marinadeLines: marinadeMap,
   };
+}
+
+/** What the grid needs per version, in the shape a client component takes. */
+export interface ClientVersionContext {
+  version: CostAssumptionVersion;
+  odc: CostOdcComponentRow[];
+  rates: Record<string, { sea: number; air: number }>;
+}
+
+/**
+ * Every version the grid may price on, masked like `forClient` — the base
+ * cost is hidden per version, not just on the current one, since a row costed
+ * on an older version would otherwise leak the older feed price.
+ */
+export function forClientByVersion(
+  ctx: Pick<CostingContext, 'byVersion'>,
+  access: BaseCostAccess
+): Record<string, ClientVersionContext> {
+  const out: Record<string, ClientVersionContext> = {};
+  for (const [id, vc] of ctx.byVersion) {
+    const { version, odc } = forClient(vc, access);
+    out[id] = {
+      version,
+      odc,
+      rates: Object.fromEntries(
+        [...vc.rates.entries()].map(([d, r]) => [d, { sea: r.sea_rate_per_20ft, air: r.air_rate_per_lot }])
+      ),
+    };
+  }
+  return out;
 }
