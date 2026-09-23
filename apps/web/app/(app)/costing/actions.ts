@@ -561,6 +561,58 @@ function resolveLines(args: {
 }
 
 /**
+ * Cost these SKUs on the CURRENT assumptions version from now on.
+ *
+ * Publishing a version moves nothing on the grid by itself: each SKU stays on
+ * the version it was last costed on until someone says otherwise, which is
+ * this. RLS restricts the write to admins and holders of the assumptions
+ * grants — the people who may publish a version are the people who may
+ * decide a product is costed on it — so the refusal comes back from the
+ * database rather than being re-derived here.
+ */
+export async function recostSkus(skuIds: string[]): Promise<{ error: string | null; moved?: number }> {
+  if (skuIds.length === 0) return { error: 'Nothing to re-cost.' };
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: 'Your session expired. Sign in again.' };
+
+  // RLS scopes versions to the caller's org, and one is current per org.
+  const { data: cur } = await supabase
+    .from('cost_assumption_versions')
+    .select('id')
+    .eq('is_current', true)
+    .maybeSingle();
+  const versionId = (cur as { id: string } | null)?.id;
+  if (!versionId) return { error: 'No assumptions version is current. Make one current before re-costing.' };
+
+  const costedAt = new Date().toISOString();
+  const { data, error } = await supabase
+    .from('cost_sku_costed_versions')
+    .upsert(
+      skuIds.map((sku_id) => ({ sku_id, version_id: versionId, costed_at: costedAt, costed_by: user.id })),
+      { onConflict: 'sku_id' }
+    )
+    .select('sku_id');
+  if (error) {
+    return {
+      error: /row-level security/i.test(error.message)
+        ? 'Only an admin or an assumptions editor can move products onto a new version.'
+        : error.message,
+    };
+  }
+  // A policy that filters instead of refusing would report success on nothing.
+  const moved = (data ?? []).length;
+  if (moved === 0) return { error: 'Only an admin or an assumptions editor can move products onto a new version.' };
+
+  revalidatePath('/costing');
+  revalidatePath('/costing/skus');
+  return { error: null, moved };
+}
+
+/**
  * Add products to a costing that has already been saved.
  *
  * The new lines are costed on the costing's OWN basis — its pinned assumptions

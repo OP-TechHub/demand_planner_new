@@ -61,6 +61,18 @@ A saved costing **stores its resolved lines and pins the assumptions version it 
 
 This is why assumptions are versioned rather than a single editable set — retrofitting version history later would mean backfilling every quote.
 
+### The Cost Grid: each SKU carries the version it is costed on
+
+**Decided 2026-09-23.** Until now the grid priced every SKU on whichever version was current, so publishing a version silently moved every product's cost at once. It now works the other way round:
+
+- **Each SKU is pinned to the version it was last costed on** (`cost_sku_costed_versions`). The grid prices every row on its own version, including that version's freight rate card, and shows it in a **Version** column. A row on an older version is flagged amber.
+- **Publishing a new version changes nothing on the grid.** Products move only when someone **re-costs** them onto the current version — one row at a time, or in bulk for everything on screen (so the search and filters decide the subset).
+- **Re-costing is gated like publishing:** admins, and users holding `assumptions_edit` or `base_cost_edit`. Enforced by RLS on the pin table, not just hidden in the UI. Anyone may still add a SKU; a trigger pins it to the current version on insert, so nothing needs saving by hand.
+- **Compare at current** is a view-only toggle that adds, for rows on an older version, their FINAL at the current version and the difference. Nothing is written until re-cost.
+- **A saved costing still pins one version.** Saving from a grid whose selected products sit on different versions is refused rather than silently costed on the current one; re-cost them onto one version first, or save them separately.
+- **What the pin does NOT freeze:** recipes, yields, size buckets and the port list are not versioned (§2, §6), so editing them still moves a row on any version. A saved costing (above) remains the only frozen record.
+- **Not yet on the per-SKU version:** the `/api/v1/costing/skus` feed, the assistant's costing tool and the SKU dialog's live preview still price on the current version (or the one asked for). Open item.
+
 ---
 
 ## 5. Access and ownership

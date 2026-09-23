@@ -555,6 +555,19 @@ export interface CostDestinationRate {
   air_rate_per_lot: number;
 }
 
+/**
+ * The assumptions version a SKU is costed on (cost_sku_costed_versions). The
+ * Cost Grid prices each SKU on its own row here rather than on whichever
+ * version is current, so publishing new assumptions moves nothing until a
+ * product is re-costed onto them.
+ */
+export interface CostSkuCostedVersion {
+  sku_id: string;
+  version_id: string;
+  costed_at: string;
+  costed_by: string | null;
+}
+
 export interface CostSkuRow {
   id: string;
   org_id: string;

@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Download, FileDown, FileSignature, FileText, Globe, Lock, Printer, Save, AlertTriangle } from 'lucide-react';
+import { Download, FileDown, FileSignature, FileText, Globe, Lock, Printer, RefreshCw, Save, AlertTriangle } from 'lucide-react';
 import { computeCost, type CostResult, type DomesticOutput, type ExportOutput } from '@oceanpick/engine';
 import type {
   CostAssumptionVersion,
@@ -27,10 +27,16 @@ import { QuoteBuilder } from '@/components/quote-builder';
 import type { QuoteItem } from '@/components/quote-sheet';
 import { SkuCostSheet } from './skus/sku-cost-sheet';
 import { CostedByFilter, matchesCostedBy, COSTED_BY_ALL, type CostedBy } from './costed-by-filter';
-import { saveCosting } from './actions';
+import { recostSkus, saveCosting } from './actions';
 
 export type RateMap = Record<string, { sea: number; air: number }>;
 export type YieldMap = Record<string, Record<string, number>>;
+/** One assumptions version, with everything the engine needs to price on it. */
+export interface VersionBundle {
+  version: CostAssumptionVersion;
+  odc: CostOdcComponentRow[];
+  rates: RateMap;
+}
 
 /** One grid row: a SKU costed for one destination (export) or none (domestic). */
 interface Row {
@@ -39,7 +45,15 @@ interface Row {
   market: CostMarket;
   destination: CostDestinationRow | null;
   result: CostResult;
+  /** The assumptions version this row is priced on — the SKU's, not the page's. */
+  version: CostAssumptionVersion;
+  /** True when that version is no longer the current one. */
+  behind: boolean;
+  /** The same row at the current version, when the compare toggle is on and the row is behind. */
+  atCurrent: CostResult | null;
 }
+
+const labelOf = (v: CostAssumptionVersion) => `v${v.version_no}${v.label ? ` · ${v.label}` : ''}`;
 
 /**
  * Which market a product is costed in.
@@ -74,10 +88,14 @@ export function CostGridClient({
   skus,
   yields,
   authors,
+  costedVersions,
+  byVersion,
+  canRecost,
   currentUserId,
   isAdmin,
   canViewBaseCost,
 }: {
+  /** The CURRENT assumptions version, with its ODC rows and freight rates. */
   version: CostAssumptionVersion;
   odc: CostOdcComponentRow[];
   buckets: CostSizeBucket[];
@@ -86,6 +104,16 @@ export function CostGridClient({
   skus: CostSkuRow[];
   yields: YieldMap;
   authors: Record<string, string>;
+  /**
+   * skuId -> the version that SKU is costed on. A SKU missing here is priced on
+   * the current version. Publishing a new version changes nothing in this map;
+   * re-costing does.
+   */
+  costedVersions: Record<string, string>;
+  /** Every version some SKU is costed on, plus the current one, masked like `version`/`odc`. */
+  byVersion: Record<string, VersionBundle>;
+  /** May this user move SKUs onto the current version — admins and assumptions editors. */
+  canRecost: boolean;
   /** Null when the profile could not be read — the Created by me filter is then not offered. */
   currentUserId: string | null;
   isAdmin: boolean;
@@ -120,8 +148,28 @@ export function CostGridClient({
   const sheetBaseCost = canViewBaseCost && includeBaseCost;
   const [isPending, startTransition] = useTransition();
 
+  // Side-by-side: rows costed on an older version also show what they would
+  // cost on the current one. A view only — nothing is written until re-cost.
+  const [compare, setCompare] = useState(false);
+
   const domestic = market === 'domestic';
   const assumptions = useMemo(() => toAssumptions(version, odc), [version, odc]);
+  const currentLabel = labelOf(version);
+  /**
+   * Engine assumptions per version. Built once rather than per row: the grid
+   * has a few dozen rows and, in practice, two or three versions in play.
+   */
+  const assumptionsByVersion = useMemo(() => {
+    const out: Record<string, ReturnType<typeof toAssumptions>> = {};
+    for (const [id, b] of Object.entries(byVersion)) out[id] = toAssumptions(b.version, b.odc);
+    return out;
+  }, [byVersion]);
+  /** The bundle a SKU is priced on. Falls back to the current version if its pin points nowhere loaded. */
+  const bundleFor = (sku: CostSkuRow): { id: string; bundle: VersionBundle } => {
+    const id = costedVersions[sku.id] ?? version.id;
+    const bundle = byVersion[id];
+    return bundle ? { id, bundle } : { id: version.id, bundle: { version, odc, rates } };
+  };
   const bucket = useMemo(
     () => (bucketId ? (buckets.find((b) => b.id === bucketId) ?? null) : null),
     [bucketId, buckets]
@@ -171,13 +219,22 @@ export function CostGridClient({
     for (const sku of visibleSkus) {
       const skuMarket = marketForSku(sku.market_scope, market);
       const engineSku = toSku(sku, skuMarket, yields[sku.id]);
+      // Priced on the version the SKU is costed on, not on the page's. That is
+      // the whole point of the pin: publishing v7 leaves a v6 row at v6.
+      const { id: versionId, bundle } = bundleFor(sku);
+      const skuAssumptions = assumptionsByVersion[versionId] ?? assumptions;
+      const behind = bundle.version.id !== version.id;
+      const cmp = compare && behind;
 
       if (skuMarket === 'domestic') {
         out.push({
           sku,
           market: skuMarket,
           destination: null,
-          result: computeCost({ market: skuMarket, assumptions, sku: engineSku, bucket: engineBucket }),
+          result: computeCost({ market: skuMarket, assumptions: skuAssumptions, sku: engineSku, bucket: engineBucket }),
+          version: bundle.version,
+          behind,
+          atCurrent: cmp ? computeCost({ market: skuMarket, assumptions, sku: engineSku, bucket: engineBucket }) : null,
         });
         continue;
       }
@@ -198,16 +255,62 @@ export function CostGridClient({
           destination: d,
           result: computeCost({
             market: skuMarket,
-            assumptions,
+            assumptions: skuAssumptions,
             sku: engineSku,
             bucket: engineBucket,
-            destination: toDestination(d, rateOf(rates, d.id)),
+            // Freight rates are versioned too, so the row's port is priced at
+            // its own version's rate card.
+            destination: toDestination(d, rateOf(bundle.rates, d.id)),
           }),
+          version: bundle.version,
+          behind,
+          atCurrent: cmp
+            ? computeCost({
+                market: skuMarket,
+                assumptions,
+                sku: engineSku,
+                bucket: engineBucket,
+                destination: toDestination(d, rateOf(rates, d.id)),
+              })
+            : null,
         });
       }
     }
     return out;
-  }, [visibleSkus, market, assumptions, bucket, activeDests, destinations, rates, yields]);
+    // bundleFor is a plain closure over the deps listed; listing it would re-run this every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleSkus, market, assumptions, assumptionsByVersion, bucket, activeDests, destinations, rates, yields, costedVersions, byVersion, version, odc, compare]);
+
+  /** Visible SKUs still costed on an older version — what the bulk re-cost acts on. */
+  const behindVisible = useMemo(
+    () => visibleSkus.filter((s) => (byVersion[costedVersions[s.id] ?? version.id]?.version.id ?? version.id) !== version.id),
+    [visibleSkus, costedVersions, byVersion, version.id]
+  );
+
+  /**
+   * A saved costing pins ONE version, so the save dialog's placeholders show
+   * the version the products on screen share — or the current one when they
+   * are mixed, in which case the save itself refuses below.
+   */
+  const dialogVersion = useMemo(() => {
+    const ids = new Set(visibleSkus.map((s) => bundleFor(s).id));
+    const only = ids.size === 1 ? [...ids][0] : null;
+    return (only && byVersion[only]?.version) || version;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleSkus, costedVersions, byVersion, version]);
+
+  /**
+   * Cost these SKUs on the current version from now on. Confirmed first: it is
+   * the one action on this page that changes what the grid says tomorrow.
+   */
+  function onRecost(skuIds: string[], what: string) {
+    if (!confirm(`Cost ${what} on ${currentLabel} from now on?\n\nTheir figures on this grid will move to the current assumptions. Saved costings are not affected.`)) return;
+    startTransition(async () => {
+      const res = await recostSkus(skuIds);
+      if (res.error) alert(res.error);
+      else router.refresh();
+    });
+  }
 
   // The grid draws a different set of columns for each market — nineteen
   // against twenty-six — so mixed rows cannot share one table. They get one
@@ -284,12 +387,23 @@ export function CostGridClient({
     overrides: Partial<Record<OverridableField, number>>,
     visibility: CostVisibility
   ) {
+    // The grid may hold rows on several versions, but a saved costing is built
+    // on one. Mixed products are refused rather than silently costed on the
+    // current version, which would make the sheet disagree with the grid.
+    const versionIds = new Set(skuIds.map((id) => bundleFor(skus.find((s) => s.id === id) ?? ({ id } as CostSkuRow)).id));
+    if (versionIds.size > 1) {
+      alert(
+        'These products are costed on different assumptions versions. Re-cost them onto one version first, or save them as separate costings.'
+      );
+      return;
+    }
+    const versionId = [...versionIds][0] ?? version.id;
     startTransition(async () => {
       const res = await saveCosting({
         name,
         visibility,
         market,
-        versionId: version.id,
+        versionId,
         bucketId: bucketId || null,
         destinationIds: domestic ? [] : selectedDests,
         skuIds,
@@ -307,10 +421,21 @@ export function CostGridClient({
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Cost Grid</h1>
           <p className="mt-0.5 text-sm text-muted-foreground">
-            Every SKU at the current assumptions. Nothing here is saved until you snapshot it.
+            Every SKU on the assumptions version it was last costed on. Publishing new assumptions moves
+            nothing here until a product is re-costed onto them.
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {canRecost && behindVisible.length > 0 && (
+            <button
+              onClick={() => onRecost(behindVisible.map((s) => s.id), `the ${behindVisible.length} product${behindVisible.length === 1 ? '' : 's'} on screen still on an older version`)}
+              className={cn(btnGhost, 'border-warning/50 text-warning hover:bg-warning/10')}
+              disabled={isPending}
+              title="Move every product on screen that is still on an older version onto the current assumptions. Follows the search and filters, so narrow the grid first to re-cost a subset."
+            >
+              <RefreshCw className="h-3.5 w-3.5" /> Re-cost {behindVisible.length} on {currentLabel}
+            </button>
+          )}
           <button onClick={onExport} className={btnGhost}>
             <Download className="h-3.5 w-3.5" /> Export sheet
           </button>
@@ -350,6 +475,9 @@ export function CostGridClient({
         costedBy={costedBy}
         setCostedBy={setCostedBy}
         version={version}
+        compare={compare}
+        setCompare={setCompare}
+        anyBehind={behindVisible.length > 0}
       />
 
       {brokenCount > 0 && (
@@ -372,6 +500,11 @@ export function CostGridClient({
             domestic
             showDestination={false}
             authors={authors}
+            compare={compare}
+            currentVersion={version}
+            canRecost={canRecost}
+            onRecost={onRecost}
+            busy={isPending}
             onSheet={(row) => {
               setQuoteOpen(false);
               setSheetRow(row);
@@ -388,6 +521,11 @@ export function CostGridClient({
             domestic={false}
             showDestination={exportPorts.size > 1}
             authors={authors}
+            compare={compare}
+            currentVersion={version}
+            canRecost={canRecost}
+            onRecost={onRecost}
+            busy={isPending}
             onSheet={(row) => {
               setQuoteOpen(false);
               setSheetRow(row);
@@ -450,7 +588,7 @@ export function CostGridClient({
               )}
 
               <div className="mt-3 max-h-[70vh] overflow-y-auto rounded-md border">
-                <SkuCostSheet {...sheetProps(sheetRow, version, authors, bucket?.label ?? null, sheetBaseCost)} />
+                <SkuCostSheet {...sheetProps(sheetRow, sheetRow.version, authors, bucket?.label ?? null, sheetBaseCost)} />
               </div>
 
               <p className="mt-3 text-xs text-muted-foreground">
@@ -467,7 +605,7 @@ export function CostGridClient({
             as-is by the Word export.
           */}
           <div className="hidden print:block">
-            <SkuCostSheet {...sheetProps(sheetRow, version, authors, bucket?.label ?? null, sheetBaseCost)} elementId={COST_SHEET_ID} />
+            <SkuCostSheet {...sheetProps(sheetRow, sheetRow.version, authors, bucket?.label ?? null, sheetBaseCost)} elementId={COST_SHEET_ID} />
           </div>
         </>
       )}
@@ -478,7 +616,7 @@ export function CostGridClient({
           market={market}
           brokenSkuIds={brokenSkuIds}
           authors={authors}
-          version={version}
+          version={dialogVersion}
           canViewBaseCost={canViewBaseCost}
           onCancel={() => setSaving(false)}
           onSave={onSave}
@@ -513,7 +651,7 @@ function sheetProps(
     skuName: row.sku.name,
     category: row.sku.category,
     customer: row.sku.customer ?? '',
-    assumptionsLabel: `v${version.version_no}${version.label ? ` · ${version.label}` : ''}`,
+    assumptionsLabel: labelOf(version),
     authorName: authorOf(row.sku, authors),
     glazePct: row.sku.glaze_pct,
     absorbed: row.sku.raw_material_basis === 'absorbed',
@@ -560,6 +698,9 @@ function Controls({
   costedBy,
   setCostedBy,
   version,
+  compare,
+  setCompare,
+  anyBehind,
 }: {
   market: CostMarket;
   setMarket: (m: CostMarket) => void;
@@ -579,6 +720,10 @@ function Controls({
   costedBy: CostedBy;
   setCostedBy: (v: CostedBy) => void;
   version: CostAssumptionVersion;
+  compare: boolean;
+  setCompare: (v: boolean) => void;
+  /** Whether any row on screen is on an older version — the compare toggle is pointless otherwise. */
+  anyBehind: boolean;
 }) {
   const multi = selectedDests.length > 1;
 
@@ -643,9 +788,18 @@ function Controls({
           Show inactive
         </label>
 
+        {anyBehind && (
+          <label
+            className={cn('flex items-center gap-1.5 text-xs', compare ? 'text-primary' : 'text-muted-foreground')}
+            title="Rows on an older version also show their FINAL at the current assumptions, and the difference. Nothing is changed."
+          >
+            <input type="checkbox" checked={compare} onChange={(e) => setCompare(e.target.checked)} />
+            Compare at {labelOf(version)}
+          </label>
+        )}
+
         <span className="ml-auto text-[11px] text-muted-foreground">
-          Assumptions v{version.version_no}
-          {version.label ? ` · ${version.label}` : ''} · FX {version.fx_rate}
+          Current assumptions {labelOf(version)} · FX {version.fx_rate}
         </span>
       </div>
 
@@ -693,12 +847,22 @@ function Grid({
   domestic,
   showDestination,
   authors,
+  compare,
+  currentVersion,
+  canRecost,
+  onRecost,
+  busy,
   onSheet,
 }: {
   rows: Row[];
   domestic: boolean;
   showDestination: boolean;
   authors: Record<string, string>;
+  compare: boolean;
+  currentVersion: CostAssumptionVersion;
+  canRecost: boolean;
+  onRecost: (skuIds: string[], what: string) => void;
+  busy: boolean;
   onSheet: (row: Row) => void;
 }) {
   if (rows.length === 0) {
@@ -717,6 +881,19 @@ function Grid({
             <th className={cn(thBase, 'left-0 z-30 text-left')}>SKU</th>
             <th className={cn(thBase, 'text-left')}>Customer</th>
             <th className={cn(thBase, 'text-left')}>Costed by</th>
+            <th className={cn(thBase, 'text-left')} title="The assumptions version this product is costed on">
+              Version
+            </th>
+            {compare && (
+              <>
+                <th className={cn(thBase, 'border-l')} title={`FINAL if this product were costed on ${labelOf(currentVersion)}`}>
+                  FINAL @ v{currentVersion.version_no}
+                </th>
+                <th className={cn(thBase, 'border-r')} title="Current-version FINAL minus the FINAL shown">
+                  Δ
+                </th>
+              </>
+            )}
             {showDestination && <th className={cn(thBase, 'text-left')}>Port</th>}
             <th className={thBase}>Yield</th>
             {/* "Input" rather than "Whole fish": on a maw SKU this column is
@@ -778,6 +955,11 @@ function Grid({
               domestic={domestic}
               showDestination={showDestination}
               authors={authors}
+              compare={compare}
+              currentVersion={currentVersion}
+              canRecost={canRecost}
+              onRecost={onRecost}
+              busy={busy}
               onSheet={onSheet}
             />
           ))}
@@ -792,15 +974,26 @@ function GridRow({
   domestic,
   showDestination,
   authors,
+  compare,
+  currentVersion,
+  canRecost,
+  onRecost,
+  busy,
   onSheet,
 }: {
   row: Row;
   domestic: boolean;
   showDestination: boolean;
   authors: Record<string, string>;
+  compare: boolean;
+  currentVersion: CostAssumptionVersion;
+  canRecost: boolean;
+  onRecost: (skuIds: string[], what: string) => void;
+  busy: boolean;
   onSheet: (row: Row) => void;
 }) {
-  const { sku, destination, result } = row;
+  const { sku, destination, result, behind } = row;
+  const versionLabel = labelOf(row.version);
   const absorbed = sku.raw_material_basis === 'absorbed';
   const ingredient = sku.raw_material_basis === 'ingredient';
   const inactive = sku.status === 'inactive';
@@ -861,6 +1054,31 @@ function GridRow({
       >
         {author}
       </td>
+      <td
+        className={cn(tdBase, 'text-left', behind ? 'text-warning' : 'text-muted-foreground')}
+        title={
+          behind
+            ? `Costed on ${versionLabel}. The current version is ${labelOf(currentVersion)} — re-cost to move it.`
+            : `Costed on ${versionLabel}, the current version.`
+        }
+      >
+        <span className="inline-flex items-center gap-1.5">
+          <span className="max-w-[120px] truncate">{versionLabel}</span>
+          {behind && canRecost && (
+            <button
+              type="button"
+              onClick={() => onRecost([sku.id], sku.name)}
+              disabled={busy}
+              title={`Cost ${sku.name} on ${labelOf(currentVersion)} from now on`}
+              aria-label={`Re-cost ${sku.name} on ${labelOf(currentVersion)}`}
+              className="shrink-0 rounded p-0.5 opacity-70 transition-opacity hover:bg-warning/10 hover:opacity-100 disabled:opacity-40"
+            >
+              <RefreshCw className="h-3 w-3" />
+            </button>
+          )}
+        </span>
+      </td>
+      {compare && <CompareCells row={row} domestic={domestic} />}
     </>
   );
 
@@ -902,6 +1120,54 @@ function GridRow({
         <ExportCells out={result.value.result as ExportOutput} absorbed={absorbed} form={sku.product_form} />
       )}
     </tr>
+  );
+}
+
+/**
+ * The FINAL the grid's FINAL column shows for this output — the unglazed cost
+ * for domestic, the frozen plain cost for export, or the fresh cost for a
+ * fresh-only product, which has no frozen state to show.
+ */
+function finalOf(result: CostResult, domestic: boolean, form: CostProductForm): number | null {
+  if (!result.ok) return null;
+  if (domestic) return (result.value.result as DomesticOutput).unglazed.finalCost;
+  const out = result.value.result as ExportOutput;
+  return form === 'fresh' ? out.fresh.finalCost : out.frozenPlain.finalCost;
+}
+
+/**
+ * The compare toggle's two cells: this row's FINAL at the current version,
+ * and how far that is from the FINAL it is costed at. Blank for a row already
+ * on the current version — there is nothing to compare it with.
+ */
+function CompareCells({ row, domestic }: { row: Row; domestic: boolean }) {
+  const money = domestic ? lkr : usd;
+  const was = finalOf(row.result, domestic, row.sku.product_form);
+  const now = row.atCurrent ? finalOf(row.atCurrent, domestic, row.sku.product_form) : null;
+  if (!row.behind || was == null || now == null) {
+    return (
+      <>
+        <td className={cn(tdBase, 'border-l text-muted-foreground/50')}>—</td>
+        <td className={cn(tdBase, 'border-r text-muted-foreground/50')}>—</td>
+      </>
+    );
+  }
+  const delta = now - was;
+  const tiny = Math.abs(delta) < (domestic ? 0.5 : 0.005);
+  return (
+    <>
+      <td className={cn(tdBase, 'border-l font-medium')}>{money(now)}</td>
+      <td
+        className={cn(
+          tdBase,
+          'border-r',
+          tiny ? 'text-muted-foreground' : delta > 0 ? 'text-destructive' : 'text-success'
+        )}
+        title={`${money(was)} costed → ${money(now)} at the current version`}
+      >
+        {tiny ? '0' : `${delta > 0 ? '+' : '−'}${money(Math.abs(delta))}`}
+      </td>
+    </>
   );
 }
 
