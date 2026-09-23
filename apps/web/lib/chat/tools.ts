@@ -36,9 +36,9 @@ export interface ToolContext {
 }
 
 /** Month cells (items × months) above which monthly detail is dropped for totals. */
-const MAX_CELLS = 480;
+const MAX_CELLS = 300;
 /** Priced costing rows returned before asking the model to filter. */
-const MAX_PRICE_ROWS = 120;
+const MAX_PRICE_ROWS = 40;
 
 // --- Input schemas -----------------------------------------------------------
 
