@@ -2,12 +2,12 @@ import { AlertTriangle, Activity, CalendarRange } from 'lucide-react';
 import { createClient } from '@/lib/supabase/server';
 import { monthLabel } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
-import { fetchAllByPlan } from '@/lib/fetch-all';
+import { fetchAllByPlan, fetchAllPaged } from '@/lib/fetch-all';
 import { getActivePlan } from '@/lib/plan';
 import { Card } from '@/components/ui/card';
 import { RecalculateButton } from '../recalculate-button';
 import { StalePlanNotice } from '../stale-banner';
-import { DashboardOverview, type MonthPoint, type ShortfallRow } from './dashboard-overview';
+import { DashboardOverview, type BorrowSource, type OtherData, type StatusData, type StatusKey } from './dashboard-overview';
 
 export default async function HomePage() {
   const supabase = await createClient();
@@ -25,9 +25,12 @@ export default async function HomePage() {
 
   const lastComputed = plan?.last_computed_at ? new Date(plan.last_computed_at).toLocaleString() : null;
 
-  // One rolling_results pass feeds the overview (per month) and the alerts (per program).
-  let monthly: MonthPoint[] = [];
-  let shortfall: ShortfallRow[] = [];
+  // One rolling_results pass feeds the overview (per month) and the alerts (per
+  // program). Figures are kept per program STATUS so the overview's programs
+  // filter (active / pipeline / combined) can be applied client-side.
+  const emptyStatus = (): StatusData => ({ monthly: [], shortfall: [], secondaryProducts: [] });
+  const byStatus: Record<StatusKey, StatusData> = { active: emptyStatus(), pipeline: emptyStatus() };
+  let other: OtherData = { monthly: [], products: [] };
   const alerts: { level: 'warn' | 'info'; text: string }[] = [];
   let recent: { who: string; text: string; when: string }[] = [];
 
@@ -39,88 +42,178 @@ export default async function HomePage() {
 
     // Program status + customer, for the active/pipeline split and the
     // shortfall-by-customer chart.
-    const { data: progs } = await supabase
-      .from('programs').select('id, item_code, status, customer, primary_yield, max_monthly_demand_fp')
-      .eq('plan_id', plan.id).is('deleted_at', null);
-    const progList = (progs ?? []) as { id: string; item_code: string; status: string; customer: string; primary_yield: number; max_monthly_demand_fp: number }[];
-    const statusById = new Map(progList.map((p) => [p.id, p.status]));
-    const customerById = new Map(progList.map((p) => [p.id, p.customer]));
-    const yieldById = new Map(progList.map((p) => [p.id, Number(p.primary_yield)]));
+    const [{ data: progs }, { data: bks }] = await Promise.all([
+      supabase
+        .from('programs')
+        .select('id, item_code, status, customer, primary_yield, secondary_yield, tertiary_yield, primary_bucket_id, secondary_bucket_id, tertiary_bucket_id, max_monthly_demand_fp')
+        .eq('plan_id', plan.id).is('deleted_at', null),
+      supabase.from('buckets').select('id, name').eq('is_archived', false),
+    ]);
+    type Prog = {
+      id: string; item_code: string; status: string; customer: string;
+      primary_yield: number; secondary_yield: number | null; tertiary_yield: number | null;
+      primary_bucket_id: string; secondary_bucket_id: string | null; tertiary_bucket_id: string | null;
+      max_monthly_demand_fp: number;
+    };
+    const progList = (progs ?? []) as Prog[];
+    const progById = new Map(progList.map((p) => [p.id, p]));
+    const bucketName = new Map((bks ?? []).map((b) => [b.id, b.name as string]));
 
     if (summary) {
-      const rr = await fetchAllByPlan(supabase, 'rolling_results', 'program_id, month_index, demand_fp, rolling_fp, rolling_wr, revenue, cost', plan.id);
-      const dem = new Array<number>(months).fill(0), ful = new Array<number>(months).fill(0);
-      // wr = whole round actually consumed (rolling_wr). wrNeeded = the whole round
-      // the full demand book would take, demand_fp / primary_yield per spec §2.2
-      // (Excel col AH) — a demand-side figure, so it stands at primary yield
-      // throughout rather than at the paths the engine happened to use.
-      const wr = new Array<number>(months).fill(0);
-      const wrNeed = new Array<number>(months).fill(0);
-      const rev = new Array<number>(months).fill(0), cst = new Array<number>(months).fill(0);
-      const actDem = new Array<number>(months).fill(0), pipeDem = new Array<number>(months).fill(0);
+      const rr = await fetchAllByPlan(supabase, 'rolling_results', 'program_id, month_index, demand_fp, rolling_fp, rolling_wr, own_fp, own_wr, revenue, cost, ' +
+        'borrow_m1_prim_wr, borrow_m1_alt_wr, borrow_m1_tert_wr, borrow_m2_prim_wr, borrow_m2_alt_wr, borrow_m2_tert_wr, ' +
+        'borrow_m3_prim_wr, borrow_m3_alt_wr, borrow_m3_tert_wr, borrow_m4_prim_wr, borrow_m4_alt_wr, borrow_m4_tert_wr', plan.id);
+      const zeros = () => new Array<number>(months).fill(0);
+
+      // Per-status accumulators. The engine only writes rows for in-scope
+      // programs, so every row is active or pipeline; anything else is skipped.
+      type Acc = {
+        dem: number[]; ful: number[];
+        // wr = whole round actually consumed (rolling_wr). wrNeed = the whole round
+        // the full demand book would take, demand_fp / primary_yield per spec §2.2
+        // (Excel col AH) — a demand-side figure, so it stands at primary yield
+        // throughout rather than at the paths the engine happened to use.
+        wr: number[]; wrNeed: number[];
+        // Own-month share of the fulfilled volume; the remainder of rolling_fp /
+        // rolling_wr came through the borrow channels (up to four months back).
+        ownFp: number[]; ownWr: number[];
+        rev: number[]; cst: number[];
+        // Borrowed WR per target month, attributed to its SOURCE (month − offset,
+        // path bucket) — the same attribution the engine's §8.2 pipeline uses.
+        // Each channel's FP is its WR at that path's yield.
+        borrowByMonth: Map<string, BorrowSource>[];
+        // Kept per month (not pre-totalled) so the overview's time filter can rank
+        // customers within the selected range rather than over the whole horizon.
+        shortByCust: Map<string, number[]>;
+        // Feedstock WR for secondary products, per source item code.
+        feedByCode: Map<string, number[]>;
+      };
+      const newAcc = (): Acc => ({
+        dem: zeros(), ful: zeros(), wr: zeros(), wrNeed: zeros(), ownFp: zeros(), ownWr: zeros(), rev: zeros(), cst: zeros(),
+        borrowByMonth: Array.from({ length: months }, () => new Map()),
+        shortByCust: new Map(), feedByCode: new Map(),
+      });
+      const acc: Record<StatusKey, Acc> = { active: newAcc(), pipeline: newAcc() };
+      const CHANNELS = [1, 2, 3, 4].flatMap((offset) => (['prim', 'alt', 'tert'] as const).map((path) => ({ offset, path, col: `borrow_m${offset}_${path}_wr` as const })));
       const pd = new Map<string, number>(), pf = new Map<string, number>();
-      // Kept per month (not pre-totalled) so the overview's time filter can rank
-      // customers within the selected range rather than over the whole horizon.
-      const shortByCust = new Map<string, number[]>();
+
       for (const r of rr) {
+        const prog = progById.get(r.program_id);
+        const st = prog?.status as StatusKey | undefined;
+        const a = st ? acc[st] : undefined;
         const i = r.month_index - 1;
-        if (i >= 0 && i < months) {
-          dem[i] += r.demand_fp; ful[i] += r.rolling_fp; wr[i] += r.rolling_wr; rev[i] += r.revenue; cst[i] += r.cost;
-          const y = yieldById.get(r.program_id) ?? 0;
-          if (y > 0) wrNeed[i] += r.demand_fp / y;
-          const st = statusById.get(r.program_id);
-          if (st === 'active') actDem[i] += r.demand_fp;
-          else if (st === 'pipeline') pipeDem[i] += r.demand_fp;
+        if (prog && a && i >= 0 && i < months) {
+          a.dem[i] += r.demand_fp; a.ful[i] += r.rolling_fp; a.wr[i] += r.rolling_wr; a.rev[i] += r.revenue; a.cst[i] += r.cost;
+          a.ownFp[i] += r.own_fp; a.ownWr[i] += r.own_wr;
+          const y = Number(prog.primary_yield) || 0;
+          if (y > 0) a.wrNeed[i] += r.demand_fp / y;
+          for (const ch of CHANNELS) {
+            const bwr = Number((r as Record<string, unknown>)[ch.col] ?? 0);
+            if (!(bwr > 0)) continue;
+            const src = i - ch.offset;
+            if (src < 0) continue;
+            const bucketId = ch.path === 'prim' ? prog.primary_bucket_id : ch.path === 'alt' ? prog.secondary_bucket_id : prog.tertiary_bucket_id;
+            const py = ch.path === 'prim' ? prog.primary_yield : ch.path === 'alt' ? prog.secondary_yield : prog.tertiary_yield;
+            if (!bucketId) continue;
+            const key = `${src}:${bucketId}`;
+            const m = a.borrowByMonth[i]!;
+            const cur = m.get(key) ?? { srcMonth: src + 1, bucket: bucketName.get(bucketId) ?? bucketId, wr: 0, fp: 0 };
+            cur.wr += bwr; cur.fp += bwr * Number(py ?? 0);
+            m.set(key, cur);
+          }
           const short = Math.max(0, r.demand_fp - r.rolling_fp);
           if (short > 0) {
-            const cust = customerById.get(r.program_id) ?? '—';
-            let arr = shortByCust.get(cust);
-            if (!arr) { arr = new Array<number>(months).fill(0); shortByCust.set(cust, arr); }
+            const cust = prog.customer ?? '—';
+            let arr = a.shortByCust.get(cust);
+            if (!arr) { arr = zeros(); a.shortByCust.set(cust, arr); }
             arr[i] += short;
           }
+          let feed = a.feedByCode.get(prog.item_code);
+          if (!feed) { feed = zeros(); a.feedByCode.set(prog.item_code, feed); }
+          feed[i] += r.rolling_wr;
         }
         pd.set(r.program_id, (pd.get(r.program_id) ?? 0) + r.demand_fp);
         pf.set(r.program_id, (pf.get(r.program_id) ?? 0) + r.rolling_fp);
       }
+
       // Secondary-product revenue, on the same basis as the Secondary products
       // page: quantity = feedstock WR × yield, value = quantity × price. Group 1
-      // reads one product's whole round; group 2 reads the plan's total.
+      // reads one product's whole round; group 2 reads the plan's total — here
+      // the total of the status being built, so active + pipeline = the plan.
       const { data: secDefs } = await supabase
         .from('secondary_products')
-        .select('basis, source_item_code, yield_pct, price_per_kg, is_archived');
-      const codeById = new Map(progList.map((p) => [p.id, p.item_code]));
-      const feedByCode = new Map<string, number[]>();
-      for (const r of rr) {
-        const code = codeById.get(r.program_id);
-        const i = r.month_index - 1;
-        if (!code || i < 0 || i >= months) continue;
-        let arr = feedByCode.get(code);
-        if (!arr) { arr = new Array<number>(months).fill(0); feedByCode.set(code, arr); }
-        arr[i] += r.rolling_wr;
-      }
-      const secRev = new Array<number>(months).fill(0);
-      for (const d of (secDefs ?? []) as {
-        basis: string; source_item_code: string | null; yield_pct: number; price_per_kg: number; is_archived: boolean;
-      }[]) {
-        if (d.is_archived) continue;
-        const feed = d.basis === 'total_wr' ? wr : feedByCode.get(d.source_item_code ?? '');
-        if (!feed) continue;
-        const rate = Number(d.yield_pct) * Number(d.price_per_kg);
-        if (!(rate > 0)) continue;
-        for (let i = 0; i < months; i++) secRev[i] += (feed[i] ?? 0) * rate;
+        .select('name, basis, source_item_code, yield_pct, price_per_kg, is_archived');
+      const secRows = ((secDefs ?? []) as {
+        name: string; basis: string; source_item_code: string | null; yield_pct: number; price_per_kg: number; is_archived: boolean;
+      }[]).filter((d) => !d.is_archived);
+
+      for (const st of ['active', 'pipeline'] as const) {
+        const a = acc[st];
+        const secRev = zeros();
+        // Per product too, keyed by name (the same by-product off two source
+        // items rolls up under one name), kept per month for the range filter.
+        const secByName = new Map<string, number[]>();
+        for (const d of secRows) {
+          const feed = d.basis === 'total_wr' ? a.wr : a.feedByCode.get(d.source_item_code ?? '');
+          if (!feed) continue;
+          const rate = Number(d.yield_pct) * Number(d.price_per_kg);
+          if (!(rate > 0)) continue;
+          let byName = secByName.get(d.name);
+          if (!byName) { byName = zeros(); secByName.set(d.name, byName); }
+          for (let i = 0; i < months; i++) { const v = (feed[i] ?? 0) * rate; secRev[i] += v; byName[i] += v; }
+        }
+        byStatus[st] = {
+          monthly: a.dem.map((d, i) => ({
+            demand: d, fulfilled: a.ful[i] ?? 0, wrUsed: a.wr[i] ?? 0, wrNeeded: a.wrNeed[i] ?? 0,
+            ownFp: a.ownFp[i] ?? 0, ownWr: a.ownWr[i] ?? 0, revenue: a.rev[i] ?? 0, cost: a.cst[i] ?? 0,
+            secondaryRevenue: secRev[i] ?? 0,
+            borrowSources: [...(a.borrowByMonth[i]?.values() ?? [])].sort((x, y) => y.wr - x.wr),
+          })),
+          shortfall: [...a.shortByCust.entries()].map(([customer, m]) => ({ customer, months: m })),
+          secondaryProducts: [...secByName.entries()].map(([name, m]) => ({ name, months: m })),
+        };
       }
 
-      monthly = dem.map((d, i) => ({ demand: d, fulfilled: ful[i] ?? 0, wrUsed: wr[i] ?? 0, wrNeeded: wrNeed[i] ?? 0, revenue: rev[i] ?? 0, secondaryRevenue: secRev[i] ?? 0, cost: cst[i] ?? 0, activeDemand: actDem[i] ?? 0, pipelineDemand: pipeDem[i] ?? 0 }));
-      shortfall = [...shortByCust.entries()].map(([customer, m]) => ({ customer, months: m }));
+      // Other products: traded lines outside the harvest plan (org-scoped, like
+      // secondary products) and tied to no program, so they sit outside the
+      // status filter. Quantity is typed in per month; revenue and cost are flat
+      // per-unit rates. Same arithmetic as lib/side-products.ts, kept per
+      // product name and per month for the card breakdown and range filter.
+      const [{ data: otherDefs }, otherMonths] = await Promise.all([
+        supabase.from('other_products').select('id, name, unit_cost, unit_revenue').eq('is_archived', false),
+        fetchAllPaged(
+          (a: number, b: number) => supabase.from('other_product_months').select('product_id, month_index, quantity').range(a, b),
+          'other_product_months'
+        ).catch(() => [] as { product_id: string; month_index: number; quantity: number }[]),
+      ]);
+      const othRev = zeros(), othCost = zeros();
+      const othByName = new Map<string, number[]>();
+      const otherById = new Map(
+        ((otherDefs ?? []) as { id: string; name: string; unit_cost: number; unit_revenue: number }[]).map((p) => [p.id, p])
+      );
+      for (const m of otherMonths as { product_id: string; month_index: number; quantity: number }[]) {
+        const p = otherById.get(m.product_id);
+        const i = m.month_index - 1;
+        if (!p || i < 0 || i >= months) continue;
+        const q = Number(m.quantity) || 0;
+        const rv = q * Number(p.unit_revenue);
+        othRev[i] += rv;
+        othCost[i] += q * Number(p.unit_cost);
+        let byName = othByName.get(p.name);
+        if (!byName) { byName = zeros(); othByName.set(p.name, byName); }
+        byName[i] += rv;
+      }
+      other = {
+        monthly: othRev.map((rv, i) => ({ revenue: rv, cost: othCost[i] ?? 0 })),
+        products: [...othByName.entries()].map(([name, m]) => ({ name, months: m })),
+      };
+
       let under = 0;
       for (const [pid, d] of pd) if (d > 0 && (pf.get(pid) ?? 0) / d < 0.5) under++;
       if (under) alerts.push({ level: 'warn', text: `${under} program${under > 1 ? 's' : ''} under 50% fulfilled over 60 months.` });
     }
 
-    const [{ data: bks }, harv] = await Promise.all([
-      supabase.from('buckets').select('id, name').eq('is_archived', false),
-      fetchAllByPlan(supabase, 'harvest_plan', 'bucket_id, capacity_kg_wr', plan.id),
-    ]);
+    const harv = await fetchAllByPlan(supabase, 'harvest_plan', 'bucket_id, capacity_kg_wr', plan.id);
     const noYield = progList.filter((p) => (p.max_monthly_demand_fp ?? 0) > 0 && (!p.primary_yield || p.primary_yield <= 0)).length;
     if (noYield) alerts.push({ level: 'warn', text: `${noYield} program${noYield > 1 ? 's have' : ' has'} demand but no primary yield.` });
     const cap = new Map<string, number>();
@@ -155,7 +248,7 @@ export default async function HomePage() {
       {plan && <StalePlanNotice planId={plan.id} lastComputedAt={plan.last_computed_at} />}
 
       {summary && plan ? (
-        <DashboardOverview monthly={monthly} shortfall={shortfall} planStartDate={plan.plan_start_date} horizon={plan.horizon_months} />
+        <DashboardOverview active={byStatus.active} pipeline={byStatus.pipeline} other={other} planStartDate={plan.plan_start_date} horizon={plan.horizon_months} />
       ) : (
         <Card className="border-dashed bg-muted/30 p-6 text-sm text-muted-foreground">
           No computed results yet. Add programs, demand, and harvest capacity, then{' '}
