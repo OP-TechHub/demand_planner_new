@@ -249,7 +249,7 @@ export function HarvestClient({
                   <th key={mo} className={cn('sticky top-0 z-20 min-w-[4.5rem] border-b border-border bg-muted px-2 py-2 text-right font-medium', yearStart(mo) && 'border-l border-border')}>{monthLabel(planStartDate, mo)}</th>
                 ))}
                 <th className="sticky top-0 z-20 min-w-[6rem] border-b border-l border-border bg-muted px-3 py-2 text-right font-semibold">
-                  {fullRange ? `${horizon}mo total` : 'Range total'}
+                  {fullRange ? `${horizon}mo total (kg WR)` : 'Range total (kg WR)'}
                 </th>
               </tr>
             </thead>
@@ -346,7 +346,7 @@ export function HarvestClient({
                   </th>
                 ))}
                 <th className="sticky top-0 z-20 min-w-[6rem] border-b border-l border-border bg-muted px-3 py-2 text-right font-semibold">
-                  {fullRange ? `${horizon}mo total` : 'Range total'}
+                  {fullRange ? `${horizon}mo total (kg WR)` : 'Range total (kg WR)'}
                 </th>
               </tr>
             </thead>
@@ -600,7 +600,7 @@ function ActualHarvestTable({
                 </th>
               ))}
               <th className="sticky top-0 z-20 min-w-[6rem] border-b border-l border-border bg-muted px-3 py-2 text-right font-semibold">
-                {fullRange ? `${horizon}mo total` : 'Range total'}
+                {fullRange ? `${horizon}mo total (kg WR)` : 'Range total (kg WR)'}
               </th>
             </tr>
           </thead>
@@ -649,7 +649,7 @@ function ActualHarvestTable({
             </tr>
             <tr className="border-t bg-muted/20">
               <td className={cn(stickyCol, 'bg-muted/20 px-3 py-1.5 font-medium')} title="Actual minus planned capacity, for months with something recorded.">
-                vs plan
+                vs plan (kg WR)
               </td>
               {visibleMonths.map((mo) => (
                 <td
@@ -768,7 +768,7 @@ function RequiredHarvestTable({
                 </th>
               ))}
               <th className="min-w-[6rem] border-b border-l border-border bg-muted px-3 py-2 text-right font-semibold">
-                {fullRange ? `${horizon}mo total` : 'Range total'}
+                {fullRange ? `${horizon}mo total (kg WR)` : 'Range total (kg WR)'}
               </th>
             </tr>
           </thead>

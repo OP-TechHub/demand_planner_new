@@ -178,6 +178,8 @@ export function MonthlyCompare({ data, aName, bName }: { data: Data; aName: stri
         aggregate={pctView ? 'ratio' : 'sum'}
         rightLabel="Total"
         firstColLabel={metric.rowLabel}
+        // A % view is a share of the baseline, not the metric's own unit.
+        unit={pctView ? '% change' : metric.unit}
         onRangeChange={onRangeChange}
       />
 

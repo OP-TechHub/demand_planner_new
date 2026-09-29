@@ -24,7 +24,7 @@ export type OtherProduct = {
 };
 
 /** One figure the grid can show — product rows, month columns. */
-type OtherMetric = { key: string; label: string; format: FmtKey; rows: GridRow[]; aggregate?: Aggregate };
+type OtherMetric = { key: string; label: string; unit: string; format: FmtKey; rows: GridRow[]; aggregate?: Aggregate };
 
 const usd0 = (n: number) => `$${Math.round(n).toLocaleString()}`;
 const usd2 = (n: number) => `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -91,13 +91,13 @@ export function OtherProductsClient({
 
   const metrics: OtherMetric[] = useMemo(
     () => [
-      { key: 'quantity', label: 'Quantity', format: 'num0', rows: rowsOf((r) => r.qty) },
-      { key: 'unit_cost', label: 'Unit cost', format: 'usd2', aggregate: 'ratio', rows: rowsOf((r) => r.unitCost, true) },
-      { key: 'unit_revenue', label: 'Unit revenue', format: 'usd2', aggregate: 'ratio', rows: rowsOf((r) => r.unitRevenue, true) },
-      { key: 'unit_margin', label: 'Unit margin', format: 'usd2', aggregate: 'ratio', rows: rowsOf((r) => r.unitMargin, true) },
-      { key: 'total_cost', label: 'Total cost', format: 'usd0', rows: rowsOf((r) => r.totalCost) },
-      { key: 'total_revenue', label: 'Total revenue', format: 'usd0', rows: rowsOf((r) => r.totalRevenue) },
-      { key: 'total_margin', label: 'Total margin', format: 'usd0', rows: rowsOf((r) => r.totalMargin) },
+      { key: 'quantity', label: 'Quantity', unit: 'units (per product)', format: 'num0', rows: rowsOf((r) => r.qty) },
+      { key: 'unit_cost', label: 'Unit cost', unit: '$/unit', format: 'usd2', aggregate: 'ratio', rows: rowsOf((r) => r.unitCost, true) },
+      { key: 'unit_revenue', label: 'Unit revenue', unit: '$/unit', format: 'usd2', aggregate: 'ratio', rows: rowsOf((r) => r.unitRevenue, true) },
+      { key: 'unit_margin', label: 'Unit margin', unit: '$/unit', format: 'usd2', aggregate: 'ratio', rows: rowsOf((r) => r.unitMargin, true) },
+      { key: 'total_cost', label: 'Total cost', unit: '$', format: 'usd0', rows: rowsOf((r) => r.totalCost) },
+      { key: 'total_revenue', label: 'Total revenue', unit: '$', format: 'usd0', rows: rowsOf((r) => r.totalRevenue) },
+      { key: 'total_margin', label: 'Total margin', unit: '$', format: 'usd0', rows: rowsOf((r) => r.totalMargin) },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [per]
@@ -245,6 +245,7 @@ export function OtherProductsClient({
             format={metric.format}
             aggregate={metric.aggregate}
             firstColLabel="Product"
+            unit={metric.unit}
             onRangeChange={onRangeChange}
           />
           {metric.aggregate === 'ratio' && (
@@ -323,10 +324,10 @@ function ProductsTable({
             <th className="px-3 py-2">Order</th>
             <th className="px-3 py-2">Product</th>
             <th className="px-3 py-2">Unit</th>
-            <th className="px-3 py-2 text-right">Unit cost</th>
-            <th className="px-3 py-2 text-right">Unit revenue</th>
-            <th className="px-3 py-2 text-right">Unit margin</th>
-            <th className="px-3 py-2 text-right">Total quantity</th>
+            <th className="px-3 py-2 text-right">Unit cost ($/unit)</th>
+            <th className="px-3 py-2 text-right">Unit revenue ($/unit)</th>
+            <th className="px-3 py-2 text-right">Unit margin ($/unit)</th>
+            <th className="px-3 py-2 text-right">Total quantity (units)</th>
             <th className="px-3 py-2" />
           </tr>
         </thead>
@@ -576,10 +577,10 @@ function QuantityEditor({
             <thead className="sticky top-0 bg-card text-left text-xs uppercase tracking-wide text-muted-foreground">
               <tr>
                 <th className="py-1">Month</th>
-                <th className="py-1 text-right">Quantity</th>
-                <th className="py-1 text-right">Cost</th>
-                <th className="py-1 text-right">Revenue</th>
-                <th className="py-1 text-right">Margin</th>
+                <th className="py-1 text-right">Quantity (units)</th>
+                <th className="py-1 text-right">Cost ($)</th>
+                <th className="py-1 text-right">Revenue ($)</th>
+                <th className="py-1 text-right">Margin ($)</th>
               </tr>
             </thead>
             <tbody>

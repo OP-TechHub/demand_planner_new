@@ -31,7 +31,7 @@ export default async function FulfilmentPage() {
       ) : (
         <>
           <p className="text-xs text-muted-foreground">Fulfilment % by program × month. Green ≥ 95%, amber 80–95%, red &lt; 80%. Blank = no demand.</p>
-          <OutputGrid planStartDate={plan.plan_start_date} horizon={plan.horizon_months} rows={rows} format="pct" colorFor="fulfilment" hideTotals exportAs={{ filename: "program-fulfilment", title: "Program Fulfilment", subtitle: `${plan.name} · fulfilment %` }} />
+          <OutputGrid planStartDate={plan.plan_start_date} horizon={plan.horizon_months} rows={rows} format="pct" colorFor="fulfilment" unit="% of demand" hideTotals exportAs={{ filename: "program-fulfilment", title: "Program Fulfilment", subtitle: `${plan.name} · fulfilment %` }} />
         </>
       )}
     </div>

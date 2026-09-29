@@ -143,6 +143,7 @@ export function OrderBookGrid({
           rows={visible}
           format="num0"
           firstColLabel="Program"
+          unit="kg FP"
           rightLabel={`${horizon}mo total`}
           cellBg={cellBg}
           cellTitle={cellTitle}

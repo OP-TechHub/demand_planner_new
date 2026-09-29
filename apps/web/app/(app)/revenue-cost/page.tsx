@@ -50,7 +50,7 @@ export default async function RevenueCostPage() {
   // + packing + processing + storage + freight + other. `cost` in rolling_results is
   // rolling_fp × that total, so these six rows sum back to the Cost total exactly.
   const COST_PARTS: { key: string; label: string; perFp: (p: CostProg) => number }[] = [
-    { key: 'barra', label: 'Barra cost ($/kg WR)', perFp: (p) => (Number(p.primary_yield) > 0 ? Number(p.barra_cost_wr) / Number(p.primary_yield) : 0) },
+    { key: 'barra', label: 'Barra cost (raw fish ÷ yield)', perFp: (p) => (Number(p.primary_yield) > 0 ? Number(p.barra_cost_wr) / Number(p.primary_yield) : 0) },
     { key: 'packing', label: 'Packing', perFp: (p) => Number(p.packing_cost_fp) },
     { key: 'processing', label: 'Processing', perFp: (p) => Number(p.processing_cost_fp) },
     { key: 'storage', label: 'Storage', perFp: (p) => Number(p.storage_cost_fp) },
@@ -194,22 +194,22 @@ export default async function RevenueCostPage() {
     : costBreakdown;
 
   const metrics: Metric[] = [
-    { key: 'revenue', label: 'Revenue', format: 'usd', rows: [...tag(gridRowsFor(order, rr, m, 'revenue')), ...secRows, ...otherRevRows] },
+    { key: 'revenue', label: 'Revenue', unit: '$', format: 'usd', rows: [...tag(gridRowsFor(order, rr, m, 'revenue')), ...secRows, ...otherRevRows] },
     // No Secondary products row here — there is no secondary cost to add, which is
     // exactly why their revenue carries straight into margin. Other products do
     // cost something, so each of them has a row.
-    { key: 'cost', label: 'Cost', format: 'usd', rows: [...tag(gridRowsFor(order, rr, m, 'cost')), ...otherCostRows], breakdown: costBreakdownAll },
-    { key: 'margin', label: 'Margin', format: 'usd', rows: [...tag(gridRowsFor(order, rr, m, 'rolling_margin')), ...secRows, ...otherMarginRows] },
+    { key: 'cost', label: 'Cost', unit: '$', format: 'usd', rows: [...tag(gridRowsFor(order, rr, m, 'cost')), ...otherCostRows], breakdown: costBreakdownAll },
+    { key: 'margin', label: 'Margin', unit: '$', format: 'usd', rows: [...tag(gridRowsFor(order, rr, m, 'rolling_margin')), ...secRows, ...otherMarginRows] },
     // Same volume, costed at the path that actually supplied each kilo (spec §5.5)
     // rather than the primary path throughout. Excel does the latter, so `Margin`
     // stays the parity figure and this sits beside it.
-    { key: 'margin_path', label: 'Margin (per-path)', format: 'usd', rows: [...tag(gridRowsFor(order, rr, m, 'rolling_margin_per_path')), ...secRows, ...otherMarginRows] },
+    { key: 'margin_path', label: 'Margin (per-path)', unit: '$', format: 'usd', rows: [...tag(gridRowsFor(order, rr, m, 'rolling_margin_per_path')), ...secRows, ...otherMarginRows] },
     // Per kilo of finished product. Program rows only: secondary products are
     // recovered from round weight, so their revenue has no kg of finished
     // product behind it and cannot share this denominator.
-    { key: 'unit_revenue', label: 'Unit revenue', format: 'usd2', aggregate: 'ratio', rows: tag(unitGridRowsFor(order, rr, m, 'revenue')) },
-    { key: 'unit_cost', label: 'Unit cost', format: 'usd2', aggregate: 'ratio', rows: tag(unitGridRowsFor(order, rr, m, 'cost')), breakdown: unitCostBreakdown },
-    { key: 'unit_margin', label: 'Unit margin', format: 'usd2', aggregate: 'ratio', rows: tag(unitGridRowsFor(order, rr, m, 'rolling_margin')) },
+    { key: 'unit_revenue', label: 'Unit revenue', unit: '$/kg FP', format: 'usd2', aggregate: 'ratio', rows: tag(unitGridRowsFor(order, rr, m, 'revenue')) },
+    { key: 'unit_cost', label: 'Unit cost', unit: '$/kg FP', format: 'usd2', aggregate: 'ratio', rows: tag(unitGridRowsFor(order, rr, m, 'cost')), breakdown: unitCostBreakdown },
+    { key: 'unit_margin', label: 'Unit margin', unit: '$/kg FP', format: 'usd2', aggregate: 'ratio', rows: tag(unitGridRowsFor(order, rr, m, 'rolling_margin')) },
   ];
 
   // The column only has values after a recompute; existing rows default to 0.

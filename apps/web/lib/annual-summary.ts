@@ -21,6 +21,8 @@ export interface SummaryMetric {
   label: string;
   key: string;
   fmt: Fmt;
+  /** What the row is measured in ("kg FP", "kg WR", "$", "%"), shown beside the label. */
+  unit: string;
   /** Starts a new banded group above this row. */
   group?: string;
   /** Derived rows (the totals) compute from the stored columns instead of reading one. */
@@ -42,50 +44,50 @@ const totalRevenue = sum(ALL_REVENUE);
 const totalCost = sum(ALL_COST);
 
 export const SUMMARY_METRICS: SummaryMetric[] = [
-  { label: 'Demand FP', key: 'demand_fp', fmt: kg, group: 'Volume (kg)' },
-  { label: 'Allocated FP', key: 'allocated_fp', fmt: kg },
-  { label: 'Unallocated FP', key: 'unallocated_fp', fmt: kg },
-  { label: 'Total FP', key: 'total_fp', fmt: kg, value: sum(['allocated_fp', 'unallocated_fp']), strong: true },
-  { label: 'Allocated WR', key: 'allocated_wr', fmt: kg },
-  { label: 'Unallocated WR', key: 'unallocated_wr', fmt: kg },
-  { label: 'Total WR', key: 'total_wr', fmt: kg, value: sum(['allocated_wr', 'unallocated_wr']), strong: true },
+  { label: 'Demand FP', key: 'demand_fp', fmt: kg, unit: 'kg FP', group: 'Volume (kg)' },
+  { label: 'Allocated FP', key: 'allocated_fp', fmt: kg, unit: 'kg FP' },
+  { label: 'Unallocated FP', key: 'unallocated_fp', fmt: kg, unit: 'kg FP' },
+  { label: 'Total FP', key: 'total_fp', fmt: kg, unit: 'kg FP', value: sum(['allocated_fp', 'unallocated_fp']), strong: true },
+  { label: 'Allocated WR', key: 'allocated_wr', fmt: kg, unit: 'kg WR' },
+  { label: 'Unallocated WR', key: 'unallocated_wr', fmt: kg, unit: 'kg WR' },
+  { label: 'Total WR', key: 'total_wr', fmt: kg, unit: 'kg WR', value: sum(['allocated_wr', 'unallocated_wr']), strong: true },
   // Named "programs" throughout, because that is exactly what they are: the
   // V30-parity figures, which stop at the programs and carry neither the
   // by-products nor the traded lines. The Total rows below are the whole business.
-  { label: 'Revenue (programs)', key: 'revenue', fmt: usd, group: 'Financials ($) — programs only, excluding secondary & other products' },
-  { label: 'Cost (programs)', key: 'cost', fmt: usd },
-  { label: 'Gross Margin (programs)', key: 'margin', fmt: usd },
-  { label: 'GP % (programs)', key: 'gp_pct', fmt: pct, ratio: true },
+  { label: 'Revenue (programs)', key: 'revenue', fmt: usd, unit: '$', group: 'Financials ($) — programs only, excluding secondary & other products' },
+  { label: 'Cost (programs)', key: 'cost', fmt: usd, unit: '$' },
+  { label: 'Gross Margin (programs)', key: 'margin', fmt: usd, unit: '$' },
+  { label: 'GP % (programs)', key: 'gp_pct', fmt: pct, unit: '% of revenue', ratio: true },
   // Secondary products carry revenue but no cost of their own — every dollar
   // they earn is a dollar of margin — so there is no cost row beside them.
   // Other products are traded lines with both, at flat per-unit rates.
-  { label: 'Secondary Revenue', key: 'secondary_revenue', fmt: usd, group: 'Secondary & other products ($)' },
-  { label: 'Other Products Revenue', key: 'other_revenue', fmt: usd },
-  { label: 'Other Products Cost', key: 'other_cost', fmt: usd },
+  { label: 'Secondary Revenue', key: 'secondary_revenue', fmt: usd, unit: '$', group: 'Secondary & other products ($)' },
+  { label: 'Other Products Revenue', key: 'other_revenue', fmt: usd, unit: '$' },
+  { label: 'Other Products Cost', key: 'other_cost', fmt: usd, unit: '$' },
   {
-    label: 'Other Products Margin', key: 'other_margin', fmt: usd,
+    label: 'Other Products Margin', key: 'other_margin', fmt: usd, unit: '$',
     value: (r) => (r ? Number(r.other_revenue ?? 0) - Number(r.other_cost ?? 0) : null),
   },
   // The plan's whole figure. The four Financials rows above stay the untouched
   // V30-parity program numbers; these add the rest of the business on top.
-  { label: 'Total Revenue', key: 'total_revenue', fmt: usd, value: totalRevenue, strong: true, group: 'Total (all products)' },
-  { label: 'Total Cost', key: 'total_cost', fmt: usd, value: totalCost, strong: true },
+  { label: 'Total Revenue', key: 'total_revenue', fmt: usd, unit: '$', value: totalRevenue, strong: true, group: 'Total (all products, $)' },
+  { label: 'Total Cost', key: 'total_cost', fmt: usd, unit: '$', value: totalCost, strong: true },
   {
-    label: 'Total Gross Margin', key: 'total_margin', fmt: usd, strong: true,
+    label: 'Total Gross Margin', key: 'total_margin', fmt: usd, unit: '$', strong: true,
     value: (r) => (r ? Number(totalRevenue(r)) - Number(totalCost(r)) : null),
   },
   {
-    label: 'Total GP %', key: 'total_gp_pct', fmt: pct, ratio: true, strong: true,
+    label: 'Total GP %', key: 'total_gp_pct', fmt: pct, unit: '% of revenue', ratio: true, strong: true,
     value: (r) => {
       if (!r) return null;
       const rev = Number(totalRevenue(r));
       return rev > 0 ? (rev - Number(totalCost(r))) / rev : 0;
     },
   },
-  { label: 'Revenue Opportunity', key: 'revenue_opportunity', fmt: usd, group: 'If fully fulfilled' },
-  { label: 'Cost Opportunity', key: 'cost_opportunity', fmt: usd },
-  { label: 'Margin Opportunity', key: 'margin_opportunity', fmt: usd },
-  { label: 'Margin Gap', key: 'margin_gap', fmt: usd },
+  { label: 'Revenue Opportunity', key: 'revenue_opportunity', fmt: usd, unit: '$', group: 'If fully fulfilled ($)' },
+  { label: 'Cost Opportunity', key: 'cost_opportunity', fmt: usd, unit: '$' },
+  { label: 'Margin Opportunity', key: 'margin_opportunity', fmt: usd, unit: '$' },
+  { label: 'Margin Gap', key: 'margin_gap', fmt: usd, unit: '$' },
 ];
 
 /** This metric's figure for one period, `null` where the plan has nothing there. */

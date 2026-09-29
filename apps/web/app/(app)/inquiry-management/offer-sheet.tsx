@@ -91,7 +91,7 @@ export function OfferSheet({
           <thead>
             <tr className="border-y border-black">
               <th className="py-1.5 pr-3 text-left font-semibold">Month</th>
-              <th className="py-1.5 pl-3 text-right font-semibold">Available (kg)</th>
+              <th className="py-1.5 pl-3 text-right font-semibold">Available (kg, finished product)</th>
             </tr>
           </thead>
           <tbody>

@@ -335,8 +335,8 @@ export function PoUpdateClient({
                   <tr>
                     <th className="px-3 py-2">Customer</th>
                     <th className="px-3 py-2">Program</th>
-                    <th className="px-3 py-2 text-right">Demand</th>
-                    <th className="px-3 py-2 text-right">On PO</th>
+                    <th className="px-3 py-2 text-right">Demand (kg FP)</th>
+                    <th className="px-3 py-2 text-right">On PO (kg FP)</th>
                     <th className="px-3 py-2">POs</th>
                     <th className="px-3 py-2" />
                   </tr>
@@ -391,8 +391,8 @@ export function PoUpdateClient({
                                   <tr>
                                     <th className="py-1 pr-3 font-medium">PO number</th>
                                     <th className="py-1 pr-3 font-medium">Months</th>
-                                    <th className="py-1 pr-3 text-right font-medium">Qty / month</th>
-                                    <th className="py-1 pr-3 text-right font-medium">Total</th>
+                                    <th className="py-1 pr-3 text-right font-medium">Qty / month (kg FP)</th>
+                                    <th className="py-1 pr-3 text-right font-medium">Total (kg FP)</th>
                                     <th className="py-1 pr-3 font-medium">Received</th>
                                     {canEdit && <th className="py-1" />}
                                   </tr>

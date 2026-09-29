@@ -117,9 +117,9 @@ export function DemandEditor({
             <thead className="sticky top-0 bg-card text-left text-xs uppercase tracking-wide text-muted-foreground">
               <tr>
                 <th className="py-1">Month</th>
-                <th className="py-1 text-right">Baseline</th>
-                <th className="py-1 text-right">Override</th>
-                <th className="py-1 text-right">Effective</th>
+                <th className="py-1 text-right">Baseline (kg FP)</th>
+                <th className="py-1 text-right">Override (kg FP)</th>
+                <th className="py-1 text-right">Effective (kg FP)</th>
               </tr>
             </thead>
             <tbody>

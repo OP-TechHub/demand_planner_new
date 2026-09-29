@@ -247,7 +247,7 @@ export function DemandClient({
 
         <span className="text-xs text-muted-foreground">
           {!fullRange && <>Showing {visibleMonths.length} of {horizon} months. </>}
-          Effective demand (override where set, else program baseline); the right-hand total covers the months shown.
+          Effective demand (kg FP) — override where set, else program baseline; the right-hand total covers the months shown.
           {canEdit ? ' Click a program to edit its timeline. Click or drag across month cells to select them, then paste (Ctrl+V) from Excel or press Delete to clear back to baseline.' : ''}
         </span>
       </div>
@@ -293,7 +293,7 @@ export function DemandClient({
                   </th>
                 ))}
                 <th className="sticky top-0 z-20 min-w-[6.5rem] border-b border-l border-border bg-muted px-3 py-2 text-right font-semibold">
-                  {fullRange ? `${horizon}mo total` : 'Range total'}
+                  {fullRange ? `${horizon}mo total (kg FP)` : 'Range total (kg FP)'}
                 </th>
               </tr>
             </thead>

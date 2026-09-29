@@ -20,6 +20,7 @@ export function PrintableGrid({
   rows,
   format = 'num0',
   firstColLabel,
+  unit = 'kg WR',
   showColumnTotals = true,
   cellTitle,
   csvFilename,
@@ -32,6 +33,8 @@ export function PrintableGrid({
   rows: GridRow[];
   format?: FmtKey;
   firstColLabel: string;
+  /** What the cells are measured in; on the grid and in the export subtitle. */
+  unit?: string;
   showColumnTotals?: boolean;
   cellTitle?: Map<string, string>;
   /** Download name, without extension. */
@@ -48,7 +51,7 @@ export function PrintableGrid({
           build={() => ({
             filename: csvFilename,
             title,
-            subtitle: `${planName} · kg WR`,
+            subtitle: `${planName} · ${unit}`,
             firstCol: firstColLabel,
             planStartDate,
             horizon,
@@ -69,6 +72,7 @@ export function PrintableGrid({
         rows={rows}
         format={format}
         firstColLabel={firstColLabel}
+        unit={unit}
         showColumnTotals={showColumnTotals}
         cellTitle={cellTitle}
         onRangeChange={(from, to) => setRange((prev) => (prev.from === from && prev.to === to ? prev : { from, to }))}

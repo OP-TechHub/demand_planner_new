@@ -100,7 +100,7 @@ export default async function AssistantUsagePage() {
                 <tr>
                   <th className="pb-2 font-medium">Person</th>
                   <th className="pb-2 text-right font-medium">Questions</th>
-                  <th className="pb-2 text-right font-medium">Cost</th>
+                  <th className="pb-2 text-right font-medium">Cost (US$)</th>
                   <th className="pb-2 text-right font-medium">Last asked</th>
                 </tr>
               </thead>

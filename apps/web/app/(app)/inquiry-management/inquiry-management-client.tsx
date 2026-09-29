@@ -84,19 +84,22 @@ export function InquiryManagementClient({
     () => [
       {
         key: 'total',
-        label: 'Total OTB (FG)',
+        label: 'Total OTB',
+        unit: 'kg FG',
         format: 'num0',
         rows: rowsFor((b, m) => wrOf(unallocated, b, m) + wrOf(pipeline, b, m)),
       },
       {
         key: 'unallocated',
-        label: 'From unallocated WR (FG)',
+        label: 'From unallocated WR',
+        unit: 'kg FG',
         format: 'num0',
         rows: rowsFor((b, m) => wrOf(unallocated, b, m)),
       },
       {
         key: 'allocated',
-        label: 'From WR held by inquiries (FG)',
+        label: 'From WR held by inquiries',
+        unit: 'kg FG',
         format: 'num0',
         rows: rowsFor((b, m) => wrOf(pipeline, b, m)),
       },

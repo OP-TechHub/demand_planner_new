@@ -145,7 +145,7 @@ export function ProgramsClient({
               <th style={productCol.style} className="relative px-3 py-2">Product{productCol.handle}</th>
               <th className="px-3 py-2">Export code</th>
               <th className="px-3 py-2">Primary bucket</th>
-              <th className="px-3 py-2 text-right">Demand (kg/mo)</th>
+              <th className="px-3 py-2 text-right">Demand (kg FP / month)</th>
               {canEdit && <th className="px-3 py-2" />}
             </tr>
           </thead>

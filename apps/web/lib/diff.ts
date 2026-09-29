@@ -116,10 +116,10 @@ export async function computeDiff(supabase: any, master: Plan, scenario: Plan): 
   const outFmt = (row: any, key: string, pct = false) =>
     !row ? 'not computed' : pct ? (row.demand_fp > 0 ? (100 * row.allocated_fp / row.demand_fp).toFixed(1) + '%' : '—') : Math.round(row[key]).toLocaleString();
   const outputs = [
-    { metric: 'Revenue', master: outFmt(msum, 'revenue'), scenario: outFmt(ssum, 'revenue') },
-    { metric: 'Margin', master: outFmt(msum, 'margin'), scenario: outFmt(ssum, 'margin') },
-    { metric: 'Allocated FP', master: outFmt(msum, 'allocated_fp'), scenario: outFmt(ssum, 'allocated_fp') },
-    { metric: 'Fulfilment %', master: outFmt(msum, '', true), scenario: outFmt(ssum, '', true) },
+    { metric: 'Revenue ($)', master: outFmt(msum, 'revenue'), scenario: outFmt(ssum, 'revenue') },
+    { metric: 'Margin ($)', master: outFmt(msum, 'margin'), scenario: outFmt(ssum, 'margin') },
+    { metric: 'Allocated FP (kg FP)', master: outFmt(msum, 'allocated_fp'), scenario: outFmt(ssum, 'allocated_fp') },
+    { metric: 'Fulfilment (% of demand)', master: outFmt(msum, '', true), scenario: outFmt(ssum, '', true) },
   ];
 
   return { settings, programs, programsAdded, programsRemoved, demand, demandMore, harvest, harvestMore, outputs };

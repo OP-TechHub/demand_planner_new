@@ -17,9 +17,9 @@ export default async function SixtyMonthPage() {
   // Full figures, not the abbreviated `kg`/`usd` scales — this grid is read
   // cell by cell, where "5k" hides the difference between 4,600 and 5,400.
   const metrics: Metric[] = [
-    { key: 'fp', label: 'Allocated FP', format: 'num0', rows: gridRowsFor(order, rr, m, 'rolling_fp') },
-    { key: 'wr', label: 'Allocated WR', format: 'num0', rows: gridRowsFor(order, rr, m, 'rolling_wr') },
-    { key: 'margin', label: 'Margin $', format: 'usd0', rows: gridRowsFor(order, rr, m, 'rolling_margin') },
+    { key: 'fp', label: 'Allocated FP', unit: 'kg FP', format: 'num0', rows: gridRowsFor(order, rr, m, 'rolling_fp') },
+    { key: 'wr', label: 'Allocated WR', unit: 'kg WR', format: 'num0', rows: gridRowsFor(order, rr, m, 'rolling_wr') },
+    { key: 'margin', label: 'Margin', unit: '$', format: 'usd0', rows: gridRowsFor(order, rr, m, 'rolling_margin') },
   ];
 
   return (

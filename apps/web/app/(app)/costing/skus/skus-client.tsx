@@ -235,16 +235,16 @@ function RecipeTable({
             <th className={cn(th, 'text-left')}>Added by</th>
             <th className={cn(th, 'text-left')}>Category</th>
             <th className={cn(th, 'text-left')}>Raw material</th>
-            <th className={th}>Yield</th>
-            <th className={th}>Glaze</th>
+            <th className={th}>Yield (%)</th>
+            <th className={th}>Glaze (%)</th>
             <th className={th}>% fish</th>
             <th className={th}>% marinade</th>
-            <th className={th}>Marinade $</th>
-            <th className={th}>Process $</th>
-            <th className={th}>Packing $</th>
+            <th className={th}>Marinade ($/kg)</th>
+            <th className={th}>Process ($/kg)</th>
+            <th className={th}>Packing ($/kg)</th>
             <th className={cn(th, 'text-left')}>Pack</th>
-            <th className={th}>Market LKR</th>
-            <th className={th}>Market USD</th>
+            <th className={th}>Market (LKR/kg)</th>
+            <th className={th}>Market (USD/kg)</th>
             <th className={th} />
           </tr>
         </thead>
@@ -352,10 +352,10 @@ function YieldTable({
           <thead>
             <tr className="text-[10px] uppercase tracking-wide text-muted-foreground">
               <th className={cn(th, 'left-0 z-30 text-left')}>SKU</th>
-              <th className={th}>Flat</th>
+              <th className={th}>Flat (%)</th>
               {buckets.map((b) => (
                 <th key={b.id} className={th}>
-                  {b.label}
+                  {b.label} (0–1)
                 </th>
               ))}
             </tr>
@@ -785,6 +785,7 @@ function PreviewPanel({
       {preview.domestic && (
         <PreviewBlock
           title="Domestic (LKR/kg)"
+          unit="LKR/kg"
           note={target && !preview.hasTargetDomestic ? 'no domestic target set — showing the standard price' : undefined}
           fmt={(n) => Math.round(n).toLocaleString()}
           rows={[
@@ -803,6 +804,7 @@ function PreviewPanel({
           // Deliberately no port name: every figure here is at FOB, which is the
           // same for all of them. Naming one would imply otherwise.
           title="Export (USD/kg, FOB)"
+          unit="USD/kg"
           note={
             target && !preview.hasTargetExport
               ? 'no export target set — showing the standard price'
@@ -865,6 +867,7 @@ type PreviewRow = [string, number, number, number, number | null, number | null]
 
 function PreviewBlock({
   title,
+  unit,
   note,
   fmt,
   rows,
@@ -872,6 +875,8 @@ function PreviewBlock({
   onPriceChange,
 }: {
   title: string;
+  /** The money columns' unit, e.g. "LKR/kg" — repeated in their headers. */
+  unit: string;
   note?: string;
   fmt: (n: number) => string;
   rows: PreviewRow[];
@@ -913,10 +918,10 @@ function PreviewBlock({
         <thead className="text-[10px] uppercase text-muted-foreground">
           <tr>
             <th className="py-0.5 text-left font-medium">State</th>
-            <th className="py-0.5 font-medium">Cost</th>
-            <th className="py-0.5 font-medium">Standard price</th>
-            <th className="py-0.5 font-medium">Your price</th>
-            <th className="py-0.5 font-medium">Margin</th>
+            <th className="py-0.5 font-medium">Cost ({unit})</th>
+            <th className="py-0.5 font-medium">Standard price ({unit})</th>
+            <th className="py-0.5 font-medium">Your price ({unit})</th>
+            <th className="py-0.5 font-medium">Margin (%)</th>
             {/*
               The same price read against the FISH COST rather than against
               revenue: what a kilo of round fish earned, over what the farm spent
@@ -928,7 +933,7 @@ function PreviewBlock({
               className="py-0.5 font-medium"
               title="What a kg of round fish earns, over what it cost to grow (feed x FCR + ODC)"
             >
-              Whole round
+              Whole round (%)
             </th>
           </tr>
         </thead>
@@ -1007,14 +1012,14 @@ function DownstreamBlock({
           <thead className="text-[10px] uppercase text-muted-foreground">
             <tr>
               <th className="py-0.5 text-left font-medium">State</th>
-              <th className="py-0.5 font-medium">FOB</th>
-              <th className="py-0.5 font-medium">+ Freight</th>
-              <th className="py-0.5 font-medium">CIF</th>
+              <th className="py-0.5 font-medium">FOB (USD/kg)</th>
+              <th className="py-0.5 font-medium">+ Freight (USD/kg)</th>
+              <th className="py-0.5 font-medium">CIF (USD/kg)</th>
               <th className="py-0.5 font-medium" title={`CIF x (1 + ${asPct(pct.clearingPct)} clearing) x (1 + ${asPct(pct.importerMarkupPct)} markup)`}>
-                Importer
+                Importer (USD/kg)
               </th>
               <th className="py-0.5 font-medium" title={`Importer price x (1 + ${asPct(pct.distributorMarkupPct)} markup)`}>
-                Dist → T3
+                Dist → T3 (USD/kg)
               </th>
             </tr>
           </thead>

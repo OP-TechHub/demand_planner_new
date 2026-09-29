@@ -893,9 +893,9 @@ function AllocationTable({
           <thead className="bg-muted/50 text-muted-foreground">
             <tr>
               <th className="px-3 py-2 text-left font-medium">Month</th>
-              <th className="px-3 py-2 text-right font-medium">Planned</th>
+              <th className="px-3 py-2 text-right font-medium">Planned (kg FP)</th>
               <th className="px-3 py-2 text-right font-medium">{qtyLabel}</th>
-              <th className="px-3 py-2 text-right font-medium">Max we can provide</th>
+              <th className="px-3 py-2 text-right font-medium">Max we can provide (kg FP)</th>
               <th className="px-3 py-2 text-left font-medium">Verdict</th>
             </tr>
           </thead>
@@ -951,10 +951,10 @@ function AllocationTable({
                                 <th className="px-3 py-1.5 text-left font-medium">From harvest</th>
                                 <th className="px-3 py-1.5 text-left font-medium">Path</th>
                                 <th className="px-3 py-1.5 text-left font-medium">Bucket</th>
-                                <th className="px-3 py-1.5 text-right font-medium">Yield</th>
-                                <th className="px-3 py-1.5 text-right font-medium">Spare WR</th>
-                                <th className="px-3 py-1.5 text-right font-medium">WR used</th>
-                                <th className="px-3 py-1.5 text-right font-medium">FP from here</th>
+                                <th className="px-3 py-1.5 text-right font-medium">Yield (%)</th>
+                                <th className="px-3 py-1.5 text-right font-medium">Spare (kg WR)</th>
+                                <th className="px-3 py-1.5 text-right font-medium">Used (kg WR)</th>
+                                <th className="px-3 py-1.5 text-right font-medium">From here (kg FP)</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -1082,7 +1082,7 @@ function MakeRoom({
               <tr>
                 <th className="px-2 py-1.5 text-left font-medium">Pipeline program</th>
                 <th className="px-2 py-1.5 text-left font-medium">Frees</th>
-                {months.map((m) => <th key={m} className="px-2 py-1.5 text-right font-medium">{monthLabel(planStartDate, m)}</th>)}
+                {months.map((m) => <th key={m} className="px-2 py-1.5 text-right font-medium">{monthLabel(planStartDate, m)} (kg FP)</th>)}
               </tr>
             </thead>
             <tbody>

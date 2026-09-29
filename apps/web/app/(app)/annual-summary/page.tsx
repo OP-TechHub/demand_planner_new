@@ -22,7 +22,7 @@ export default async function AnnualSummaryPage() {
   const byPeriod = withSideProducts(bySummaryPeriod(rows), side);
   const csvRows: (string | number | null)[][] = [
     ['Metric', ...SUMMARY_PERIODS.map(([, label]) => label)],
-    ...SUMMARY_METRICS.map((m) => [m.label, ...SUMMARY_PERIODS.map(([p]) => summaryCell(m, byPeriod, p))]),
+    ...SUMMARY_METRICS.map((m) => [`${m.label} (${m.unit})`, ...SUMMARY_PERIODS.map(([p]) => summaryCell(m, byPeriod, p))]),
   ];
 
   return (
@@ -52,7 +52,7 @@ export default async function AnnualSummaryPage() {
                     </tr>
                   )}
                   <tr className={m.strong ? 'border-t font-medium' : 'border-t'}>
-                    <td className="px-3 py-1.5">{m.label}</td>
+                    <td className="px-3 py-1.5">{m.label} <span className="text-xs font-normal text-muted-foreground">({m.unit})</span></td>
                     {SUMMARY_PERIODS.map(([p]) => (
                       <td key={p} className="px-3 py-1.5 text-right tabular-nums">{m.fmt(summaryCell(m, byPeriod, p))}</td>
                     ))}

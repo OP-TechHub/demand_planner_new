@@ -114,7 +114,7 @@ export function OptimizerClient({
       <Section title={`Harvest — ${periodLabel} (kg WR)`}>
         <table className="w-full text-sm">
           <thead className="text-left text-xs uppercase tracking-wide text-muted-foreground">
-            <tr><th className="py-1">Bucket</th><th className="py-1 text-right">Capacity</th><th className="py-1 text-right">Used</th><th className="py-1 text-right">Left</th><th className="py-1 text-right">Util</th></tr>
+            <tr><th className="py-1">Bucket</th><th className="py-1 text-right">Capacity (kg WR)</th><th className="py-1 text-right">Used (kg WR)</th><th className="py-1 text-right">Left (kg WR)</th><th className="py-1 text-right">Util (%)</th></tr>
           </thead>
           <tbody>
             {buckets.map((b) => {
@@ -161,8 +161,8 @@ export function OptimizerClient({
                   <th className="py-1">Rank</th><th style={nameCol.style} className="relative py-1 pr-2">Program{nameCol.handle}</th>
                   <th className="py-1">Primary bucket</th>
                   <th className="py-1">Secondary bucket</th>
-                  <th className="py-1 text-right">Demand FP</th><th className="py-1 text-right">Own FP</th>
-                  <th className="py-1 text-right">Borrowed</th><th className="py-1 text-right">Fulfilled</th><th className="py-1 text-right">%</th>
+                  <th className="py-1 text-right">Demand (kg FP)</th><th className="py-1 text-right">Own (kg FP)</th>
+                  <th className="py-1 text-right">Borrowed (kg FP)</th><th className="py-1 text-right">Fulfilled (kg FP)</th><th className="py-1 text-right">Fulfilled (%)</th>
                 </tr>
               </thead>
               <tbody>
@@ -193,10 +193,10 @@ export function OptimizerClient({
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Stat label="Total demand FP" value={`${num(totalDemand)} kg`} />
         <Stat label="Total fulfilled" value={`${num(totalFulfilled)} kg`} sub={pctOf(totalFulfilled, totalDemand)} />
-        <Stat label="Total revenue" value={`${num(totalRevenue)}`} />
+        <Stat label="Total revenue ($)" value={`${num(totalRevenue)}`} />
         {/* Margin as a share of revenue, which is the question the two cards
             side by side invite — and it costs nothing to answer here. */}
-        <Stat label="Total margin" value={`${num(totalMargin)}`} sub={pctOf(totalMargin, totalRevenue)} />
+        <Stat label="Total margin ($)" value={`${num(totalMargin)}`} sub={pctOf(totalMargin, totalRevenue)} />
       </div>
     </div>
   );

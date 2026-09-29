@@ -51,6 +51,8 @@ export interface CompareMetric {
   format: 'kg' | 'usd0';
   /** What the rows are — buckets for harvest, programs for everything else. */
   rowLabel: string;
+  /** What the cells are measured in ("kg WR", "kg FP", "$"). */
+  unit: string;
   /** A one-line description of what the figures mean, shown under the grid. */
   note: string;
   rows: CompareSeries[];
@@ -85,11 +87,11 @@ export interface MonthlyCompare {
   outputsMissing: boolean;
 }
 
-const OUTPUT_METRICS: { key: string; label: string; column: string; format: 'kg' | 'usd0'; note: string }[] = [
-  { key: 'revenue', label: 'Revenue', column: 'revenue', format: 'usd0', note: 'Allocated volume × price, as computed.' },
-  { key: 'cost', label: 'Cost', column: 'cost', format: 'usd0', note: 'Allocated volume × the loaded cost per kg. Use the dropdown to split it into components.' },
-  { key: 'margin', label: 'Margin', column: 'rolling_margin', format: 'usd0', note: 'Revenue − cost, as computed.' },
-  { key: 'volume', label: 'Volume', column: 'rolling_fp', format: 'kg', note: 'Finished product actually allocated — what the plan can deliver, not what was asked for.' },
+const OUTPUT_METRICS: { key: string; label: string; column: string; format: 'kg' | 'usd0'; unit: string; note: string }[] = [
+  { key: 'revenue', label: 'Revenue', column: 'revenue', format: 'usd0', unit: '$', note: 'Allocated volume × price, as computed.' },
+  { key: 'cost', label: 'Cost', column: 'cost', format: 'usd0', unit: '$', note: 'Allocated volume × the loaded cost per kg. Use the dropdown to split it into components.' },
+  { key: 'margin', label: 'Margin', column: 'rolling_margin', format: 'usd0', unit: '$', note: 'Revenue − cost, as computed.' },
+  { key: 'volume', label: 'Volume', column: 'rolling_fp', format: 'kg', unit: 'kg FP', note: 'Finished product actually allocated — what the plan can deliver, not what was asked for.' },
 ];
 
 export async function computeMonthlyCompare(supabase: any, planA: Plan, planB: Plan): Promise<MonthlyCompare> {
@@ -208,6 +210,7 @@ export async function computeMonthlyCompare(supabase: any, planA: Plan, planB: P
     label: 'Harvest',
     format: 'kg',
     rowLabel: 'Bucket',
+    unit: 'kg WR',
     note: 'Harvest capacity entered per size bucket, in kg round weight. An empty cell is a real 0 — no capacity was entered for that month.',
     rows: bucketRows
       .filter((b) => usedBuckets.has(b.id))
@@ -231,6 +234,7 @@ export async function computeMonthlyCompare(supabase: any, planA: Plan, planB: P
     label: 'Demand',
     format: 'kg',
     rowLabel: 'Program',
+    unit: 'kg FP',
     note: 'Effective demand in kg finished product — the month’s override where one was entered, the program’s baseline where it wasn’t.',
     rows: programRows(dA, dB, (code, side) =>
       Number((side === 'a' ? progByCodeA : progByCodeB).get(code)?.max_monthly_demand_fp) || 0
@@ -240,10 +244,10 @@ export async function computeMonthlyCompare(supabase: any, planA: Plan, planB: P
   // --- Outputs, which need a computed plan on both sides.
   const outputsMissing = !rrA.length || !rrB.length;
   if (!outputsMissing) {
-    for (const { key, label, column, format, note } of OUTPUT_METRICS) {
+    for (const { key, label, column, format, unit, note } of OUTPUT_METRICS) {
       const mA = indexBy(rrA, (r) => codeByIdA.get(r.program_id), offsetA, column);
       const mB = indexBy(rrB, (r) => codeByIdB.get(r.program_id), offsetB, column);
-      metrics.push({ key, label, format, rowLabel: 'Program', note, rows: programRows(mA, mB, () => 0) });
+      metrics.push({ key, label, format, rowLabel: 'Program', unit, note, rows: programRows(mA, mB, () => 0) });
     }
   }
 

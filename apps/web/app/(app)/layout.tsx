@@ -7,6 +7,7 @@ import { PlanSelector } from './plan-selector';
 import { ScenarioBanner, OfficialPlanBanner, type ScenarioAccess } from './scenario-banner';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { ChatPanel } from '@/components/chat/chat-panel';
+import { ChatOpenProvider, ChatTrigger } from '@/components/chat/chat-open';
 import { Toaster } from '@/components/ui/toast';
 import { ConfirmHost } from '@/components/ui/confirm';
 import { RecalculateButton } from './recalculate-button';
@@ -104,6 +105,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       : undefined;
 
   return (
+    <ChatOpenProvider>
     <div className="flex h-screen overflow-hidden">
       {/* Registered below the auth boundary, so /login stays plain HTML. */}
       <RegisterServiceWorker />
@@ -116,6 +118,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             {activePlan && <RecalculateButton planId={activePlan.id} label="Recalculate" size="sm" variant="outline" />}
           </div>
           <div className="flex items-center gap-2.5">
+            <ChatTrigger />
             <ThemeToggle />
             <div className="mx-0.5 h-6 w-px bg-border" />
             <div className="flex items-center gap-2.5">
@@ -163,6 +166,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <Toaster />
       <ConfirmHost />
     </div>
+    </ChatOpenProvider>
   );
 }
 

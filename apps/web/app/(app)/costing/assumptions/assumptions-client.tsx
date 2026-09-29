@@ -485,7 +485,7 @@ function SizeGrades({ buckets, canEdit }: { buckets: CostSizeBucket[]; canEdit: 
             <tr>
               <th className="py-1 pr-3 font-medium">Grade</th>
               <th className="py-1 pr-3 text-right font-medium">Median weight (g)</th>
-              <th className="py-1 text-right font-medium">FCR</th>
+              <th className="py-1 text-right font-medium">FCR (kg feed / kg live fish)</th>
             </tr>
           </thead>
           <tbody>
