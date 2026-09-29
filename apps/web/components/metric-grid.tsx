@@ -15,6 +15,8 @@ export interface Metric {
   label: string;
   rows: GridRow[];
   format: FmtKey; // resolved client-side (functions aren't serializable across the RSC boundary)
+  /** What the cells are measured in ("kg FP", "$", "$/kg FP" …); shown on the grid and in exports. */
+  unit?: string;
   /**
    * 'ratio' for a per-kg rate, whose totals must be weighted averages over each
    * row's `weights` rather than sums. Defaults to 'sum'.
@@ -64,7 +66,7 @@ export function MetricGrid({
   /** When true, show a search box and a single-row picker over the grid's rows. */
   rowFilter?: boolean;
   /** Extra descriptive columns, filled from each row's `extra` array. */
-  extraCols?: { label: string; align?: 'left' | 'right'; width?: string }[];
+  extraCols?: { label: string; align?: 'left' | 'right'; width?: string; unit?: string }[];
   /** Reports the grid's visible month range, for page-level totals. */
   onRangeChange?: (fromMonth: number, toMonth: number) => void;
 }) {
@@ -147,11 +149,12 @@ export function MetricGrid({
             filename: `${filenameBase}-${m.key}${activePart ? `-${activePart.key}` : ''}${statusFilter && status !== 'combined' ? `-${status}` : ''}`,
             title: [m.label, activePart?.label].filter(Boolean).join(' — '),
             subtitle: [
+              m.unit ?? '',
               statusFilter && status !== 'combined' ? `${status[0]!.toUpperCase()}${status.slice(1)} only` : '',
               picked ? rowLabel(picked) : '',
             ].filter(Boolean).join(' · ') || undefined,
             firstCol: firstColLabel,
-            extraCols: extraCols?.map((c) => c.label),
+            extraCols: extraCols?.map((c) => (c.unit ? `${c.label} (${c.unit})` : c.label)),
             planStartDate,
             horizon,
             rows,
@@ -168,7 +171,7 @@ export function MetricGrid({
           No {firstColLabel.toLowerCase()}s in this view.
         </p>
       ) : (
-        <OutputGrid planStartDate={planStartDate} horizon={horizon} rows={rows} format={m.format} aggregate={m.aggregate} firstColLabel={firstColLabel} extraCols={extraCols} onRangeChange={(from, to) => {
+        <OutputGrid planStartDate={planStartDate} horizon={horizon} rows={rows} format={m.format} aggregate={m.aggregate} firstColLabel={firstColLabel} unit={m.unit} extraCols={extraCols} onRangeChange={(from, to) => {
           setRange((prev) => (prev.from === from && prev.to === to ? prev : { from, to }));
           onRangeChange?.(from, to);
         }} />

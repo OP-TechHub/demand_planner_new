@@ -351,6 +351,8 @@ export function DashboardOverview({
           sub="allocated — fulfilled volume × price"
           foot={
             <div className="grid grid-cols-[auto_1fr] gap-x-3 text-[11px] font-normal text-muted-foreground">
+              <span />
+              <span className="text-right">USD</span>
               {combined ? (
                 <>
                   <span className="flex items-center gap-1.5">{statusDot(C_ACTIVE)}Active</span>
@@ -380,6 +382,8 @@ export function DashboardOverview({
           // earn is margin. Other products carry their own per-unit cost.
           foot={
             <div className="grid grid-cols-[auto_1fr] gap-x-3 text-[11px] font-normal text-muted-foreground">
+              <span />
+              <span className="text-right">USD</span>
               <span>Programs</span>
               <span className="text-right font-medium text-foreground"><Money n={t.programMargin} /></span>
               {combined && (
@@ -458,12 +462,12 @@ export function DashboardOverview({
                 <thead className="sticky top-0 bg-card text-muted-foreground">
                   <tr className="border-b">
                     <th className="py-1.5 pr-2 text-left font-medium">Month</th>
-                    <th className="py-1.5 px-2 text-right font-medium">Demand</th>
-                    <th className="py-1.5 px-2 text-right font-medium">Own month</th>
-                    <th className="py-1.5 px-2 text-right font-medium">Borrowed</th>
-                    <th className="py-1.5 px-2 text-right font-medium">Unfulfilled</th>
-                    <th className="py-1.5 px-2 text-right font-medium">Fulfilled %</th>
-                    <th className="py-1.5 pl-2 text-right font-medium">Borrowed %</th>
+                    <th className="py-1.5 px-2 text-right font-medium">Demand<Unit u="kg FP" /></th>
+                    <th className="py-1.5 px-2 text-right font-medium">Own month<Unit u="kg FP" /></th>
+                    <th className="py-1.5 px-2 text-right font-medium">Borrowed<Unit u="kg FP" /></th>
+                    <th className="py-1.5 px-2 text-right font-medium">Unfulfilled<Unit u="kg FP" /></th>
+                    <th className="py-1.5 px-2 text-right font-medium">Fulfilled<Unit u="% of demand" /></th>
+                    <th className="py-1.5 pl-2 text-right font-medium">Borrowed<Unit u="% of fulfilled" /></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -685,7 +689,7 @@ function BorrowDetail({
               <th className="py-1 px-2 text-left font-medium">Size bucket</th>
               <th className="py-1 px-2 text-right font-medium">kg WR</th>
               <th className="py-1 px-2 text-right font-medium">kg FP</th>
-              <th className="py-1 pl-2 text-right font-medium">Share</th>
+              <th className="py-1 pl-2 text-right font-medium">Share<Unit u="% of kg WR" /></th>
             </tr>
           </thead>
           <tbody>
@@ -703,6 +707,11 @@ function BorrowDetail({
       )}
     </div>
   );
+}
+
+/** A column-header unit, set below the label in a lighter weight. */
+function Unit({ u }: { u: string }) {
+  return <span className="block text-[10px] font-normal text-muted-foreground/80">{u}</span>;
 }
 
 function Stat({

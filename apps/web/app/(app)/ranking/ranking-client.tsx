@@ -220,16 +220,16 @@ export function RankingClient({
               <th className="px-2 py-2">Rank</th>
               <th style={nameCol.style} className="relative px-2 py-2">Program{nameCol.handle}</th>
               <th className="px-2 py-2">Bucket</th>
-              <th className={hd('price')}>Price /kg</th>
-              <th className="whitespace-nowrap px-2 py-2 text-right">Cost /kg</th>
-              <th className={hd('marginFp')}>Margin /kg FP</th>
+              <th className={hd('price')}>Price ($/kg FP)</th>
+              <th className="whitespace-nowrap px-2 py-2 text-right">Cost ($/kg FP)</th>
+              <th className={hd('marginFp')}>Margin ($/kg FP)</th>
               <th className={hd('marginPct')}>Margin %</th>
-              <th className={hd('marginWr')}>Margin /kg WR</th>
-              <th className="whitespace-nowrap px-2 py-2 text-right">Demand kg</th>
-              <th className={hd('contribution')}>Contribution</th>
-              <th className="whitespace-nowrap px-2 py-2 text-right">Fulfilled</th>
-              <th className={hd('revenue')}>Plan revenue</th>
-              <th className={hd('margin')}>Plan margin</th>
+              <th className={hd('marginWr')}>Margin ($/kg WR)</th>
+              <th className="whitespace-nowrap px-2 py-2 text-right">Demand (kg FP)</th>
+              <th className={hd('contribution')}>Contribution ($)</th>
+              <th className="whitespace-nowrap px-2 py-2 text-right">Fulfilled (%)</th>
+              <th className={hd('revenue')}>Plan revenue ($)</th>
+              <th className={hd('margin')}>Plan margin ($)</th>
               <th className={hd('gpPct')}>GP %</th>
               <th className={hd('engine')}>Priority</th>
             </tr>

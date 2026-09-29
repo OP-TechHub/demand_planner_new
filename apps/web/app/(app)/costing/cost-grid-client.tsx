@@ -873,6 +873,10 @@ function Grid({
     );
   }
 
+  // The market's currency, for the column units. Every money column is per kg
+  // of finished product (FP) except Input cost, which is per kg of raw input.
+  const cur = domestic ? 'LKR' : 'USD';
+
   return (
     <ScrollX className="max-h-[70vh] rounded-lg border bg-card">
       <table className="w-full border-collapse text-right text-xs tabular-nums">
@@ -887,29 +891,29 @@ function Grid({
             {compare && (
               <>
                 <th className={cn(thBase, 'border-l')} title={`FINAL if this product were costed on ${labelOf(currentVersion)}`}>
-                  FINAL @ v{currentVersion.version_no}
+                  FINAL @ v{currentVersion.version_no} ({cur}/kg FP)
                 </th>
                 <th className={cn(thBase, 'border-r')} title="Current-version FINAL minus the FINAL shown">
-                  Δ
+                  Δ ({cur}/kg FP)
                 </th>
               </>
             )}
             {showDestination && <th className={cn(thBase, 'text-left')}>Port</th>}
-            <th className={thBase}>Yield</th>
+            <th className={thBase}>Yield (%)</th>
             {/* "Input" rather than "Whole fish": on a maw SKU this column is
                 the swim bladder, and on a by-product it is struck through. */}
             <th className={thBase} title="Cost of a kg of raw input — the whole fish, or the SKU's own ingredient">
-              Input cost
+              Input cost ({cur}/kg input)
             </th>
-            <th className={thBase}>Input comp</th>
-            <th className={thBase}>Marinade</th>
-            <th className={thBase}>Raw matl</th>
-            <th className={thBase}>Process</th>
-            <th className={thBase}>Packing</th>
-            <th className={thBase}>Cold-hold</th>
-            <th className={thBase}>Ex-factory</th>
-            <th className={thBase}>Freight</th>
-            <th className={cn(thBase, 'border-l')}>FINAL</th>
+            <th className={thBase}>Input comp ({cur}/kg FP)</th>
+            <th className={thBase}>Marinade ({cur}/kg FP)</th>
+            <th className={thBase}>Raw matl ({cur}/kg FP)</th>
+            <th className={thBase}>Process ({cur}/kg FP)</th>
+            <th className={thBase}>Packing ({cur}/kg FP)</th>
+            <th className={thBase}>Cold-hold ({cur}/kg FP)</th>
+            <th className={thBase}>Ex-factory ({cur}/kg FP)</th>
+            <th className={thBase}>Freight ({cur}/kg FP)</th>
+            <th className={cn(thBase, 'border-l')}>FINAL ({cur}/kg FP)</th>
             {/*
               Each margin sits immediately after the price it is earned on. In
               cost-plus mode they all read the same — the margin assumption — and
@@ -919,30 +923,30 @@ function Grid({
             */}
             {domestic ? (
               <>
-                <th className={thBase}>Rack rate</th>
-                <th className={thBase}>Margin</th>
-                <th className={thBase} title="What a kg of round fish earns, over what it cost to grow (feed x FCR + ODC)">WR margin</th>
-                <th className={cn(thBase, 'border-l')}>FINAL glazed</th>
-                <th className={thBase}>Rack glazed</th>
-                <th className={thBase}>Margin glazed</th>
-                <th className={thBase} title="What a kg of round fish earns, over what it cost to grow (feed x FCR + ODC)">WR glazed</th>
+                <th className={thBase}>Rack rate (LKR/kg FP)</th>
+                <th className={thBase}>Margin (%)</th>
+                <th className={thBase} title="What a kg of round fish earns, over what it cost to grow (feed x FCR + ODC)">WR margin (%)</th>
+                <th className={cn(thBase, 'border-l')}>FINAL glazed (LKR/kg FP)</th>
+                <th className={thBase}>Rack glazed (LKR/kg FP)</th>
+                <th className={thBase}>Margin glazed (%)</th>
+                <th className={thBase} title="What a kg of round fish earns, over what it cost to grow (feed x FCR + ODC)">WR glazed (%)</th>
               </>
             ) : (
               <>
-                <th className={thBase}>FOB</th>
-                <th className={thBase}>Margin</th>
-                <th className={thBase} title="What a kg of round fish earns, over what it cost to grow (feed x FCR + ODC)">WR margin</th>
-                <th className={thBase}>CIF</th>
-                <th className={thBase}>Dist→T3</th>
-                <th className={cn(thBase, 'border-l')}>Glazed FOB</th>
-                <th className={thBase}>Glazed margin</th>
-                <th className={thBase} title="What a kg of round fish earns, over what it cost to grow (feed x FCR + ODC)">Glazed WR</th>
-                <th className={thBase}>Glazed CIF</th>
-                <th className={cn(thBase, 'border-l')}>Fresh FOB</th>
-                <th className={thBase}>Fresh margin</th>
-                <th className={thBase} title="What a kg of round fish earns, over what it cost to grow (feed x FCR + ODC)">Fresh WR</th>
-                <th className={thBase}>Fresh CIF</th>
-                <th className={thBase}>Fresh T3</th>
+                <th className={thBase}>FOB (USD/kg FP)</th>
+                <th className={thBase}>Margin (%)</th>
+                <th className={thBase} title="What a kg of round fish earns, over what it cost to grow (feed x FCR + ODC)">WR margin (%)</th>
+                <th className={thBase}>CIF (USD/kg FP)</th>
+                <th className={thBase}>Dist→T3 (USD/kg FP)</th>
+                <th className={cn(thBase, 'border-l')}>Glazed FOB (USD/kg FP)</th>
+                <th className={thBase}>Glazed margin (%)</th>
+                <th className={thBase} title="What a kg of round fish earns, over what it cost to grow (feed x FCR + ODC)">Glazed WR (%)</th>
+                <th className={thBase}>Glazed CIF (USD/kg FP)</th>
+                <th className={cn(thBase, 'border-l')}>Fresh FOB (USD/kg FP)</th>
+                <th className={thBase}>Fresh margin (%)</th>
+                <th className={thBase} title="What a kg of round fish earns, over what it cost to grow (feed x FCR + ODC)">Fresh WR (%)</th>
+                <th className={thBase}>Fresh CIF (USD/kg FP)</th>
+                <th className={thBase}>Fresh T3 (USD/kg FP)</th>
               </>
             )}
           </tr>

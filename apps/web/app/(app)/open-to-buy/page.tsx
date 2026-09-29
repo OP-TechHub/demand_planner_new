@@ -185,6 +185,7 @@ export default async function OpenToBuyPage() {
             horizon={plan.horizon_months}
             rows={otbRows}
             firstColLabel="Bucket"
+            unit="kg WR"
             cellTitle={otbTitles}
             csvFilename="total-otb"
             description={
@@ -204,6 +205,7 @@ export default async function OpenToBuyPage() {
             horizon={plan.horizon_months}
             rows={otbTotalRows}
             firstColLabel="Open to buy"
+            unit="kg WR"
             showColumnTotals={false}
             csvFilename="total-otb-all-buckets"
             description={
@@ -218,14 +220,14 @@ export default async function OpenToBuyPage() {
           <section className="space-y-3">
             <h2 className="text-lg font-semibold">Unallocated WR</h2>
             <p className="text-xs text-muted-foreground">Spare whole-round capacity (kg WR) per bucket × month, after own-month consumption and all borrowings.</p>
-            <OutputGrid planStartDate={plan.plan_start_date} horizon={plan.horizon_months} rows={unallocatedRows} format="num0" firstColLabel="Bucket" exportAs={uw.length > 0 ? { filename: 'unallocated-wr', title: 'Unallocated WR', subtitle: `${plan.name} · kg WR` } : undefined} />
+            <OutputGrid planStartDate={plan.plan_start_date} horizon={plan.horizon_months} rows={unallocatedRows} format="num0" firstColLabel="Bucket" unit="kg WR" exportAs={uw.length > 0 ? { filename: 'unallocated-wr', title: 'Unallocated WR', subtitle: `${plan.name} · kg WR` } : undefined} />
           </section>
 
           {/* Allocated with inquiries (formerly Pipeline WR) */}
           <section className="space-y-3">
             <h2 className="text-lg font-semibold">Allocated with inquiries</h2>
             <p className="text-xs text-muted-foreground">Whole-round (kg WR) consumed from each month&apos;s harvest by <b>pipeline / inquiry</b> programs (own-month + forward-borrowings sourcing here). Hover a value to see which inquiries make it up.</p>
-            <OutputGrid planStartDate={plan.plan_start_date} horizon={plan.horizon_months} rows={allocatedRows} format="num0" firstColLabel="Bucket" cellTitle={allocatedTitles} exportAs={pw.length > 0 ? { filename: 'allocated-with-inquiries', title: 'Allocated with inquiries', subtitle: `${plan.name} · kg WR` } : undefined} />
+            <OutputGrid planStartDate={plan.plan_start_date} horizon={plan.horizon_months} rows={allocatedRows} format="num0" firstColLabel="Bucket" unit="kg WR" cellTitle={allocatedTitles} exportAs={pw.length > 0 ? { filename: 'allocated-with-inquiries', title: 'Allocated with inquiries', subtitle: `${plan.name} · kg WR` } : undefined} />
           </section>
 
           {/* Inquiry fulfilment — which pipeline orders can be met */}
@@ -238,7 +240,7 @@ export default async function OpenToBuyPage() {
               or a green/red split for partial. Hover a value for the fulfilled vs short split.
             </p>
             {anyFulfil ? (
-              <OutputGrid planStartDate={plan.plan_start_date} horizon={plan.horizon_months} rows={fulfilRows} format="num0" firstColLabel="Program" cellTitle={fulfilTitle} cellBg={fulfilBg} exportAs={{ filename: 'inquiry-fulfilment', title: 'Inquiry fulfilment', subtitle: `${plan.name} · demand kg FP`, legend: INQUIRY_LEGEND }} />
+              <OutputGrid planStartDate={plan.plan_start_date} horizon={plan.horizon_months} rows={fulfilRows} format="num0" firstColLabel="Program" unit="kg FP" cellTitle={fulfilTitle} cellBg={fulfilBg} exportAs={{ filename: 'inquiry-fulfilment', title: 'Inquiry fulfilment', subtitle: `${plan.name} · demand kg FP`, legend: INQUIRY_LEGEND }} />
             ) : (
               <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
                 No pipeline demand is being computed. Pipeline orders are fulfilled only when the plan&apos;s Scope is <b>Active + Pipeline</b> (Settings) — set that and Recalculate to see this.

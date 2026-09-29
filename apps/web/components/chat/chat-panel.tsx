@@ -4,8 +4,9 @@ import * as React from 'react';
 import { usePathname } from 'next/navigation';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Loader2, MessageSquare, RotateCcw, Send, Square, X } from 'lucide-react';
+import { Loader2, RotateCcw, Send, Square, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useChatOpen } from './chat-open';
 
 type Budget = { spent_usd: number; budget_usd: number; resets_at: string; exhausted: boolean };
 
@@ -25,12 +26,12 @@ const SUGGESTIONS = [
 ];
 
 /**
- * The assistant: a header button that opens a side panel. Lives in the app
- * layout, so the conversation survives navigating between pages; it is not
- * stored anywhere and a reload starts afresh.
+ * The assistant's side panel. Opened by the ChatTrigger button in the header
+ * (see chat-open.tsx). Lives in the app layout, so the conversation survives
+ * navigating between pages; it is not stored anywhere and a reload starts afresh.
  */
 export function ChatPanel() {
-  const [open, setOpen] = React.useState(false);
+  const { open, setOpen, setBusy: setBusyShared } = useChatOpen();
   const [messages, setMessages] = React.useState<Message[]>([]);
   const [input, setInput] = React.useState('');
   const [busy, setBusy] = React.useState(false);
@@ -140,21 +141,11 @@ export function ChatPanel() {
     setInput('');
   }
 
+  // Mirror the busy flag up so the header button can show the "thinking" dot.
+  React.useEffect(() => { setBusyShared(busy); }, [busy, setBusyShared]);
+
   return (
     <>
-      {!open && (
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          title="Ask the assistant"
-          aria-label="Ask the assistant"
-          className="fixed bottom-5 right-5 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition-transform hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45"
-        >
-          <MessageSquare className="h-5 w-5" />
-          {busy && <span className="absolute right-0 top-0 h-3 w-3 animate-pulse rounded-full bg-accent ring-2 ring-card" />}
-        </button>
-      )}
-
       {open && (
         // Below dialogs (z-50) so a confirm raised by the page still sits on top.
         <aside

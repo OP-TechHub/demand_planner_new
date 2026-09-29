@@ -117,7 +117,7 @@ export function InquiriesClient({ planName, planStartDate, inquiries }: { planNa
                 <th className="px-3 py-2 text-left font-medium">Item</th>
                 <th className="px-3 py-2 text-left font-medium">Kind</th>
                 <th className="px-3 py-2 text-right font-medium">Months</th>
-                <th className="px-3 py-2 text-right font-medium">Total FP</th>
+                <th className="px-3 py-2 text-right font-medium">Total (kg FP)</th>
                 <th className="px-3 py-2 text-right font-medium"></th>
               </tr>
             </thead>

@@ -76,6 +76,7 @@ export function OutputGrid({
   showColumnTotals = true,
   hideTotals = false,
   firstColLabel = 'Program',
+  unit,
   extraCols,
   onRangeChange,
   cellTitle,
@@ -98,12 +99,19 @@ export function OutputGrid({
   hideTotals?: boolean;
   firstColLabel?: string;
   /**
+   * What the month cells are measured in ("kg FP", "kg WR", "$", "$/kg FP" …).
+   * Shown as a chip in the frozen header and appended to the total column, and
+   * used as the export subtitle when none is given — the formatter alone never
+   * says FP vs WR or per-kg.
+   */
+  unit?: string;
+  /**
    * Extra descriptive columns between the frozen label and the months, filled
    * from each row's `extra` array (positional). Deliberately NOT frozen — the
    * label column is what you need while scrolling right, and pinning several
    * more would eat the width the months need.
    */
-  extraCols?: { label: string; align?: 'left' | 'right'; width?: string }[];
+  extraCols?: { label: string; align?: 'left' | 'right'; width?: string; unit?: string }[];
   /**
    * Reports the visible month range, so a page's own headline figures can total
    * the same window the grid is showing instead of the whole horizon.
@@ -228,9 +236,10 @@ export function OutputGrid({
             <ExportMenu
               build={() => ({
                 ...exportAs,
+                subtitle: exportAs.subtitle ?? unit,
                 legend: exportAs.legend ?? (colorFor ? EXPORT_COLOR[colorFor].legend : undefined),
                 firstCol: firstColLabel,
-                extraCols: extraCols?.map((c) => c.label),
+                extraCols: extraCols?.map((c) => (c.unit ? `${c.label} (${c.unit})` : c.label)),
                 planStartDate,
                 horizon,
                 rows,
@@ -263,6 +272,7 @@ export function OutputGrid({
             <tr>
               <th style={nameCol.style} className={cn(stickyCol, 'sticky top-0 z-30 border-b border-border bg-muted px-3 py-2 text-left font-semibold')}>
                 {firstColLabel}
+                {unit && <span className="ml-2 rounded border border-border bg-card px-1.5 py-px text-[10px] font-normal text-muted-foreground">{unit}</span>}
                 {nameCol.handle}
               </th>
               {extraCols?.map((c) => (
@@ -274,7 +284,7 @@ export function OutputGrid({
                     c.width
                   )}
                 >
-                  {c.label}
+                  {c.unit ? `${c.label} (${c.unit})` : c.label}
                 </th>
               ))}
               {visibleMonths.map((mo) => (
@@ -283,6 +293,7 @@ export function OutputGrid({
               {!hideTotals && (
                 <th className="sticky top-0 z-20 min-w-[6rem] border-b border-l border-border bg-muted px-3 py-2 text-right font-semibold">
                   {fullRange ? (ratio ? 'Weighted avg' : rightLabel) : ratio ? 'Range avg' : 'Range total'}
+                  {unit && <span className="ml-1 font-normal text-muted-foreground/80">({unit})</span>}
                 </th>
               )}
             </tr>

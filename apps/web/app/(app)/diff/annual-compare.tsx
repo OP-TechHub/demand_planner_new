@@ -53,7 +53,7 @@ export function AnnualCompare({
     }
     const rows: (string | number | null)[][] = [head];
     for (const m of SUMMARY_METRICS) {
-      const row: (string | number | null)[] = [m.label];
+      const row: (string | number | null)[] = [`${m.label} (${m.unit})`];
       for (const [p] of SUMMARY_PERIODS) {
         const av = summaryCell(m, a, p);
         const bv = summaryCell(m, b, p);
@@ -124,7 +124,7 @@ export function AnnualCompare({
                     </tr>
                   )}
                   <tr className={m.strong ? 'border-t font-medium' : 'border-t'}>
-                    <td className="whitespace-nowrap px-3 py-1.5">{m.label}</td>
+                    <td className="whitespace-nowrap px-3 py-1.5">{m.label} <span className="text-xs font-normal text-muted-foreground">({m.unit})</span></td>
                     {SUMMARY_PERIODS.map(([p]) => {
                       const av = summaryCell(m, a, p);
                       const bv = summaryCell(m, b, p);

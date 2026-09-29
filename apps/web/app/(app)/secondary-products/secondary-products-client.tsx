@@ -95,8 +95,8 @@ export function SecondaryProductsClient({
 
   const metrics: Metric[] = useMemo(
     () => [
-      { key: 'quantity', label: 'Quantity (kg)', format: 'num0', rows: rowsOf((r) => r.quantity) },
-      { key: 'revenue', label: 'Revenue ($)', format: 'usd0', rows: rowsOf((r) => r.revenue) },
+      { key: 'quantity', label: 'Quantity', unit: 'kg', format: 'num0', rows: rowsOf((r) => r.quantity) },
+      { key: 'revenue', label: 'Revenue', unit: '$', format: 'usd0', rows: rowsOf((r) => r.revenue) },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [perDef, descOf]
@@ -203,8 +203,8 @@ export function SecondaryProductsClient({
           onRangeChange={onRangeChange}
           extraCols={[
             { label: 'Recovered from', width: 'min-w-[13rem] max-w-[13rem] truncate' },
-            { label: 'Yield', align: 'right' },
-            { label: '$/kg', align: 'right' },
+            { label: 'Yield', unit: '% of kg WR', align: 'right' },
+            { label: 'Price', unit: '$/kg', align: 'right' },
           ]}
         />
       )}
@@ -249,7 +249,7 @@ function DefinitionsTable({
           <tr>
             <th className="px-3 py-2">By-product</th>
             <th className="px-3 py-2">Recovered from</th>
-            <th className="px-3 py-2 text-right">Yield</th>
+            <th className="px-3 py-2 text-right">Yield (% of kg WR)</th>
             <th className="px-3 py-2 text-right">Price ($/kg)</th>
             <th className="px-3 py-2" />
           </tr>

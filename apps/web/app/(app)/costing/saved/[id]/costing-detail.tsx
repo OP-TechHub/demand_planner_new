@@ -321,13 +321,13 @@ export function CostingDetail({
                 Market
               </th>
               <th className={cn(th, 'text-left')}>State</th>
-              <th className={th}>FINAL cost</th>
-              <th className={th}>Selling price</th>
-              <th className={th}>Contribution</th>
+              <th className={th}>FINAL cost (per kg)</th>
+              <th className={th}>Selling price (per kg)</th>
+              <th className={th}>Contribution (per kg)</th>
               {showReprice && (
                 <>
-                  <th className={cn(th, 'border-l')}>Today&apos;s cost</th>
-                  <th className={th}>Change</th>
+                  <th className={cn(th, 'border-l')}>Today&apos;s cost (per kg)</th>
+                  <th className={th}>Change (per kg)</th>
                 </>
               )}
               <th className={cn(th, 'text-right')} />
