@@ -478,7 +478,7 @@ export type CostSkuStatus = 'active' | 'inactive';
 export type CostDestMode = 'single' | 'multi';
 /** Who can open a saved costing: everyone who can read costings, or its owner (and admins). */
 export type CostVisibility = 'public' | 'private';
-export type CostRawMaterialBasis = 'full_fish' | 'absorbed' | 'ingredient';
+export type CostRawMaterialBasis = 'full_fish' | 'absorbed' | 'ingredient' | 'composite';
 export type CostProductState = 'unglazed' | 'glazed' | 'frozen_plain' | 'frozen_glazed' | 'fresh';
 
 /** Frozen, fresh, or costed either way. Fresh cannot carry glaze — glaze is ice. */
@@ -489,7 +489,18 @@ export type CostMarketScope = 'domestic' | 'export' | 'both';
 export type CostPricingMode = 'margin' | 'target';
 
 /** The category vocabulary in use. Free text in the DB; this is the offered set. */
-export const COST_CATEGORIES = ['Whole', 'Fillet', 'By-product', 'Value-added'] as const;
+export const COST_CATEGORIES = ['Whole', 'Fillet', 'By-product', 'Value-added', 'Meal pack'] as const;
+
+/** The category a composite SKU is filed under by default. */
+export const COST_COMPOSITE_CATEGORY = 'Meal pack';
+
+/**
+ * What one unit of a finished product can be. 'kg' is every SKU's default and
+ * needs no weight; any other unit needs its net weight, which is what converts
+ * between the per-unit figures people read and the per-kg figures the engine
+ * runs on.
+ */
+export const COST_UNIT_LABELS = ['kg', 'pack', 'piece', 'portion', 'tray', 'box'] as const;
 
 /** Costing's own copy of the size grades — NOT demand_planner.buckets. */
 export interface CostSizeBucket {
@@ -553,6 +564,12 @@ export interface CostDestinationRate {
   destination_id: string;
   sea_rate_per_20ft: number;
   air_rate_per_lot: number;
+  /**
+   * Import duty and levies as a fraction of CIF. Null means not entered, so no
+   * DDP price is shown. Optional because a database that has not run the duty
+   * migration returns rows without it.
+   */
+  duty_levy_pct?: number | null;
 }
 
 /**
@@ -593,6 +610,16 @@ export interface CostSkuRow {
   primary_input_name: string | null;
   primary_input_cost_lkr: number | null;
   primary_input_cost_usd: number | null;
+  /**
+   * What one unit of the finished product is, and what it weighs. Read for a
+   * 'composite' SKU, whose sub-product list is per ONE unit; 'kg' (and no
+   * weight) for everything else. Optional because a database that has not run
+   * the composite migration returns rows without these columns at all.
+   */
+  unit_label?: string;
+  unit_weight_g?: number | null;
+  /** LKR per unit of finished product — the total of the sub-product list. */
+  composite_cost_lkr?: number | null;
   product_form: CostProductForm;
   market_scope: CostMarketScope;
   /**
@@ -681,6 +708,108 @@ export function marinadeCostFromLines(
   if (!(totalDoseG > 0) || !(fxRate > 0)) return null;
   const lkrPerKg = (totalLkr / totalDoseG) * 1000;
   return { totalLkr, lkrPerKg, usdPerKg: lkrPerKg / fxRate };
+}
+
+/**
+ * One sub-product of a composite SKU — the rice, the curry, the fish portion.
+ *
+ * `qty` is how much goes into ONE unit of the finished product, counted in
+ * the sub-product's own `unit`; `price_lkr_per_unit` is what one of those
+ * costs — the main thing: the rice itself. When `recipe_output_qty` is set
+ * the sub-product also carries a list of other ingredients used for it (the
+ * garlic and vegetables that go into the rice), whose cost is ADDED to it.
+ */
+export interface CostSkuComponent {
+  id: string;
+  sku_id: string;
+  sort_order: number;
+  name: string;
+  qty: number;
+  unit: string;
+  price_lkr_per_unit: number;
+  recipe_output_qty: number | null;
+}
+
+/** One ingredient behind a sub-product, priced in LKR like a marinade's. */
+export interface CostSkuComponentIngredient {
+  id: string;
+  component_id: string;
+  sort_order: number;
+  ingredient: string;
+  qty_g: number;
+  price_lkr_per_kg: number;
+}
+
+/** A sub-product as the SKU form posts it — no ids yet. */
+export interface CostComponentInput {
+  name: string;
+  qty: number;
+  unit: string;
+  price_lkr_per_unit: number;
+  /**
+   * The other ingredients used for this sub-product, on top of its own price,
+   * and how many units of the FINISHED product that list covers (1 = the
+   * quantities are per pack; 12 = one cooked batch does twelve packs). Null
+   * when the sub-product is just its price.
+   */
+  recipe: { output_qty: number; lines: CostMarinadeLineInput[] } | null;
+}
+
+/**
+ * What a sub-product's other ingredients add to ONE unit of the finished
+ * product: their total, divided by how many finished units the list covers.
+ *
+ * The divisor is a count of finished units, not a weight: the natural way to
+ * write the list down is either "what goes into one pack" (1) or "what one
+ * cooked batch uses", which then does a dozen packs (12). Null when it is
+ * missing or zero — a list that covers no packs cannot be shared out.
+ */
+export function componentIngredientsLkr(lines: CostMarinadeLineInput[], forUnits: number): number | null {
+  if (!(forUnits > 0)) return null;
+  const totalLkr = lines.reduce((sum, l) => sum + (l.qty_g * l.price_lkr_per_kg) / 1000, 0);
+  return totalLkr / forUnits;
+}
+
+/**
+ * What one sub-product costs in ONE unit of the finished product: its own
+ * quantity at its own price, PLUS the other ingredients used for it.
+ *
+ * The price is never replaced by the ingredient list. Rice is priced as rice;
+ * the garlic and vegetables cooked into it are extra, on top.
+ */
+export function componentCostLkr(c: CostComponentInput): number {
+  const own = c.qty * c.price_lkr_per_unit;
+  const extras = c.recipe ? (componentIngredientsLkr(c.recipe.lines, c.recipe.output_qty) ?? 0) : 0;
+  return own + extras;
+}
+
+/** LKR per ONE unit of finished product: every sub-product, ingredients included. */
+export function compositeCostLkr(components: CostComponentInput[]): number {
+  return components.reduce((sum, c) => sum + componentCostLkr(c), 0);
+}
+
+/**
+ * Kilograms in one unit of the finished product, or null when it can't be
+ * known: a unit other than kg with no weight recorded. 1 for kg — including
+ * for every row from a database that predates the unit columns.
+ */
+export function costUnitKg(unitLabel: string | null | undefined, unitWeightG: number | null | undefined): number | null {
+  if (!unitLabel || unitLabel === 'kg') return 1;
+  return unitWeightG != null && unitWeightG > 0 ? unitWeightG / 1000 : null;
+}
+
+/**
+ * The sub-product total re-expressed per KG of finished product, which is what
+ * the engine costs on. Null when there is no total or no usable unit weight.
+ */
+export function compositeLkrPerKg(
+  costPerUnitLkr: number | null | undefined,
+  unitLabel: string | null | undefined,
+  unitWeightG: number | null | undefined
+): number | null {
+  if (costPerUnitLkr == null) return null;
+  const kg = costUnitKg(unitLabel, unitWeightG);
+  return kg == null ? null : costPerUnitLkr / kg;
 }
 
 export interface CostCosting {

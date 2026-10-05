@@ -54,6 +54,9 @@ export function CostSheet({
   const pctFish = num(inputs.pct_fish);
   const pctMarinade = num(inputs.pct_marinade);
   const absorbed = inputs.raw_material_basis === 'absorbed';
+  // Snapshots older than the composite basis have no such value, and read as
+  // whatever they were.
+  const composite = inputs.raw_material_basis === 'composite';
   // Older snapshots predate the ingredient basis and simply have neither key,
   // which reads as a fish product — which is what they were.
   const ingredientName =
@@ -136,20 +139,26 @@ export function CostSheet({
       <h2 style={S.h2}>Cost build-up ({unit})</h2>
       <table style={S.table}>
         <tbody>
-          <Row
-            label={
-              absorbed
-                ? 'Fish component — by-product, raw material absorbed by the main product'
-                : `${ingredientName ?? 'Fish'} component${pctFish != null ? ` — ${asPct(pctFish)} of pack, at ${asPct(yieldUsed)} yield` : ''}`
-            }
-            value={num(chain.fishComponent)}
-            fmt={money}
-          />
-          <Row
-            label={`Marinade / other input${pctMarinade != null && pctMarinade > 0 ? ` — ${asPct(pctMarinade)} of pack` : ''}`}
-            value={num(chain.marinadeComponent)}
-            fmt={money}
-          />
+          {composite ? (
+            <Row label="Sub-products — each costed separately, totalled" value={num(chain.compositeComponent)} fmt={money} />
+          ) : (
+            <>
+              <Row
+                label={
+                  absorbed
+                    ? 'Fish component — by-product, raw material absorbed by the main product'
+                    : `${ingredientName ?? 'Fish'} component${pctFish != null ? ` — ${asPct(pctFish)} of pack, at ${asPct(yieldUsed)} yield` : ''}`
+                }
+                value={num(chain.fishComponent)}
+                fmt={money}
+              />
+              <Row
+                label={`Marinade / other input${pctMarinade != null && pctMarinade > 0 ? ` — ${asPct(pctMarinade)} of pack` : ''}`}
+                value={num(chain.marinadeComponent)}
+                fmt={money}
+              />
+            </>
+          )}
           <Row label="Raw material" value={num(chain.rawMaterial)} fmt={money} subtotal />
           <Row label="Processing" value={num(chain.process)} fmt={money} />
           <Row label="Packing" value={num(chain.packing)} fmt={money} />
@@ -197,6 +206,13 @@ export function CostSheet({
                   <Row label="CIF" value={num(out.cif)} fmt={money} />
                   <Row label="Importer price" value={num(out.importerPrice)} fmt={money} />
                   <Row label="Distributor (T3)" value={num(out.distributorT3)} fmt={money} />
+                  {/* Absent on a port with no duty entered, and on lines saved before DDP existed. */}
+                  {num(out.ddp) != null && (
+                    <>
+                      <Row label="Duty & levy per kg" value={num(out.dutyPerKg)} fmt={money} />
+                      <Row label="DDP (duty paid)" value={num(out.ddp)} fmt={money} />
+                    </>
+                  )}
                 </>
               )}
               <Row label="Gross margin" value={num(out.marginPct)} fmt={(n) => `${(n * 100).toFixed(1)}%`} />

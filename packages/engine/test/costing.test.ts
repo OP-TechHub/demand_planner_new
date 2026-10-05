@@ -250,6 +250,113 @@ describe('primary-ingredient basis: products not made from whole fish', () => {
   });
 });
 
+describe('composite basis: products assembled from sub-products', () => {
+  // A rice pack: rice, chopsuey, fish and a curry, each costed on its own and
+  // totalled into the raw material line. Nothing here is in the workbook — it
+  // is the fourth basis, and the point of it is that ONLY the raw material
+  // line changes. Built off a real SKU so the downstream costs are the ones
+  // the engine actually charges.
+  const base = skuNamed('Skin-on fillet');
+  const pack = (over: Partial<CostSku> = {}): CostSku => ({
+    ...base,
+    name: 'Rice pack',
+    rawMaterialBasis: 'composite',
+    // LKR per kg of finished product: the caller has already divided the
+    // per-pack total by the pack weight.
+    compositeCostLkrPerKg: 1800,
+    glazePct: 0,
+    ...over,
+  });
+
+  it('makes the sub-product total the whole of the raw material line', () => {
+    const c = ok(domestic(pack())).value.result.chain;
+    expect(c.compositeComponent).toBe(1800);
+    expect(c.rawMaterial).toBe(1800);
+    expect(c.fishComponent).toBe(0);
+    expect(c.marinadeComponent).toBe(0);
+    expect(c.inputCost).toBe(0);
+  });
+
+  it('charges the downstream costs and prices on margin, unchanged', () => {
+    const res = ok(domestic(pack()));
+    const out = res.value.result as DomesticOutput;
+    const fish = ok(domestic(base)).value.result as DomesticOutput;
+    for (const k of ['process', 'packing', 'coldHold', 'freight'] as const) {
+      expect(out.chain[k], k).toBeCloseTo(fish.chain[k], 9);
+    }
+    expect(out.chain.finalCost).toBeCloseTo(
+      1800 + out.chain.process + out.chain.packing + out.chain.coldHold + out.chain.freight,
+      9
+    );
+    expect(res.value.pricingBasis).toBe('margin');
+    expect(out.unglazed.rackRate).toBeCloseTo(out.chain.finalCost / (1 - A.margins.rackPct), 9);
+  });
+
+  it('converts the LKR total at the FX rate for export', () => {
+    const out = ok(exported(pack())).value.result as ExportOutput;
+    expect(out.chain.compositeComponent).toBeCloseTo(1800 / A.fxRate, 9);
+    expect(out.chain.rawMaterial).toBeCloseTo(1800 / A.fxRate, 9);
+    expect(out.frozenPlain.fob).toBeCloseTo(out.chain.finalCost / (1 - A.margins.fobPct), 9);
+  });
+
+  it('ignores yield, the fish / marinade split, and the marinade cost', () => {
+    // None of them means anything here, so none of them may block or move it —
+    // including values that would be hard errors on a fish SKU.
+    const plain = ok(domestic(pack())).value.result.chain;
+    const odd = ok(
+      domestic(pack({ baseYield: 0, pctFish: 0.3, pctMarinade: 0.3, marinadeUsdPerKg: 99 }))
+    ).value.result.chain;
+    expect(odd.finalCost).toBeCloseTo(plain.finalCost, 9);
+    expect(odd.yieldUsed).toBe(1);
+  });
+
+  it('is untouched by glaze: there is no fish component for ice to dilute', () => {
+    const out = ok(domestic(pack({ glazePct: 0.2 }))).value.result as DomesticOutput;
+    expect(out.glazed.finalCost).toBeCloseTo(out.unglazed.finalCost, 9);
+  });
+
+  it('reports no whole-round margin: it is not made from one round input', () => {
+    const out = ok(domestic(pack())).value.result as DomesticOutput;
+    expect(out.unglazed.wholeRoundMarginPerKg).toBeNull();
+    expect(out.unglazed.wholeRoundMarginPct).toBeNull();
+    // The ordinary per-kg margin is still there — that is the one that applies.
+    expect(out.unglazed.marginPct).toBeCloseTo(A.margins.rackPct, 9);
+  });
+
+  it('honours a target price like any other SKU', () => {
+    const out = ok(domestic(pack({ pricingMode: 'target', targetPrice: 5000 }))).value
+      .result as DomesticOutput;
+    expect(out.unglazed.sellingPrice).toBe(5000);
+    expect(out.unglazed.marginPct).toBeCloseTo((5000 - out.chain.finalCost) / 5000, 9);
+  });
+
+  it('refuses to cost without a total, rather than pricing the pack as free', () => {
+    for (const missing of [null, undefined, Number.NaN, -1]) {
+      const res = domestic(pack({ compositeCostLkrPerKg: missing as number | null }));
+      expect(res.ok, String(missing)).toBe(false);
+      if (!res.ok) expect(res.issues.map((i) => i.code)).toContain('invalid_composite');
+    }
+  });
+
+  it('accepts a zero total: sub-products can genuinely all be free', () => {
+    const c = ok(domestic(pack({ compositeCostLkrPerKg: 0 }))).value.result.chain;
+    expect(c.rawMaterial).toBe(0);
+  });
+
+  it('leaves compositeComponent at zero on every other basis', () => {
+    // The chain grew a field; the 34 workbook SKUs must not notice.
+    for (const sku of v11Skus()) {
+      const c = ok(domestic(sku)).value.result.chain;
+      expect(c.compositeComponent, sku.name).toBe(0);
+      expect(c.rawMaterial, sku.name).toBeCloseTo(c.fishComponent + c.marinadeComponent, 9);
+    }
+    // And a stray total on a fish SKU is ignored, not added in.
+    const stray = ok(domestic({ ...base, compositeCostLkrPerKg: 1800 })).value.result.chain;
+    expect(stray.compositeComponent).toBe(0);
+    expect(stray.finalCost).toBeCloseTo(ok(domestic(base)).value.result.chain.finalCost, 9);
+  });
+});
+
 describe('size buckets', () => {
   const buckets = v11Buckets();
   const fillet = skuNamed('Skin-on fillet');
@@ -460,6 +567,53 @@ describe('target pricing', () => {
     expect(out.frozenPlain.distributorT3).toBeGreaterThan(base.frozenPlain.distributorT3);
     // The cost-plus FOB is still reported, so the gap is visible.
     expect(out.frozenPlain.fob).toBeCloseTo(base.frozenPlain.fob, 9);
+  });
+
+  it('shows no DDP until the port has a duty & levy % entered', () => {
+    const out = ok(exported(fillet)).value.result as ExportOutput;
+    expect(out.frozenPlain.dutyPerKg).toBeNull();
+    expect(out.frozenPlain.ddp).toBeNull();
+    expect(out.fresh.ddp).toBeNull();
+  });
+
+  it('builds DDP from duty on CIF, clearing as before, then the two markups', () => {
+    const base = ok(exported(fillet)).value.result as ExportOutput;
+    const out = ok(
+      computeCost({
+        market: 'export',
+        assumptions: A,
+        sku: fillet,
+        destination: { ...DUBAI, dutyLevyPct: 0.1 },
+      })
+    ).value.result as ExportOutput;
+    const m = A.margins;
+
+    for (const s of [out.frozenPlain, out.frozenGlazed, out.fresh]) {
+      expect(s.dutyPerKg).toBeCloseTo(s.cif * 0.1, 9);
+      expect(s.ddp).toBeCloseTo(
+        (s.cif * (1 + m.importerClearingPct) + s.cif * 0.1) *
+          (1 + m.importerMarkupPct) *
+          (1 + m.distributorMarkupPct),
+        9
+      );
+    }
+    // Entering a duty adds a figure; it moves nothing that was already there.
+    expect(out.frozenPlain.cif).toBeCloseTo(base.frozenPlain.cif, 9);
+    expect(out.frozenPlain.importerPrice).toBeCloseTo(base.frozenPlain.importerPrice, 9);
+    expect(out.frozenPlain.distributorT3).toBeCloseTo(base.frozenPlain.distributorT3, 9);
+  });
+
+  it('reads 0% as a duty-free port, where DDP is the distributor price', () => {
+    const out = ok(
+      computeCost({
+        market: 'export',
+        assumptions: A,
+        sku: fillet,
+        destination: { ...DUBAI, dutyLevyPct: 0 },
+      })
+    ).value.result as ExportOutput;
+    expect(out.frozenPlain.dutyPerKg).toBe(0);
+    expect(out.frozenPlain.ddp).toBeCloseTo(out.frozenPlain.distributorT3, 9);
   });
 
   it('prices fresh and frozen off the same target but different freight', () => {

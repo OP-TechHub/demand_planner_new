@@ -43,6 +43,9 @@ export default async function CostingSkusPage() {
       // just the one being edited, because the builder offers every ingredient
       // anyone has already priced as you type.
       marinadeLines={Object.fromEntries(ctx.marinadeLines.entries())}
+      // The sub-products of each composite SKU, with the ingredient list behind
+      // each price. Loaded for every SKU for the same reason as above.
+      components={Object.fromEntries(ctx.components.entries())}
       orgId={ctx.version.org_id}
       // Passed so the editor can show what each override would inherit if left
       // blank — a new SKU shouldn't be a guess about what the defaults are.
@@ -52,7 +55,7 @@ export default async function CostingSkusPage() {
       odc={odc}
       destinations={ctx.destinations}
       rates={Object.fromEntries(
-        [...ctx.rates.entries()].map(([id, r]) => [id, { sea: r.sea_rate_per_20ft, air: r.air_rate_per_lot }])
+        [...ctx.rates.entries()].map(([id, r]) => [id, { sea: r.sea_rate_per_20ft, air: r.air_rate_per_lot, duty: r.duty_levy_pct ?? null }])
       )}
       // Anyone may add a SKU; editing one is limited to whoever created it
       // (Decisions §5, same rule as costings). The seeded 34 have no creator,

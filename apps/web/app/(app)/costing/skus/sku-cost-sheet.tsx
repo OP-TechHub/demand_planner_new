@@ -21,6 +21,7 @@ export function SkuCostSheet({
   authorName,
   glazePct,
   absorbed,
+  composite = false,
   ingredientName,
   productForm,
   gradeLabel,
@@ -41,6 +42,12 @@ export function SkuCostSheet({
   authorName?: string | null;
   glazePct: number;
   absorbed: boolean;
+  /**
+   * Assembled from sub-products rather than made from one input. The sheet
+   * then shows their total where the fish and marinade lines would be, and no
+   * whole-fish build-up — there is no fish behind it to build up.
+   */
+  composite?: boolean;
   /**
    * What this SKU is built from when it does not start from a whole fish, e.g.
    * wet swim bladder. Null on a fish product. Named on every line the fish
@@ -114,6 +121,8 @@ export function SkuCostSheet({
             value={
               absorbed
                 ? 'Absorbed by-product'
+                : composite
+                  ? 'Composite — sub-products costed separately'
                 : ingredientName
                   ? `Primary ingredient — ${ingredientName}`
                   : 'Full fish'
@@ -132,6 +141,7 @@ export function SkuCostSheet({
           wholeFish={domesticWholeFish}
           glazePct={glazePct}
           absorbed={absorbed}
+          composite={composite}
           ingredientName={ingredientName}
           pctFish={pctFish}
           pctMarinade={pctMarinade}
@@ -177,6 +187,7 @@ export function SkuCostSheet({
           wholeFish={exportWholeFish}
           glazePct={glazePct}
           absorbed={absorbed}
+          composite={composite}
           ingredientName={ingredientName}
           pctFish={pctFish}
           pctMarinade={pctMarinade}
@@ -213,6 +224,13 @@ export function SkuCostSheet({
                     { label: 'CIF', value: s.cif },
                     { label: 'Importer price', value: s.importerPrice },
                     { label: 'Distributor (T3)', value: s.distributorT3 },
+                    // Only where the port has a duty & levy % entered.
+                    ...(s.ddp != null
+                      ? [
+                          { label: 'Duty & levy per kg', value: s.dutyPerKg },
+                          { label: 'DDP (duty paid)', value: s.ddp },
+                        ]
+                      : []),
                   ]
                 : []),
             ],
@@ -267,6 +285,7 @@ function MarketSection({
   showBaseCost,
   glazePct,
   absorbed,
+  composite = false,
   ingredientName,
   pctFish,
   pctMarinade,
@@ -280,6 +299,7 @@ function MarketSection({
   showBaseCost: boolean;
   glazePct: number;
   absorbed: boolean;
+  composite?: boolean;
   ingredientName?: string | null;
   pctFish: number;
   pctMarinade: number;
@@ -315,7 +335,7 @@ function MarketSection({
             </tbody>
           </table>
         </>
-      ) : wholeFish && (
+      ) : !composite && wholeFish && (
         <>
           <h3 style={S.h3}>Whole fish, ex-farm</h3>
           <table style={S.table}>
@@ -342,20 +362,28 @@ function MarketSection({
       <h3 style={S.h3}>Cost build-up</h3>
       <table style={S.table}>
         <tbody>
-          <Row
-            label={
-              absorbed
-                ? 'Fish component — by-product, raw material absorbed by the main product'
-                : `${ingredientName ?? 'Fish'} component — ${asPct(pctFish)} of pack, at ${asPct(chain.yieldUsed)} yield`
-            }
-            value={chain.fishComponent}
-            fmt={money}
-          />
-          <Row
-            label={`Marinade / other input${pctMarinade > 0 ? ` — ${asPct(pctMarinade)} of pack` : ''}`}
-            value={chain.marinadeComponent}
-            fmt={money}
-          />
+          {composite ? (
+            // One line, not a zero fish and a zero marinade: the sub-products
+            // ARE the raw material, and their total is the only figure here.
+            <Row label="Sub-products — each costed separately, totalled" value={chain.compositeComponent} fmt={money} />
+          ) : (
+            <>
+              <Row
+                label={
+                  absorbed
+                    ? 'Fish component — by-product, raw material absorbed by the main product'
+                    : `${ingredientName ?? 'Fish'} component — ${asPct(pctFish)} of pack, at ${asPct(chain.yieldUsed)} yield`
+                }
+                value={chain.fishComponent}
+                fmt={money}
+              />
+              <Row
+                label={`Marinade / other input${pctMarinade > 0 ? ` — ${asPct(pctMarinade)} of pack` : ''}`}
+                value={chain.marinadeComponent}
+                fmt={money}
+              />
+            </>
+          )}
           <Row label="Raw material" value={chain.rawMaterial} fmt={money} subtotal />
           <Row label="Processing" value={chain.process} fmt={money} />
           <Row label="Packing" value={chain.packing} fmt={money} />

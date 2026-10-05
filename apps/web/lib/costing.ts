@@ -14,11 +14,14 @@ import { getProfile } from '@/lib/plan';
 import { maskBaseCost } from '@/lib/costing-base-cost';
 import type {
   CostAssumptionVersion,
+  CostComponentInput,
   CostDestinationRate,
   CostDestinationRow,
   CostOdcComponentRow,
   CostSizeBucket,
   CostSkuBucketYield,
+  CostSkuComponent,
+  CostSkuComponentIngredient,
   CostSkuCostedVersion,
   CostSkuMarinadeLine,
   CostSkuRow,
@@ -97,6 +100,12 @@ export interface CostingContext {
   yields: Map<string, Record<string, number>>;
   /** skuId -> its marinade recipe, in entry order. Absent means it has none. */
   marinadeLines: Map<string, CostSkuMarinadeLine[]>;
+  /**
+   * skuId -> the sub-products of a composite SKU, in entry order, each with the
+   * ingredient list behind its price where it has one. Only the SKU editor
+   * needs these: costing itself runs off the total stored on the SKU.
+   */
+  components: Map<string, CostComponentInput[]>;
 }
 
 /**
@@ -135,13 +144,25 @@ export async function loadCostingContext(versionId?: string | null): Promise<Cos
   }
   const versionIds = [...new Set([version.id, ...costedVersions.values()])];
 
-  const [{ data: odc }, { data: rates }, { data: yields }, { data: marinade }] = await Promise.all([
+  const [
+    { data: odc },
+    { data: rates },
+    { data: yields },
+    { data: marinade },
+    { data: componentRows },
+    { data: componentIngredients },
+  ] = await Promise.all([
     supabase.from('cost_odc_components').select('*').in('version_id', versionIds).order('sort_order'),
     supabase.from('cost_destination_rates').select('*').in('version_id', versionIds),
     // 34 SKUs x 7 buckets = 238 rows, comfortably under PostgREST's 1000 cap.
     supabase.from('cost_sku_bucket_yields').select('*'),
     // Only marinated SKUs carry any, a dozen rows each at the outside.
     supabase.from('cost_sku_marinade_lines').select('*').order('sort_order'),
+    // Only composite SKUs carry any. On a database that has not run the
+    // composite migration these two simply come back with an error and no
+    // data, which reads as "no SKU has sub-products" — which is then true.
+    supabase.from('cost_sku_components').select('*').order('sort_order'),
+    supabase.from('cost_sku_component_ingredients').select('*').order('sort_order'),
   ]);
 
   const byVersion = new Map<string, VersionContext>();
@@ -167,6 +188,36 @@ export async function loadCostingContext(versionId?: string | null): Promise<Cos
     else marinadeMap.set(l.sku_id, [l]);
   }
 
+  const ingredientsByComponent = new Map<string, CostSkuComponentIngredient[]>();
+  for (const i of (componentIngredients ?? []) as CostSkuComponentIngredient[]) {
+    const existing = ingredientsByComponent.get(i.component_id);
+    if (existing) existing.push(i);
+    else ingredientsByComponent.set(i.component_id, [i]);
+  }
+  const componentMap = new Map<string, CostComponentInput[]>();
+  for (const c of (componentRows ?? []) as CostSkuComponent[]) {
+    const input: CostComponentInput = {
+      name: c.name,
+      qty: Number(c.qty),
+      unit: c.unit,
+      price_lkr_per_unit: Number(c.price_lkr_per_unit),
+      recipe:
+        c.recipe_output_qty != null
+          ? {
+              output_qty: Number(c.recipe_output_qty),
+              lines: (ingredientsByComponent.get(c.id) ?? []).map((l) => ({
+                ingredient: l.ingredient,
+                qty_g: Number(l.qty_g),
+                price_lkr_per_kg: Number(l.price_lkr_per_kg),
+              })),
+            }
+          : null,
+    };
+    const existing = componentMap.get(c.sku_id);
+    if (existing) existing.push(input);
+    else componentMap.set(c.sku_id, [input]);
+  }
+
   return {
     version,
     versions: allVersions,
@@ -179,6 +230,7 @@ export async function loadCostingContext(versionId?: string | null): Promise<Cos
     byVersion,
     yields: yieldMap,
     marinadeLines: marinadeMap,
+    components: componentMap,
   };
 }
 
@@ -186,7 +238,7 @@ export async function loadCostingContext(versionId?: string | null): Promise<Cos
 export interface ClientVersionContext {
   version: CostAssumptionVersion;
   odc: CostOdcComponentRow[];
-  rates: Record<string, { sea: number; air: number }>;
+  rates: Record<string, { sea: number; air: number; duty?: number | null }>;
 }
 
 /**
@@ -205,7 +257,7 @@ export function forClientByVersion(
       version,
       odc,
       rates: Object.fromEntries(
-        [...vc.rates.entries()].map(([d, r]) => [d, { sea: r.sea_rate_per_20ft, air: r.air_rate_per_lot }])
+        [...vc.rates.entries()].map(([d, r]) => [d, { sea: r.sea_rate_per_20ft, air: r.air_rate_per_lot, duty: r.duty_levy_pct ?? null }])
       ),
     };
   }
