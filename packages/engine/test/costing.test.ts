@@ -606,6 +606,16 @@ describe('target pricing', () => {
     expect(out.frozenPlain.distributorT3).toBeCloseTo(base.frozenPlain.distributorT3, 9);
   });
 
+  it('lets a SKU carry its own duty & levy, over the port’s or in place of none', () => {
+    const sku = { ...fillet, overrides: { ...fillet.overrides, dutyLevyPct: 0.2 } };
+    for (const destination of [DUBAI, { ...DUBAI, dutyLevyPct: 0.1 }]) {
+      const out = ok(computeCost({ market: 'export', assumptions: A, sku, destination })).value
+        .result as ExportOutput;
+      expect(out.destination?.dutyLevyPct).toBe(0.2);
+      expect(out.frozenPlain.dutyPerKg).toBeCloseTo(out.frozenPlain.sellingPrice * 0.2, 9);
+    }
+  });
+
   it('reads 0% as a duty-free port, where DDP is the distributor price', () => {
     const out = ok(
       computeCost({

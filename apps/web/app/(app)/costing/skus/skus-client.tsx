@@ -570,6 +570,7 @@ function previewFromForm(
       importerClearingPct: optional('override_importer_clearing_pct'),
       importerMarkupPct: optional('override_importer_markup_pct'),
       distributorMarkupPct: optional('override_distributor_markup_pct'),
+      dutyLevyPct: optional('override_duty_levy_pct'),
     },
   };
 
@@ -2079,6 +2080,19 @@ function SkuDialog({
                     onDirty={invalidatePreview}
                     inherited={version.distributor_markup_pct} step="0.01" kind="pct"
                   />
+                  {/*
+                    Inherits from the port picked under "Export to", not from the
+                    version, so the placeholder follows the picker. A port with
+                    none entered inherits nothing.
+                  */}
+                  <OverrideField
+                    label="Duty & levy" name="override_duty_levy_pct"
+                    current={src?.override_duty_levy_pct ?? null}
+                    onDirty={invalidatePreview}
+                    inherited={rates[previewDestId]?.duty ?? null}
+                    inheritedFrom={destinations.find((d) => d.id === previewDestId)?.name}
+                    step="0.01" kind="pct"
+                  />
                 </div>
               </div>
             </div>
@@ -2357,6 +2371,7 @@ function OverrideField({
   name,
   current,
   inherited,
+  inheritedFrom,
   step,
   kind,
   onDirty,
@@ -2364,7 +2379,10 @@ function OverrideField({
   label: string;
   name: string;
   current: number | null;
-  inherited: number;
+  /** Null when there is nothing to inherit — duty & levy on a port with none entered. */
+  inherited: number | null;
+  /** Named when the value comes from somewhere other than the assumptions version. */
+  inheritedFrom?: string;
   step: string;
   kind: 'pct' | 'lkr' | 'usd';
   /**
@@ -2383,8 +2401,15 @@ function OverrideField({
     onDirty?.();
   };
 
-  const show = (n: number) =>
-    kind === 'pct' ? `${n} (${(n * 100).toFixed(0)}%)` : kind === 'lkr' ? `LKR ${n}` : `$${n}`;
+  const from = inheritedFrom ? ` for ${inheritedFrom}` : '';
+  const show = (n: number | null) =>
+    n == null
+      ? `not set${from}`
+      : kind === 'pct'
+        ? `${n} (${Number((n * 100).toFixed(2))}%)${from}`
+        : kind === 'lkr'
+          ? `LKR ${n}`
+          : `$${n}`;
 
   return (
     <label className="block">
@@ -2409,10 +2434,16 @@ function OverrideField({
           </>
         ) : (
           <>
-            follows {show(inherited)} ·{' '}
-            <button type="button" onClick={() => change(String(inherited))} className="underline hover:text-foreground">
-              override
-            </button>
+            {inherited == null ? show(inherited) : <>follows {show(inherited)}</>}
+            {/* Nothing to start from when nothing is inherited: just type one. */}
+            {inherited != null && (
+              <>
+                {' · '}
+                <button type="button" onClick={() => change(String(inherited))} className="underline hover:text-foreground">
+                  override
+                </button>
+              </>
+            )}
           </>
         )}
       </span>
@@ -2628,7 +2659,8 @@ const hasOverride = (s: CostSkuRow): boolean =>
   s.override_cold_chain_usd != null ||
   s.override_importer_clearing_pct != null ||
   s.override_importer_markup_pct != null ||
-  s.override_distributor_markup_pct != null;
+  s.override_distributor_markup_pct != null ||
+  s.override_duty_levy_pct != null;
 
 const pct = (n: number) => (n * 100).toFixed(0) + '%';
 // Header cells carry the sticky position and an OPAQUE background themselves:
