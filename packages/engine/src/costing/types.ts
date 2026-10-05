@@ -97,6 +97,12 @@ export interface SkuOverrides {
   importerClearingPct?: number;
   importerMarkupPct?: number;
   distributorMarkupPct?: number;
+  /**
+   * Duty & levy as a fraction of FOB. Inherits from the port costed to rather
+   * than from the version, and unlike the others the inherited value may be
+   * absent — a port with none entered shows no DDP until this is set.
+   */
+  dutyLevyPct?: number;
 }
 
 /**

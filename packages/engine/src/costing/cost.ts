@@ -392,9 +392,10 @@ export function computeCost(input: CostInput): CostResult {
 
   const d = input.destination!;
   const { seaPerKg, airPerKg } = destinationPerKg(d, a.freight.containerFillKg, a.freight.airLotKg);
-  // A negative or non-numeric rate is bad data, and reads as not entered.
-  const dutyLevyPct =
-    d.dutyLevyPct != null && Number.isFinite(d.dutyLevyPct) && d.dutyLevyPct >= 0 ? d.dutyLevyPct : null;
+  // The SKU's own duty if it carries one, else the port's. A negative or
+  // non-numeric rate is bad data, and reads as not entered.
+  const dutyRaw = sku.overrides?.dutyLevyPct ?? d.dutyLevyPct;
+  const dutyLevyPct = dutyRaw != null && Number.isFinite(dutyRaw) && dutyRaw >= 0 ? dutyRaw : null;
 
   const result: ExportOutput = {
     market: 'export',

@@ -659,6 +659,11 @@ export interface CostSkuRow {
   override_importer_clearing_pct: number | null;
   override_importer_markup_pct: number | null;
   override_distributor_markup_pct: number | null;
+  /**
+   * Null inherits the duty & levy % of the port costed to. Optional because a
+   * database that has not run the override migration returns rows without it.
+   */
+  override_duty_levy_pct?: number | null;
   /** Null for the seeded workbook recipes — those are admin-maintained. */
   created_by: string | null;
   deleted_at: string | null;

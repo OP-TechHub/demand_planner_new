@@ -173,6 +173,7 @@ export function toSku(row: CostSkuRow, market: CostMarket, bucketYields?: Record
       importerClearingPct: row.override_importer_clearing_pct ?? undefined,
       importerMarkupPct: row.override_importer_markup_pct ?? undefined,
       distributorMarkupPct: row.override_distributor_markup_pct ?? undefined,
+      dutyLevyPct: row.override_duty_levy_pct ?? undefined,
     },
     bucketYields,
   };

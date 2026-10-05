@@ -274,6 +274,8 @@ export async function saveCostSku(_prev: SkuFormState, fd: FormData): Promise<Sk
     override_importer_clearing_pct: optionalNumber(fd, 'override_importer_clearing_pct'),
     override_importer_markup_pct: optionalNumber(fd, 'override_importer_markup_pct'),
     override_distributor_markup_pct: optionalNumber(fd, 'override_distributor_markup_pct'),
+    // Inherits from the port rather than the version; blank follows the port.
+    override_duty_levy_pct: optionalNumber(fd, 'override_duty_levy_pct'),
   };
   for (const m of ['override_rack_margin_pct', 'override_fob_margin_pct'] as const) {
     const v = overrides[m];
