@@ -31,7 +31,7 @@ export default async function CostingPage() {
   );
 
   const rates = Object.fromEntries(
-    [...ctx.rates.entries()].map(([id, r]) => [id, { sea: r.sea_rate_per_20ft, air: r.air_rate_per_lot }])
+    [...ctx.rates.entries()].map(([id, r]) => [id, { sea: r.sea_rate_per_20ft, air: r.air_rate_per_lot, duty: r.duty_levy_pct ?? null }])
   );
   const yields = Object.fromEntries(ctx.yields.entries());
 

@@ -12,7 +12,12 @@ import {
 } from '@oceanpick/engine';
 import {
   COST_CATEGORIES,
+  COST_COMPOSITE_CATEGORY,
+  COST_UNIT_LABELS,
+  compositeLkrPerKg,
+  costUnitKg,
   type CostAssumptionVersion,
+  type CostComponentInput,
   type CostDestinationRow,
   type CostMarketScope,
   type CostOdcComponentRow,
@@ -33,17 +38,21 @@ import { ScrollX } from '@/components/ui/scroll-x';
 import { CostedByFilter, matchesCostedBy, COSTED_BY_ALL, type CostedBy } from '../costed-by-filter';
 import { SkuCostSheet } from './sku-cost-sheet';
 import { MarinadeBuilder } from './marinade-builder';
+import { SubProductsEditor } from './sub-products-editor';
 import { archiveCostSku, saveCostSku, saveSkuBucketYield, type SkuFormState } from './actions';
 
 type YieldMap = Record<string, Record<string, number>>;
 /** skuId -> its marinade ingredients, in entry order. */
 type MarinadeMap = Record<string, CostSkuMarinadeLine[]>;
+/** skuId -> the sub-products of a composite SKU, in entry order. */
+type PartsMap = Record<string, CostComponentInput[]>;
 
 export function SkusClient({
   skus,
   buckets,
   yields,
   marinadeLines,
+  components,
   orgId,
   version,
   odc,
@@ -58,11 +67,12 @@ export function SkusClient({
   buckets: CostSizeBucket[];
   yields: YieldMap;
   marinadeLines: MarinadeMap;
+  components: PartsMap;
   orgId: string;
   version: CostAssumptionVersion;
   odc: CostOdcComponentRow[];
   destinations: CostDestinationRow[];
-  rates: Record<string, { sea: number; air: number }>;
+  rates: Record<string, { sea: number; air: number; duty?: number | null }>;
   currentUserId: string | null;
   authors: Record<string, string>;
   isAdmin: boolean;
@@ -122,8 +132,20 @@ export function SkusClient({
         byKey.set(key, { name: seen?.name ?? l.ingredient.trim(), price: l.price_lkr_per_kg });
       }
     }
+    // The ingredients behind composite sub-products are the same kind of thing
+    // — chilli powder costs the same in a curry as in a marinade.
+    for (const parts of Object.values(components)) {
+      for (const p of parts) {
+        for (const l of p.recipe?.lines ?? []) {
+          const key = l.ingredient.trim().toLowerCase();
+          if (!key) continue;
+          const seen = byKey.get(key);
+          byKey.set(key, { name: seen?.name ?? l.ingredient.trim(), price: l.price_lkr_per_kg });
+        }
+      }
+    }
     return [...byKey.values()].sort((a, b) => a.name.localeCompare(b.name));
-  }, [marinadeLines]);
+  }, [marinadeLines, components]);
 
   /**
    * Where a recipe came from. A null creator means it arrived with the seed —
@@ -204,6 +226,7 @@ export function SkusClient({
           allSkus={skus}
           categories={categories}
           marinadeLines={marinadeLines}
+          components={components}
           knownIngredients={knownIngredients}
           canViewBaseCost={canViewBaseCost}
           onClose={() => setEditing(undefined)}
@@ -251,6 +274,8 @@ function RecipeTable({
         <tbody>
           {skus.map((s) => {
             const absorbed = s.raw_material_basis === 'absorbed';
+            // Assembled from sub-products: no yield, no fish / marinade split.
+            const composite = s.raw_material_basis === 'composite';
             const overridden = hasOverride(s);
             return (
               <tr key={s.id} className={cn('border-b last:border-0 hover:bg-muted/30', s.status === 'inactive' && 'text-muted-foreground')}>
@@ -276,6 +301,10 @@ function RecipeTable({
                     <span className="text-muted-foreground" title="The main product already absorbed the fish cost. Costed on downstream costs only, priced on contribution.">
                       absorbed (by-product)
                     </span>
+                  ) : composite ? (
+                    <span title="Assembled from sub-products, each costed separately. Open the SKU to see the list.">
+                      sub-products
+                    </span>
                   ) : s.raw_material_basis === 'ingredient' ? (
                     <span title="Built from a named input rather than a whole fish. Same arithmetic, different input price.">
                       {s.primary_input_name || 'ingredient'}
@@ -284,14 +313,20 @@ function RecipeTable({
                     'full fish'
                   )}
                 </td>
-                <td className={td}>{pct(s.base_yield)}</td>
+                <td className={td}>{composite ? '—' : pct(s.base_yield)}</td>
                 <td className={td}>{s.glaze_pct ? pct(s.glaze_pct) : '—'}</td>
-                <td className={td}>{pct(s.pct_fish)}</td>
+                <td className={td}>{composite ? '—' : pct(s.pct_fish)}</td>
                 <td className={td}>{s.pct_marinade ? pct(s.pct_marinade) : '—'}</td>
                 <td className={td}>{s.marinade_usd_per_kg ? s.marinade_usd_per_kg.toFixed(2) : '—'}</td>
                 <td className={td}>{s.process_usd_per_kg.toFixed(2)}</td>
                 <td className={td}>{s.packing_usd_per_kg.toFixed(2)}</td>
-                <td className={cn(td, 'text-left')}>{s.pack_size ?? '—'}</td>
+                <td className={cn(td, 'text-left')}>
+                  {/* A composite's unit is a real input, not a label: show it,
+                      with the weight that ties it to the per-kg figures. */}
+                  {composite && s.unit_label && s.unit_label !== 'kg'
+                    ? `${s.unit_label}${s.unit_weight_g ? ` · ${s.unit_weight_g} g` : ''}`
+                    : (s.pack_size ?? '—')}
+                </td>
                 <td className={cn(td, absorbed && !s.market_price_lkr && 'text-destructive')}>
                   {s.market_price_lkr != null ? Math.round(s.market_price_lkr).toLocaleString() : absorbed ? 'set' : '—'}
                 </td>
@@ -443,8 +478,16 @@ interface PreviewResult {
   category: string;
   customer: string;
   absorbed: boolean;
+  /** Assembled from sub-products rather than made from one input. */
+  composite: boolean;
   /** Named input this SKU is built from, when it is not built from a fish. */
   ingredientName: string | null;
+  /**
+   * What one unit of the finished product is and what it weighs, when that is
+   * something other than a kg. Every figure the engine returns is per kg; this
+   * is what turns them into a cost and a price per pack.
+   */
+  unit: { label: string; kg: number } | null;
   productForm: CostProductForm;
   pctFish: number;
   pctMarinade: number;
@@ -463,7 +506,7 @@ function previewFromForm(
   version: CostAssumptionVersion,
   odc: CostOdcComponentRow[],
   destinations: CostDestinationRow[],
-  rates: Record<string, { sea: number; air: number }>,
+  rates: Record<string, { sea: number; air: number; duty?: number | null }>,
   /** The port the past-FOB ladder is costed to; an unknown id falls back to the first. */
   destId: string,
   /** Null costs on the flat reference model, as this dialog always used to. */
@@ -484,6 +527,9 @@ function previewFromForm(
   const marketScope = String(fd.get('market_scope') ?? 'both') as CostMarketScope;
   const pricingMode = String(fd.get('pricing_mode') ?? 'margin') as CostPricingMode;
   const assumptions = toAssumptions(version, odc);
+  // Only a composite posts a unit; everything else is per kg, as it always was.
+  const unitLabel = String(fd.get('unit_label') ?? 'kg').trim() || 'kg';
+  const unitKg = costUnitKg(unitLabel, optional('unit_weight_g'));
 
   const base = {
     id: 'preview',
@@ -501,8 +547,15 @@ function previewFromForm(
     rawMaterialBasis: String(fd.get('raw_material_basis') ?? 'full_fish') as
       | 'full_fish'
       | 'absorbed'
-      | 'ingredient',
+      | 'ingredient'
+      | 'composite',
     primaryInputName: String(fd.get('primary_input_name') ?? '').trim() || null,
+    // The sub-product total, per unit and in LKR, as the editor reports it —
+    // re-expressed per kg here exactly as the adapter does for a saved SKU.
+    compositeCostLkrPerKg:
+      fd.get('raw_material_basis') === 'composite'
+        ? compositeLkrPerKg(optional('composite_cost_lkr') ?? null, unitLabel, optional('unit_weight_g'))
+        : null,
     bucketYields,
     pricingMode,
     overrides: {
@@ -567,13 +620,19 @@ function previewFromForm(
     } else {
       const price = marketPriceUsd;
       hasTargetExport = price != null && price > 0;
-      const rate = rates[dest.id] ?? { sea: 0, air: 0 };
+      const rate: { sea: number; air: number; duty?: number | null } = rates[dest.id] ?? { sea: 0, air: 0 };
       const res = computeCost({
         market: 'export',
         assumptions,
         sku: { ...base, marketPrice: price, targetPrice: price, primaryInputCost: inputCostUsd },
         bucket,
-        destination: { id: dest.id, name: dest.name, seaRatePer20ft: rate.sea, airRatePerLot: rate.air },
+        destination: {
+          id: dest.id,
+          name: dest.name,
+          seaRatePer20ft: rate.sea,
+          airRatePerLot: rate.air,
+          dutyLevyPct: rate.duty ?? null,
+        },
       });
       if (res.ok) {
         exportOut = res.value.result as ExportOutput;
@@ -608,7 +667,9 @@ function previewFromForm(
     category: base.category,
     customer: String(fd.get('customer') ?? ''),
     absorbed: base.rawMaterialBasis === 'absorbed',
+    composite: base.rawMaterialBasis === 'composite',
     ingredientName: base.rawMaterialBasis === 'ingredient' ? base.primaryInputName : null,
+    unit: unitLabel !== 'kg' && unitKg != null ? { label: unitLabel, kg: unitKg } : null,
     productForm: String(fd.get('product_form') ?? 'both') as CostProductForm,
     gradeLabel: bucketRow?.label ?? null,
     destinationName,
@@ -855,9 +916,71 @@ function PreviewPanel({
         />
       )}
 
+      {preview.unit && <PerUnitBlock preview={preview} unit={preview.unit} form={form} />}
+
       <p className="text-[10px] text-muted-foreground">
         One SKU, costed in each state it can be sold in — not separate products.
       </p>
+    </div>
+  );
+}
+
+/**
+ * The same cost and price, per unit of the finished product instead of per kg.
+ *
+ * Nothing is recomputed: each figure is the per-kg one above multiplied by the
+ * unit's weight. It exists because a pack is sold by the pack — the per-kg
+ * price is what the margin is set on, and this is what goes on the quotation.
+ * Glaze is left out: it is added ice on a fish component, which a product sold
+ * by the unit does not have.
+ */
+function PerUnitBlock({
+  preview,
+  unit,
+  form,
+}: {
+  preview: PreviewResult;
+  unit: { label: string; kg: number };
+  form: CostProductForm;
+}) {
+  const exportState = preview.export ? (form === 'fresh' ? preview.export.fresh : preview.export.frozenPlain) : null;
+  const grams = Math.round(unit.kg * 1000 * 100) / 100;
+  return (
+    <div>
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+        Per {unit.label}
+        <span className="ml-1.5 normal-case tracking-normal opacity-80">
+          · {grams.toLocaleString()} g each — the per-kg figures above × the unit weight
+        </span>
+      </div>
+      <table className="mt-1 w-full text-right text-[11px] tabular-nums">
+        <thead className="text-[10px] uppercase text-muted-foreground">
+          <tr>
+            <th className="py-0.5 text-left font-medium">Market</th>
+            <th className="py-0.5 font-medium">Cost (per {unit.label})</th>
+            <th className="py-0.5 font-medium">Standard price (per {unit.label})</th>
+            <th className="py-0.5 font-medium">Your price (per {unit.label})</th>
+          </tr>
+        </thead>
+        <tbody>
+          {preview.domestic && (
+            <tr className="border-t border-primary/10">
+              <td className="py-0.5 text-left">Domestic (LKR)</td>
+              <td className="py-0.5">{(preview.domestic.unglazed.finalCost * unit.kg).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+              <td className="py-0.5">{(preview.domestic.unglazed.rackRate * unit.kg).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+              <td className="py-0.5 font-medium">{(preview.domestic.unglazed.sellingPrice * unit.kg).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+            </tr>
+          )}
+          {exportState && (
+            <tr className="border-t border-primary/10">
+              <td className="py-0.5 text-left">Export (USD, FOB)</td>
+              <td className="py-0.5">{(exportState.finalCost * unit.kg).toFixed(3)}</td>
+              <td className="py-0.5">{(exportState.fob * unit.kg).toFixed(3)}</td>
+              <td className="py-0.5 font-medium">{(exportState.sellingPrice * unit.kg).toFixed(3)}</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -1000,6 +1123,8 @@ function DownstreamBlock({
   // 0.05 x 100 is 5.000000000000001 in IEEE754, so a whole-number check on the
   // product prints "5.0%". Round first, then drop a trailing zero decimal.
   const asPct = (p: number) => `${Number((p * 100).toFixed(1))}%`;
+  // Duty is optional per port: the DDP columns appear only where one is entered.
+  const hasDuty = rows.some(([, s]) => s.ddp != null);
 
   return (
     <div>
@@ -1021,6 +1146,19 @@ function DownstreamBlock({
               <th className="py-0.5 font-medium" title={`Importer price x (1 + ${asPct(pct.distributorMarkupPct)} markup)`}>
                 Dist → T3 (USD/kg)
               </th>
+              {hasDuty && (
+                <>
+                  <th className="py-0.5 font-medium" title="CIF x the port's duty & levy %">
+                    + Duty &amp; levy (USD/kg)
+                  </th>
+                  <th
+                    className="py-0.5 font-medium"
+                    title={`(CIF x (1 + ${asPct(pct.clearingPct)} clearing) + duty) x (1 + ${asPct(pct.importerMarkupPct)} markup) x (1 + ${asPct(pct.distributorMarkupPct)} markup)`}
+                  >
+                    DDP (USD/kg)
+                  </th>
+                </>
+              )}
             </tr>
           </thead>
           <tbody>
@@ -1032,6 +1170,12 @@ function DownstreamBlock({
                 <td className="py-0.5">{usd(s.cif)}</td>
                 <td className="py-0.5">{usd(s.importerPrice)}</td>
                 <td className="py-0.5 font-medium">{usd(s.distributorT3)}</td>
+                {hasDuty && (
+                  <>
+                    <td className="py-0.5 text-muted-foreground">{s.dutyPerKg != null ? usd(s.dutyPerKg) : '—'}</td>
+                    <td className="py-0.5 font-medium">{s.ddp != null ? usd(s.ddp) : '—'}</td>
+                  </>
+                )}
               </tr>
             ))}
           </tbody>
@@ -1060,6 +1204,7 @@ function SkuDialog({
   allSkus,
   categories,
   marinadeLines,
+  components,
   knownIngredients,
   canViewBaseCost,
   onClose,
@@ -1071,10 +1216,11 @@ function SkuDialog({
   version: CostAssumptionVersion;
   odc: CostOdcComponentRow[];
   destinations: CostDestinationRow[];
-  rates: Record<string, { sea: number; air: number }>;
+  rates: Record<string, { sea: number; air: number; duty?: number | null }>;
   allSkus: CostSkuRow[];
   categories: string[];
   marinadeLines: MarinadeMap;
+  components: PartsMap;
   knownIngredients: { name: string; price: number }[];
   canViewBaseCost: boolean;
   onClose: () => void;
@@ -1166,6 +1312,24 @@ function SkuDialog({
   // it. An uncontrolled input set from React fires no input event, so the
   // preview would not know it had gone stale.
   const [marinadeUsd, setMarinadeUsd] = useState(String(src?.marinade_usd_per_kg ?? 0));
+
+  /**
+   * The sub-products of a composite SKU, as the editor last reported them, and
+   * their total per unit of finished product (LKR).
+   *
+   * Held here rather than inside the editor because the form posts them in one
+   * hidden field — they save atomically with the SKU, like the marinade recipe
+   * — and because the editor unmounts whenever the basis is switched away. On
+   * its way back it is handed whatever is here, so a look at "what would this
+   * cost as full fish" does not throw the list away.
+   */
+  const partsOf = (row: CostSkuRow | null): CostComponentInput[] => (row ? (components[row.id] ?? []) : []);
+  const [parts, setParts] = useState<CostComponentInput[]>(() => partsOf(src));
+  const [partsTotal, setPartsTotal] = useState(() => src?.composite_cost_lkr ?? 0);
+  // Bumped to remount the editor when "copy its settings" replaces the list.
+  const [partsKey, setPartsKey] = useState(0);
+  const [unitLabel, setUnitLabel] = useState(src?.unit_label || 'kg');
+  const [unitWeight, setUnitWeight] = useState(src?.unit_weight_g != null ? String(src.unit_weight_g) : '');
 
   /**
    * Cost and price this SKU from what is on screen right now, without saving.
@@ -1295,6 +1459,11 @@ function SkuDialog({
   // material line behaves exactly as it does for fish, so this only changes
   // where the input price comes from and what the labels call it.
   const ingredient = basis === 'ingredient';
+  // Assembled from sub-products. There is no single input, so no yield, no
+  // glaze and no fish / marinade split — those fields are not shown at all.
+  const composite = basis === 'composite';
+  // The offered units, plus whatever this SKU already uses if it is not one.
+  const unitOptions = [...new Set([...COST_UNIT_LABELS, unitLabel])];
 
   /** A different SKU already holding this name — the duplicate the list drifts on. */
   const duplicate =
@@ -1318,6 +1487,13 @@ function SkuDialog({
     // and finding an empty ingredient list would be the surprise here.
     setRecipe(recipeOf(source));
     setMarinadeUsd(String(source.marinade_usd_per_kg ?? 0));
+    // Its sub-products and its unit are part of "its settings" too. The key
+    // remounts the editor, which only reads its starting list once.
+    setParts(partsOf(source));
+    setPartsTotal(source.composite_cost_lkr ?? 0);
+    setPartsKey((k) => k + 1);
+    setUnitLabel(source.unit_label || 'kg');
+    setUnitWeight(source.unit_weight_g != null ? String(source.unit_weight_g) : '');
     // The port and the grade are part of "its settings" now that they are
     // stored on the SKU — and the grade changes what the copy costs.
     setPreviewDestId(activeDestination(source.default_destination_id, destinations));
@@ -1378,6 +1554,20 @@ function SkuDialog({
           name="marinade_recipe"
           value={recipe ? JSON.stringify({ total_dose_g: recipe.totalDoseG, lines: recipe.lines }) : ''}
         />
+        {/*
+          The sub-products ride along the same way, and for the same reasons.
+          Posted whenever there are any, not only while the basis is composite,
+          so switching the basis to look at something else does not delete them.
+          `sub_products_stored` says the SKU had some on open — which is how
+          emptying the list is told apart from never having had one.
+        */}
+        <input type="hidden" name="sub_products" value={parts.length ? JSON.stringify(parts) : ''} />
+        <input type="hidden" name="sub_products_stored" value={sku && partsOf(sku).length > 0 ? '1' : ''} />
+        {/* For the live preview only. The saved total is worked out again on
+            the server from the list itself, never taken from here. Blank while
+            the list is empty, so the preview says the sub-products are missing
+            instead of costing a pack with nothing in it. */}
+        <input type="hidden" name="composite_cost_lkr" value={composite && parts.length ? String(partsTotal) : ''} />
 
         {state.error && (
           <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -1497,15 +1687,26 @@ function SkuDialog({
             label="Basis"
             name="raw_material_basis"
             defaultValue={basis}
-            onChange={(e) => setBasis(e.target.value as typeof basis)}
+            onChange={(e) => {
+              const next = e.target.value as typeof basis;
+              setBasis(next);
+              // File a NEW composite under its own category. An existing SKU
+              // keeps whatever category it was deliberately given.
+              if (next === 'composite' && !sku && categories.includes(COST_COMPOSITE_CATEGORY)) {
+                setCategoryChoice(COST_COMPOSITE_CATEGORY);
+              }
+            }}
             options={[
               ['full_fish', 'Full fish — carries whole-fish cost ÷ yield'],
               ['absorbed', 'Absorbed — by-product, main product already paid for the fish'],
               ['ingredient', 'Primary ingredient — not made from whole fish (e.g. fish maw)'],
+              ['composite', 'Composite — assembled from sub-products (e.g. a rice pack)'],
             ]}
           />
           <p className="mt-1.5 text-[11px] text-muted-foreground">
-            {absorbed
+            {composite
+              ? 'Assembled from sub-products, each costed on its own: list what goes into one unit, with a quantity and a price in LKR. Each has its own price; where other ingredients are used for it — the garlic and vegetables in the rice — list them too and their cost is added on top. The total is the raw material; processing, packing, cold-hold, freight, margins and pricing below are unchanged.'
+              : absorbed
               ? 'This SKU carries no fish cost. Its cost is a floor — processing, packing, cold-hold and freight — and it is priced on contribution against the market price below, not on margin.'
               : ingredient
                 ? 'Costed exactly like a fish product, but the raw material is the ingredient below instead of a whole fish: its cost per kg of input, divided by the yield. Everything after that — marinade, processing, packing, cold-hold, freight and margins — is unchanged.'
@@ -1547,12 +1748,85 @@ function SkuDialog({
               </p>
             </div>
           )}
+
+          {composite && (
+            <div className="mt-3">
+              <div className="grid gap-3 sm:grid-cols-3">
+                <label className="block">
+                  <span className="text-xs font-medium">Unit of the finished product</span>
+                  <select
+                    name="unit_label"
+                    value={unitLabel}
+                    onChange={(e) => setUnitLabel(e.target.value)}
+                    className={cn(inputCls, 'mt-1 w-full')}
+                  >
+                    {unitOptions.map((u) => (
+                      <option key={u} value={u}>
+                        {u}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="mt-0.5 block text-[10px] text-muted-foreground">
+                    what one sellable unit is — the sub-products below are per one of these
+                  </span>
+                </label>
+                {unitLabel !== 'kg' && (
+                  <label className="block">
+                    <span className="text-xs font-medium">Net weight of one {unitLabel} (g)</span>
+                    <input
+                      name="unit_weight_g"
+                      type="number"
+                      step="any"
+                      min="0"
+                      value={unitWeight}
+                      onChange={(e) => setUnitWeight(e.target.value)}
+                      placeholder="e.g. 450"
+                      className={cn(inputCls, 'mt-1 w-full', !(Number(unitWeight) > 0) && 'border-destructive')}
+                    />
+                    <span className="mt-0.5 block text-[10px] text-muted-foreground">
+                      required — it links the per-kg costs and margins to a price per {unitLabel}
+                    </span>
+                  </label>
+                )}
+              </div>
+
+              <SubProductsEditor
+                key={partsKey}
+                initial={parts}
+                finishedUnit={unitLabel}
+                unitKg={costUnitKg(unitLabel, Number(unitWeight) > 0 ? Number(unitWeight) : null)}
+                fxRate={version.fx_rate}
+                knownIngredients={knownIngredients}
+                onChange={(next, total) => {
+                  setParts(next);
+                  // Removing a row is a click, not a keystroke, so the form's
+                  // own input handler never sees it. A changed total always
+                  // means the preview on screen belongs to a different recipe.
+                  if (total !== partsTotal) {
+                    setPartsTotal(total);
+                    invalidatePreview();
+                  }
+                }}
+              />
+
+              <p className="mt-2 text-[11px] text-muted-foreground">
+                Prices are entered in LKR. Export converts the total at this version&apos;s FX rate
+                ({version.fx_rate}). If a sub-product is one of our own costed SKUs — the fish portion
+                — enter its ex-factory cost from the cost grid, so the fish is not costed twice at
+                two different figures.
+                {unitLabel !== 'kg' &&
+                  ` Processing, packing, freight, margins and target prices stay per kg; the preview also shows the cost and price per ${unitLabel}.`}
+              </p>
+            </div>
+          )}
         </fieldset>
 
         <div className="grid gap-3 sm:grid-cols-3">
           {/* Fractions, not percentages: 0.45 is 45%. Entered this way because
               the engine and the workbook both work in fractions, and converting
               at the edge is where off-by-100 errors come from. */}
+          {!composite && (
+          <>
           <Field
             label="Yield"
             name="base_yield"
@@ -1587,6 +1861,8 @@ function SkuDialog({
             fresh={form === 'fresh'}
             absorbed={absorbed}
           />
+          </>
+          )}
           <Field
             label="Pack size"
             name="pack_size"
@@ -1595,6 +1871,8 @@ function SkuDialog({
             // Deliberately not used in any calculation — all costs are per kg.
             hint="label only, e.g. 500g or 3kg carton — not used in costing"
           />
+          {!composite && (
+          <>
           <Field
             label={ingredient ? '% primary input' : '% fish'}
             name="pct_fish"
@@ -1627,6 +1905,8 @@ function SkuDialog({
               invalidatePreview();
             }}
           />
+          </>
+          )}
           <Field
             label="Processing cost"
             name="process_usd_per_kg"
@@ -2015,6 +2295,7 @@ function SkuDialog({
             assumptionsLabel={`v${version.version_no}${version.label ? ` · ${version.label}` : ''}`}
             glazePct={preview.glazePct}
             absorbed={preview.absorbed}
+            composite={preview.composite}
             ingredientName={preview.ingredientName}
             productForm={preview.productForm}
             gradeLabel={preview.gradeLabel}

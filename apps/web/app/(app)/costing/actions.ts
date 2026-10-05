@@ -513,6 +513,12 @@ function resolveLines(args: {
           // or deleted.
           market_scope: skuRow.market_scope,
           bucket_id: bucketId,
+          // What one unit of a composite SKU is, and the sub-product total it
+          // was costed from. Snapshotted with the rest so the saved costing can
+          // still be read per pack after the SKU's list has changed.
+          unit_label: skuRow.unit_label ?? 'kg',
+          unit_weight_g: skuRow.unit_weight_g ?? null,
+          composite_cost_lkr: skuRow.raw_material_basis === 'composite' ? (skuRow.composite_cost_lkr ?? null) : null,
         },
       };
 

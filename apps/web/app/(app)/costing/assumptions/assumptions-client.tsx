@@ -21,7 +21,7 @@ import {
   type SaveState,
 } from './actions';
 
-type RateMap = Record<string, { sea: number; air: number }>;
+type RateMap = Record<string, { sea: number; air: number; duty?: number | null }>;
 
 export function AssumptionsClient({
   version,
@@ -298,6 +298,7 @@ function DestinationFreight({
   const [name, setName] = useState('');
   const [sea, setSea] = useState('');
   const [air, setAir] = useState('');
+  const [duty, setDuty] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   const canManage = canEdit && isCurrentVersion;
@@ -305,7 +306,13 @@ function DestinationFreight({
   function add() {
     setError(null);
     startTransition(async () => {
-      const res = await addDestination({ name, sea: Number(sea), air: Number(air) });
+      const res = await addDestination({
+        name,
+        sea: Number(sea),
+        air: Number(air),
+        // Typed as whole percent, stored as a fraction. Blank stays "not entered".
+        duty: duty.trim() === '' ? null : Number(duty) / 100,
+      });
       if (res.error) {
         setError(res.error);
         return;
@@ -313,6 +320,7 @@ function DestinationFreight({
       setName('');
       setSea('');
       setAir('');
+      setDuty('');
       router.refresh();
     });
   }
@@ -348,13 +356,19 @@ function DestinationFreight({
               <th className="py-1 pr-3 text-right font-medium">Sea $ / 40ft</th>
               <th className="py-1 pr-3 text-right font-medium">Air $ / lot</th>
               <th className="py-1 pr-3 text-right font-medium">→ Sea $/kg</th>
-              <th className="py-1 text-right font-medium">→ Air $/kg</th>
+              <th className="py-1 pr-3 text-right font-medium">→ Air $/kg</th>
+              <th
+                className="py-1 text-right font-medium"
+                title="Import duty and levies at this port, as a % of CIF. Optional — when entered, a DDP price is shown for the port."
+              >
+                Duty &amp; levy %
+              </th>
               {canManage && <th className="py-1 pl-3 text-right font-medium" />}
             </tr>
           </thead>
           <tbody>
             {destinations.map((d) => {
-              const r = rates[d.id] ?? { sea: 0, air: 0 };
+              const r: RateMap[string] = rates[d.id] ?? { sea: 0, air: 0 };
               const seaRate = draft[`sea_${d.id}`] ?? r.sea;
               const airRate = draft[`air_${d.id}`] ?? r.air;
               return (
@@ -369,8 +383,12 @@ function DestinationFreight({
                   <td className="py-1.5 pr-3 text-right tabular-nums text-muted-foreground">
                     {fill > 0 ? (seaRate / fill).toFixed(3) : '—'}
                   </td>
-                  <td className="py-1.5 text-right tabular-nums text-muted-foreground">
+                  <td className="py-1.5 pr-3 text-right tabular-nums text-muted-foreground">
                     {lot > 0 ? (airRate / lot).toFixed(3) : '—'}
+                  </td>
+                  <td className="py-1.5 text-right">
+                    {/* Whole percent on screen, a fraction of CIF in the database. Blank = not entered, no DDP. */}
+                    <input name={`duty_${d.id}`} defaultValue={r.duty != null ? Number((r.duty * 100).toFixed(4)) : ''} type="number" step="any" min="0" placeholder="—" disabled={!canEdit} className={cn(inputCls, 'w-20 text-right')} />
                   </td>
                   {canManage && (
                     <td className="py-1.5 pl-3 text-right">
@@ -403,8 +421,11 @@ function DestinationFreight({
                 <td className="py-1.5 pr-3 text-right tabular-nums text-muted-foreground">
                   {fill > 0 && sea !== '' ? (Number(sea) / fill).toFixed(3) : '—'}
                 </td>
-                <td className="py-1.5 text-right tabular-nums text-muted-foreground">
+                <td className="py-1.5 pr-3 text-right tabular-nums text-muted-foreground">
                   {lot > 0 && air !== '' ? (Number(air) / lot).toFixed(3) : '—'}
+                </td>
+                <td className="py-1.5 text-right">
+                  <input value={duty} onChange={(e) => setDuty(e.target.value)} type="number" step="any" min="0" placeholder="—" disabled={pending} className={cn(inputCls, 'w-20 text-right')} />
                 </td>
                 <td className="py-1.5 pl-3 text-right">
                   <button
@@ -428,6 +449,11 @@ function DestinationFreight({
           — a port left at zero freight quietly under-prices every quote it appears on.
         </p>
       )}
+
+      <p className="text-[11px] text-muted-foreground">
+        Duty &amp; levy is optional and charged on CIF. Enter it as a percentage (5 for 5%) and the
+        port gains a DDP price; leave it blank and none is shown.
+      </p>
 
       {canEdit && !isCurrentVersion && (
         <p className="text-[11px] text-muted-foreground">

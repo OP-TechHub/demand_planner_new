@@ -33,8 +33,12 @@ export type SkuStatus = 'active' | 'inactive';
  *               start from a whole fish at all. Fish maw from wet swim
  *               bladder is the case it was built for. Arithmetically it is
  *               full_fish with a different source for one number.
+ *  composite  — assembled from sub-products, each costed separately (a rice
+ *               pack: rice, chopsuey, fish, curry). The raw material line IS
+ *               their total; there is no yield and no fish / marinade split.
+ *               Everything after raw material is unchanged.
  */
-export type RawMaterialBasis = 'full_fish' | 'absorbed' | 'ingredient';
+export type RawMaterialBasis = 'full_fish' | 'absorbed' | 'ingredient' | 'composite';
 
 export interface OdcComponent {
   name: string;
@@ -132,6 +136,15 @@ export interface CostSku {
    */
   primaryInputCost?: number | null;
   /**
+   * For a 'composite' SKU: the total of its sub-products per KG of finished
+   * product, in LKR. Always LKR — sub-products are bought and made in rupees —
+   * and the export chain converts it at the version's FX rate, the way it
+   * converts nothing else. The caller has already divided the per-unit total
+   * by the unit's weight. Null means the list or the weight is missing, and
+   * the SKU does not cost.
+   */
+  compositeCostLkrPerKg?: number | null;
+  /**
    * What the market pays, in the market's currency. Drives contribution for
    * absorbed SKUs. Null means contribution can't be computed yet.
    */
@@ -154,6 +167,12 @@ export interface Destination {
   name: string;
   seaRatePer20ft: number;
   airRatePerLot: number;
+  /**
+   * Import duty and levies at this port, as a fraction of CIF. Null or absent
+   * means it has not been entered, and no DDP price is produced — which is not
+   * the same as 0, a duty-free port whose DDP equals the distributor price.
+   */
+  dutyLevyPct?: number | null;
 }
 
 export interface CostInput {
@@ -195,6 +214,12 @@ export interface CostChain {
    */
   fishComponent: number;
   marinadeComponent: number;
+  /**
+   * The sub-product total in a kg of finished product, in the market's
+   * currency. Zero on every basis but 'composite', where it is the whole of
+   * the raw material line.
+   */
+  compositeComponent: number;
   rawMaterial: number;
   process: number;
   packing: number;
@@ -267,6 +292,17 @@ export interface ExportState {
   importerPrice: number;
   distributorT3: number;
   freightPerKg: number;
+  /** CIF x the port's duty & levy %. Null when the port has none entered. */
+  dutyPerKg: number | null;
+  /**
+   * Delivered duty paid: the distributor price with the duty in it.
+   *
+   *   (CIF x (1 + clearing) + duty) x (1 + importer markup) x (1 + distributor markup)
+   *
+   * Clearing stays a percentage of CIF; the duty is added beside it. Null when
+   * the port has no duty & levy % entered.
+   */
+  ddp: number | null;
   contributionPerKg: number | null;
 }
 
@@ -291,7 +327,13 @@ export interface ExportOutput {
   market: 'export';
   currency: 'USD';
   chain: CostChain;
-  destination: { id: string; name: string; seaPerKg: number; airPerKg: number } | null;
+  destination: {
+    id: string;
+    name: string;
+    seaPerKg: number;
+    airPerKg: number;
+    dutyLevyPct: number | null;
+  } | null;
   frozenPlain: ExportState;
   frozenGlazed: ExportState;
   /** Identical to frozenPlain up to FOB, then diverges onto air freight. */
@@ -311,7 +353,7 @@ export interface CostOutput {
  * split highlights and does NOT calculate, so this is an error, not a warning.
  */
 export interface CostIssue {
-  code: 'split_not_100' | 'invalid_yield' | 'missing_destination';
+  code: 'split_not_100' | 'invalid_yield' | 'missing_destination' | 'invalid_composite';
   message: string;
 }
 

@@ -1,6 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { compositeCostLkr, type CostComponentInput } from '@oceanpick/shared';
 import { createClient } from '@/lib/supabase/server';
 
 export type SkuFormState = { error: string | null; ok: boolean };
@@ -59,6 +60,67 @@ function marinadeRecipe(fd: FormData): MarinadeRecipe | null | undefined | 'inva
   return { total_dose_g: dose, lines: clean };
 }
 
+/**
+ * Read a composite SKU's sub-products out of the form.
+ *
+ * Same three outcomes as the marinade recipe, for the same reasons: a list
+ * (replace what is stored), null (posted empty — the SKU has none), undefined
+ * (field absent — leave the stored rows alone). Re-validated here because it
+ * arrives as JSON in a hidden input.
+ */
+function subProducts(fd: FormData): CostComponentInput[] | null | undefined | 'invalid' {
+  const raw = fd.get('sub_products');
+  if (raw == null) return undefined;
+  const s = String(raw).trim();
+  if (s === '') return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(s);
+  } catch {
+    return 'invalid';
+  }
+  if (!Array.isArray(parsed)) return 'invalid';
+  if (parsed.length === 0) return null;
+  // A pack is a handful of sub-products. The caps only stop a crafted payload
+  // turning one save into an unbounded insert.
+  if (parsed.length > 100) return 'invalid';
+
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
+
+  const clean: CostComponentInput[] = [];
+  for (const c of parsed) {
+    if (typeof c !== 'object' || c === null) return 'invalid';
+    const { name, qty, unit, price_lkr_per_unit: price, recipe } = c as Record<string, unknown>;
+    const cleanName = String(name ?? '').trim().slice(0, 200);
+    const cleanUnit = String(unit ?? '').trim().slice(0, 20) || 'kg';
+    const q = num(qty);
+    const p = num(price);
+    if (!cleanName || q == null || p == null) return 'invalid';
+
+    let cleanRecipe: CostComponentInput['recipe'] = null;
+    if (recipe != null) {
+      if (typeof recipe !== 'object') return 'invalid';
+      const { output_qty: out, lines } = recipe as Record<string, unknown>;
+      if (typeof out !== 'number' || !Number.isFinite(out) || out <= 0) return 'invalid';
+      if (!Array.isArray(lines) || lines.length === 0 || lines.length > 200) return 'invalid';
+      const cleanLines: NonNullable<CostComponentInput['recipe']>['lines'] = [];
+      for (const l of lines) {
+        if (typeof l !== 'object' || l === null) return 'invalid';
+        const { ingredient, qty_g: g, price_lkr_per_kg: perKg } = l as Record<string, unknown>;
+        const ing = String(ingredient ?? '').trim().slice(0, 200);
+        const gq = num(g);
+        const gp = num(perKg);
+        if (!ing || gq == null || gp == null) return 'invalid';
+        cleanLines.push({ ingredient: ing, qty_g: gq, price_lkr_per_kg: gp });
+      }
+      cleanRecipe = { output_qty: out, lines: cleanLines };
+    }
+    clean.push({ name: cleanName, qty: q, unit: cleanUnit, price_lkr_per_unit: p, recipe: cleanRecipe });
+  }
+  return clean;
+}
+
 /** Optional number field: blank means "inherit the global value". */
 function optionalNumber(fd: FormData, key: string): number | null | undefined {
   const raw = fd.get(key);
@@ -87,10 +149,19 @@ export async function saveCostSku(_prev: SkuFormState, fd: FormData): Promise<Sk
   const name = String(fd.get('name') ?? '').trim();
   if (!name) return { error: 'Name is required.', ok: false };
 
-  const baseYield = requiredNumber(fd, 'base_yield');
-  const pctFish = requiredNumber(fd, 'pct_fish');
-  const pctMarinade = requiredNumber(fd, 'pct_marinade');
-  const glazePct = requiredNumber(fd, 'glaze_pct');
+  // Read first: a composite SKU has no yield, split or glaze to validate, and
+  // the checks below must not reject it over fields it does not show.
+  const basis = String(fd.get('raw_material_basis') ?? 'full_fish');
+  const composite = basis === 'composite';
+
+  // None of these mean anything on a composite, and the form does not show
+  // them. Fixed at the neutral values the table's constraints accept, rather
+  // than read from fields that are not there.
+  const baseYield = composite ? 1 : requiredNumber(fd, 'base_yield');
+  const pctFish = composite ? 1 : requiredNumber(fd, 'pct_fish');
+  const pctMarinade = composite ? 0 : requiredNumber(fd, 'pct_marinade');
+  // Glaze is added ice diluting a fish component; a composite has neither.
+  const glazePct = composite ? 0 : requiredNumber(fd, 'glaze_pct');
 
   if (baseYield == null || baseYield <= 0 || baseYield > 1) {
     return { error: 'Yield must be between 0 and 1 (0.45 = 45%).', ok: false };
@@ -130,12 +201,37 @@ export async function saveCostSku(_prev: SkuFormState, fd: FormData): Promise<Sk
     return { error: 'The marinade ingredients could not be read. Reopen the marinade cost builder and apply it again.', ok: false };
   }
 
+  // A composite SKU is costed from its sub-products, so it needs some — and,
+  // unless it is sold by the kg, the weight of one unit, which is what turns
+  // the per-unit total into the per-kg figure the adders and margins run on.
+  const parts = subProducts(fd);
+  if (parts === 'invalid') {
+    return { error: 'The sub-products could not be read. Check each one has a name, a quantity and a price — and that any ingredient list says how many units it covers — then save again.', ok: false };
+  }
+  const unitLabel = String(fd.get('unit_label') ?? 'kg').trim().slice(0, 20) || 'kg';
+  const unitWeightG = optionalNumber(fd, 'unit_weight_g');
+  if (composite) {
+    if (!parts || parts.length === 0) {
+      return { error: 'A composite SKU needs at least one sub-product — add what goes into it, with a quantity and a price.', ok: false };
+    }
+    if (unitLabel !== 'kg' && !(typeof unitWeightG === 'number' && unitWeightG > 0)) {
+      return {
+        error: `Enter the net weight of one ${unitLabel} in grams. Processing, packing, freight and margins are per kg, so the weight is what connects them to a price per ${unitLabel}.`,
+        ok: false,
+      };
+    }
+  }
+  // Whether this save touches the sub-product columns and rows at all. Kept
+  // off every other SKU's save so nothing but a composite depends on the
+  // composite migration having been applied.
+  const touchesParts =
+    parts !== undefined && (composite || (parts?.length ?? 0) > 0 || fd.get('sub_products_stored') === '1');
+
   // A SKU built from something other than a whole fish needs a price for that
   // something, in the currency of every market it sells in. Zero is a valid
   // answer and is stored as zero — an input the main product already paid for
   // is genuinely free to this SKU — but a BLANK is an omission, and would
   // silently cost the product at nothing.
-  const basis = String(fd.get('raw_material_basis') ?? 'full_fish');
   const inputName = String(fd.get('primary_input_name') ?? '').trim();
   const inputLkr = optionalNumber(fd, 'primary_input_cost_lkr');
   const inputUsd = optionalNumber(fd, 'primary_input_cost_usd');
@@ -239,6 +335,16 @@ export async function saveCostSku(_prev: SkuFormState, fd: FormData): Promise<Sk
     primary_input_cost_usd: inputUsd ?? null,
     market_price_lkr: targetLkr ?? null,
     market_price_usd: targetUsd ?? null,
+    // The sub-product total is worked out HERE, from the validated list, never
+    // taken from the browser: it is the number the grid and the API cost from.
+    // Per unit of finished product, in LKR.
+    ...(touchesParts
+      ? {
+          unit_label: composite ? unitLabel : 'kg',
+          unit_weight_g: composite && unitLabel !== 'kg' ? (unitWeightG ?? null) : null,
+          composite_cost_lkr: parts ? compositeCostLkr(parts) : null,
+        }
+      : {}),
     // The divisor lives on the SKU so the recipe can be replayed; null says the
     // marinade cost was typed rather than built. `undefined` is dropped from
     // the payload by the spread below, leaving what is stored untouched.
@@ -261,6 +367,10 @@ export async function saveCostSku(_prev: SkuFormState, fd: FormData): Promise<Sk
 
     const recipeError = await writeMarinadeLines(supabase, id, recipe);
     if (recipeError) return { error: recipeError, ok: false };
+    if (touchesParts) {
+      const partsError = await writeSubProducts(supabase, id, parts ?? null);
+      if (partsError) return { error: partsError, ok: false };
+    }
   } else {
     if (!orgId) return { error: 'Missing organization.', ok: false };
     // Land it at the END of the list. The dialog has no sort-order field, and
@@ -283,6 +393,10 @@ export async function saveCostSku(_prev: SkuFormState, fd: FormData): Promise<Sk
 
     const recipeError = await writeMarinadeLines(supabase, (created as { id: string }).id, recipe);
     if (recipeError) return { error: recipeError, ok: false };
+    if (touchesParts) {
+      const partsError = await writeSubProducts(supabase, (created as { id: string }).id, parts ?? null);
+      if (partsError) return { error: partsError, ok: false };
+    }
 
     // Seed per-bucket yields at the flat value, so a new SKU behaves like the
     // seeded ones the moment size grades are switched on (Decisions §6).
@@ -339,6 +453,64 @@ async function writeMarinadeLines(
   return null;
 }
 
+/**
+ * Replace a composite SKU's sub-products with what the form posted.
+ *
+ * Delete-then-insert, like the marinade lines and for the same reason: the
+ * rows mean nothing beyond their order. Deleting a sub-product takes its
+ * ingredients with it (on delete cascade). Not a transaction, so a failure
+ * part-way says exactly that rather than reporting a save that half happened.
+ */
+async function writeSubProducts(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  skuId: string,
+  parts: CostComponentInput[] | null
+): Promise<string | null> {
+  const { error: delError } = await supabase.from('cost_sku_components').delete().eq('sku_id', skuId);
+  if (delError) return `The SKU was saved, but its sub-products could not be updated: ${friendly(delError.message)}`;
+  if (!parts || parts.length === 0) return null;
+
+  const { data: inserted, error: insError } = await supabase
+    .from('cost_sku_components')
+    .insert(
+      parts.map((p, i) => ({
+        sku_id: skuId,
+        sort_order: i * 10,
+        name: p.name,
+        qty: p.qty,
+        unit: p.unit,
+        // The sub-product's own price, exactly as typed. Its other ingredients
+        // are added on top of it, never folded into it.
+        price_lkr_per_unit: p.price_lkr_per_unit,
+        // How many finished units the ingredient list covers; null = no list.
+        recipe_output_qty: p.recipe ? p.recipe.output_qty : null,
+      }))
+    )
+    .select('id, sort_order');
+  if (insError || !inserted) {
+    return `The SKU was saved, but its sub-products were not — reopen it and save again. (${friendly(insError?.message ?? 'no rows returned')})`;
+  }
+
+  // Matched back by sort_order rather than by array position: an insert's
+  // returned rows are not promised to come back in the order they were sent.
+  const idByOrder = new Map((inserted as { id: string; sort_order: number }[]).map((r) => [r.sort_order, r.id]));
+  const ingredientRows = parts.flatMap((p, i) =>
+    (p.recipe?.lines ?? []).map((l, j) => ({
+      component_id: idByOrder.get(i * 10)!,
+      sort_order: j * 10,
+      ingredient: l.ingredient,
+      qty_g: l.qty_g,
+      price_lkr_per_kg: l.price_lkr_per_kg,
+    }))
+  );
+  if (ingredientRows.length === 0) return null;
+  const { error: ingError } = await supabase.from('cost_sku_component_ingredients').insert(ingredientRows);
+  if (ingError) {
+    return `The SKU and its sub-products were saved, but their ingredient lists were not — reopen it and save again. (${friendly(ingError.message)})`;
+  }
+  return null;
+}
+
 /** Set one SKU's yield for one size grade (Decisions §6). */
 export async function saveSkuBucketYield(
   skuId: string,
@@ -387,6 +559,17 @@ function friendly(message: string): string {
   }
   if (m.includes('cost_skus_fresh_has_no_glaze')) {
     return 'Fresh product can’t carry glaze — glaze is added ice.';
+  }
+  // The composite basis, its columns and its tables all arrive in one
+  // migration. Any of these means it has not been applied to this database.
+  if (
+    (m.includes('enum') && m.includes('composite')) ||
+    m.includes('unit_label') ||
+    m.includes('unit_weight_g') ||
+    m.includes('composite_cost_lkr') ||
+    m.includes('cost_sku_component')
+  ) {
+    return 'This database has not been updated for composite SKUs yet. Apply migration 20261005000001_costing_composite_basis.sql, then save again.';
   }
   if (m.includes('duplicate') || m.includes('unique')) {
     return 'A SKU with that name already exists.';

@@ -267,23 +267,44 @@ export async function publishAssumptionVersion(_prev: SaveState, fd: FormData): 
     if (odcError) return rollback(`copying the other direct costs: ${odcError.message}`);
   }
 
-  const rateRows = (rates ?? []) as { destination_id: string; sea_rate_per_20ft: number; air_rate_per_lot: number }[];
+  const rateRows = (rates ?? []) as {
+    destination_id: string;
+    sea_rate_per_20ft: number;
+    air_rate_per_lot: number;
+    duty_levy_pct?: number | null;
+  }[];
   if (rateRows.length) {
-    const { error: rateError } = await db.from('cost_destination_rates').insert(
-      rateRows.map((r) => {
-        // Freight rates sit in the non-base-cost half of the screen.
-        const posted = (key: string, fallback: number) =>
-          access.canEditRest ? (fd.get(key) ?? fallback) : fallback;
-        const sea = Number(String(posted(`sea_${r.destination_id}`, r.sea_rate_per_20ft)).trim());
-        const air = Number(String(posted(`air_${r.destination_id}`, r.air_rate_per_lot)).trim());
-        return {
-          version_id: newId,
-          destination_id: r.destination_id,
-          sea_rate_per_20ft: Number.isFinite(sea) && sea >= 0 ? sea : r.sea_rate_per_20ft,
-          air_rate_per_lot: Number.isFinite(air) && air >= 0 ? air : r.air_rate_per_lot,
-        };
-      })
-    );
+    const nextRates = rateRows.map((r) => {
+      // Freight rates sit in the non-base-cost half of the screen.
+      const posted = (key: string, fallback: number) =>
+        access.canEditRest ? (fd.get(key) ?? fallback) : fallback;
+      const sea = Number(String(posted(`sea_${r.destination_id}`, r.sea_rate_per_20ft)).trim());
+      const air = Number(String(posted(`air_${r.destination_id}`, r.air_rate_per_lot)).trim());
+      // Duty & levy is optional, so unlike the freight a blank box is an
+      // answer — "not entered" — rather than a typo to ignore. The screen
+      // takes whole percent; the column holds a fraction of CIF.
+      const carriedDuty = r.duty_levy_pct ?? null;
+      const dutyRaw = access.canEditRest ? fd.get(`duty_${r.destination_id}`) : null;
+      let duty = carriedDuty;
+      if (dutyRaw != null) {
+        const text = String(dutyRaw).trim();
+        const pct = Number(text);
+        duty = text === '' ? null : Number.isFinite(pct) && pct >= 0 ? pct / 100 : carriedDuty;
+      }
+      return {
+        version_id: newId,
+        destination_id: r.destination_id,
+        sea_rate_per_20ft: Number.isFinite(sea) && sea >= 0 ? sea : r.sea_rate_per_20ft,
+        air_rate_per_lot: Number.isFinite(air) && air >= 0 ? air : r.air_rate_per_lot,
+        duty_levy_pct: duty,
+      };
+    });
+    // Left off entirely when no port has one, so publishing keeps working on a
+    // database that has not run the duty migration yet.
+    const anyDuty = nextRates.some((r) => r.duty_levy_pct != null);
+    const { error: rateError } = await db
+      .from('cost_destination_rates')
+      .insert(anyDuty ? nextRates : nextRates.map(({ duty_levy_pct: _none, ...rest }) => rest));
     if (rateError) return rollback(`copying the freight rates: ${rateError.message}`);
   }
 
@@ -412,6 +433,8 @@ export async function addDestination(input: {
   name: string;
   sea: number;
   air: number;
+  /** Duty & levy as a fraction of CIF. Null or absent: not entered, no DDP shown. */
+  duty?: number | null;
 }): Promise<{ error: string | null }> {
   const supabase = await createClient();
   const {
@@ -432,6 +455,10 @@ export async function addDestination(input: {
   const air = Number(input.air);
   if (!Number.isFinite(sea) || sea < 0 || !Number.isFinite(air) || air < 0) {
     return { error: 'Sea and air rates must be numbers of 0 or more.' };
+  }
+  const duty = input.duty == null ? null : Number(input.duty);
+  if (duty != null && (!Number.isFinite(duty) || duty < 0)) {
+    return { error: 'Duty and levy must be a percentage of 0 or more, or left blank.' };
   }
 
   const { data: cur } = await supabase
@@ -491,6 +518,7 @@ export async function addDestination(input: {
       destination_id: destinationId!,
       sea_rate_per_20ft: sea,
       air_rate_per_lot: air,
+      ...(duty != null ? { duty_levy_pct: duty } : {}),
     },
     { onConflict: 'version_id,destination_id' }
   );

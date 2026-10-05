@@ -4,6 +4,7 @@
 // browser, so these run on both sides. The database loader lives in
 // `lib/costing.ts`, which imports `next/headers` and must never reach a client
 // bundle. Keep this file dependency-light for that reason.
+import { compositeLkrPerKg } from '@oceanpick/shared';
 import type {
   CostAssumptionVersion,
   CostCosting,
@@ -149,6 +150,13 @@ export function toSku(row: CostSkuRow, market: CostMarket, bucketYields?: Record
     // actually struck at is not always the version's FX rate.
     primaryInputName: row.primary_input_name,
     primaryInputCost: domestic ? row.primary_input_cost_lkr : row.primary_input_cost_usd,
+    // Stored per UNIT of finished product (a pack), in LKR for both markets;
+    // the engine wants it per kg and does the FX itself. Only read on the
+    // composite basis, so the kg default of every other SKU never matters.
+    compositeCostLkrPerKg:
+      row.raw_material_basis === 'composite'
+        ? compositeLkrPerKg(row.composite_cost_lkr, row.unit_label, row.unit_weight_g)
+        : null,
     // One number, two readings: what the market bears (drives by-product
     // contribution) and what we intend to charge (the target). Which one it
     // acts as is decided by pricing_mode, not by a second column.
@@ -180,6 +188,8 @@ export function toDestination(row: CostDestinationRow, rate: CostDestinationRate
     name: row.name,
     seaRatePer20ft: rate?.sea_rate_per_20ft ?? 0,
     airRatePerLot: rate?.air_rate_per_lot ?? 0,
+    // numeric columns can arrive as strings; null stays null (not entered).
+    dutyLevyPct: rate?.duty_levy_pct == null ? null : Number(rate.duty_levy_pct),
   };
 }
 

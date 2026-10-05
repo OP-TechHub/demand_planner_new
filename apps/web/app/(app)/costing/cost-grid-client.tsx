@@ -29,7 +29,7 @@ import { SkuCostSheet } from './skus/sku-cost-sheet';
 import { CostedByFilter, matchesCostedBy, COSTED_BY_ALL, type CostedBy } from './costed-by-filter';
 import { recostSkus, saveCosting } from './actions';
 
-export type RateMap = Record<string, { sea: number; air: number }>;
+export type RateMap = Record<string, { sea: number; air: number; duty?: number | null }>;
 export type YieldMap = Record<string, Record<string, number>>;
 /** One assumptions version, with everything the engine needs to price on it. */
 export interface VersionBundle {
@@ -655,6 +655,7 @@ function sheetProps(
     authorName: authorOf(row.sku, authors),
     glazePct: row.sku.glaze_pct,
     absorbed: row.sku.raw_material_basis === 'absorbed',
+    composite: row.sku.raw_material_basis === 'composite',
     ingredientName:
       row.sku.raw_material_basis === 'ingredient' ? row.sku.primary_input_name : null,
     productForm: row.sku.product_form,
@@ -672,7 +673,7 @@ function sheetProps(
 
 function rateOf(rates: RateMap, id: string) {
   const r = rates[id];
-  return r ? { version_id: '', destination_id: id, sea_rate_per_20ft: r.sea, air_rate_per_lot: r.air } : undefined;
+  return r ? { version_id: '', destination_id: id, sea_rate_per_20ft: r.sea, air_rate_per_lot: r.air, duty_levy_pct: r.duty ?? null } : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -877,6 +878,13 @@ function Grid({
   // of finished product (FP) except Input cost, which is per kg of raw input.
   const cur = domestic ? 'LKR' : 'USD';
 
+  // Duty & levy is optional per port, so the DDP columns appear only when at
+  // least one row on screen is costed to a port that has it entered.
+  const showDdp =
+    !domestic && rows.some((r) => r.result.ok && (r.result.value.result as ExportOutput).frozenPlain.ddp != null);
+  const DDP_TITLE =
+    'Delivered duty paid: (CIF x (1 + clearing) + CIF x duty & levy %) x (1 + importer markup) x (1 + distributor markup)';
+
   return (
     <ScrollX className="max-h-[70vh] rounded-lg border bg-card">
       <table className="w-full border-collapse text-right text-xs tabular-nums">
@@ -938,15 +946,18 @@ function Grid({
                 <th className={thBase} title="What a kg of round fish earns, over what it cost to grow (feed x FCR + ODC)">WR margin (%)</th>
                 <th className={thBase}>CIF (USD/kg FP)</th>
                 <th className={thBase}>Dist→T3 (USD/kg FP)</th>
+                {showDdp && <th className={thBase} title={DDP_TITLE}>DDP (USD/kg FP)</th>}
                 <th className={cn(thBase, 'border-l')}>Glazed FOB (USD/kg FP)</th>
                 <th className={thBase}>Glazed margin (%)</th>
                 <th className={thBase} title="What a kg of round fish earns, over what it cost to grow (feed x FCR + ODC)">Glazed WR (%)</th>
                 <th className={thBase}>Glazed CIF (USD/kg FP)</th>
+                {showDdp && <th className={thBase} title={DDP_TITLE}>Glazed DDP (USD/kg FP)</th>}
                 <th className={cn(thBase, 'border-l')}>Fresh FOB (USD/kg FP)</th>
                 <th className={thBase}>Fresh margin (%)</th>
                 <th className={thBase} title="What a kg of round fish earns, over what it cost to grow (feed x FCR + ODC)">Fresh WR (%)</th>
                 <th className={thBase}>Fresh CIF (USD/kg FP)</th>
                 <th className={thBase}>Fresh T3 (USD/kg FP)</th>
+                {showDdp && <th className={thBase} title={DDP_TITLE}>Fresh DDP (USD/kg FP)</th>}
               </>
             )}
           </tr>
@@ -958,6 +969,7 @@ function Grid({
               row={row}
               domestic={domestic}
               showDestination={showDestination}
+              showDdp={showDdp}
               authors={authors}
               compare={compare}
               currentVersion={currentVersion}
@@ -977,6 +989,7 @@ function GridRow({
   row,
   domestic,
   showDestination,
+  showDdp,
   authors,
   compare,
   currentVersion,
@@ -988,6 +1001,8 @@ function GridRow({
   row: Row;
   domestic: boolean;
   showDestination: boolean;
+  /** Whether the grid carries the three DDP columns — see Grid. */
+  showDdp: boolean;
   authors: Record<string, string>;
   compare: boolean;
   currentVersion: CostAssumptionVersion;
@@ -1000,8 +1015,11 @@ function GridRow({
   const versionLabel = labelOf(row.version);
   const absorbed = sku.raw_material_basis === 'absorbed';
   const ingredient = sku.raw_material_basis === 'ingredient';
+  // Assembled from sub-products: the raw material column is their total, and
+  // the yield / input / fish / marinade columns have nothing to say.
+  const composite = sku.raw_material_basis === 'composite';
   const inactive = sku.status === 'inactive';
-  const span = domestic ? 19 : 26;
+  const span = domestic ? 19 : 26 + (showDdp ? 3 : 0);
   const author = authorOf(sku, authors);
 
   const nameCell = (
@@ -1018,6 +1036,7 @@ function GridRow({
           {sku.name}
           {absorbed && <ByProductBadge />}
           {ingredient && <IngredientBadge name={sku.primary_input_name} />}
+          {composite && <CompositeBadge unit={sku.unit_label} weightG={sku.unit_weight_g} />}
         </span>
         {/*
           In the sticky column rather than a trailing one: this table is wide
@@ -1107,10 +1126,10 @@ function GridRow({
       {nameCell}
       {identityCells}
       {showDestination && <td className={cn(tdBase, 'text-left')}>{destination?.name}</td>}
-      <td className={tdBase}>{(chain.yieldUsed * 100).toFixed(0)}%</td>
-      <td className={cn(tdBase, absorbed && 'text-muted-foreground line-through')}>{money(chain.inputCost)}</td>
-      <td className={cn(tdBase, absorbed && 'text-muted-foreground')}>{money(chain.fishComponent)}</td>
-      <td className={tdBase}>{money(chain.marinadeComponent)}</td>
+      <td className={tdBase}>{composite ? <NotApplicable /> : `${(chain.yieldUsed * 100).toFixed(0)}%`}</td>
+      <td className={cn(tdBase, absorbed && 'text-muted-foreground line-through')}>{composite ? <NotApplicable /> : money(chain.inputCost)}</td>
+      <td className={cn(tdBase, absorbed && 'text-muted-foreground')}>{composite ? <NotApplicable /> : money(chain.fishComponent)}</td>
+      <td className={tdBase}>{composite ? <NotApplicable /> : money(chain.marinadeComponent)}</td>
       <td className={tdBase}>{money(chain.rawMaterial)}</td>
       <td className={tdBase}>{money(chain.process)}</td>
       <td className={tdBase}>{money(chain.packing)}</td>
@@ -1121,7 +1140,7 @@ function GridRow({
       {domestic ? (
         <DomesticCells out={result.value.result as DomesticOutput} absorbed={absorbed} form={sku.product_form} />
       ) : (
-        <ExportCells out={result.value.result as ExportOutput} absorbed={absorbed} form={sku.product_form} />
+        <ExportCells out={result.value.result as ExportOutput} absorbed={absorbed} form={sku.product_form} showDdp={showDdp} />
       )}
     </tr>
   );
@@ -1235,11 +1254,23 @@ function DomesticCells({ out, absorbed, form }: { out: DomesticOutput; absorbed:
   );
 }
 
-function ExportCells({ out, absorbed, form }: { out: ExportOutput; absorbed: boolean; form: CostProductForm }) {
+function ExportCells({
+  out,
+  absorbed,
+  form,
+  showDdp,
+}: {
+  out: ExportOutput;
+  absorbed: boolean;
+  form: CostProductForm;
+  showDdp: boolean;
+}) {
   const freshOnly = form === 'fresh';
   const frozenOnly = form === 'frozen';
   const FROZEN = 'This SKU is fresh only';
   const FRESH = 'This SKU is frozen only';
+  // Another row's port has a duty entered and this one's does not.
+  const ddp = (n: number | null) => (n == null ? <NotSold why="No duty & levy % entered for this port" /> : usd(n));
 
   return (
     <>
@@ -1267,6 +1298,7 @@ function ExportCells({ out, absorbed, form }: { out: ExportOutput; absorbed: boo
       </td>
       <td className={tdBase}>{freshOnly ? <NotSold why={FROZEN} /> : usd(out.frozenPlain.cif)}</td>
       <td className={tdBase}>{freshOnly ? <NotSold why={FROZEN} /> : usd(out.frozenPlain.distributorT3)}</td>
+      {showDdp && <td className={tdBase}>{freshOnly ? <NotSold why={FROZEN} /> : ddp(out.frozenPlain.ddp)}</td>}
 
       <td className={cn(tdBase, 'border-l')}>
         {freshOnly ? <NotSold why="Fresh product carries no glaze" /> : usd(out.frozenGlazed.sellingPrice)}
@@ -1288,6 +1320,11 @@ function ExportCells({ out, absorbed, form }: { out: ExportOutput; absorbed: boo
       <td className={tdBase}>
         {freshOnly ? <NotSold why="Fresh product carries no glaze" /> : usd(out.frozenGlazed.cif)}
       </td>
+      {showDdp && (
+        <td className={tdBase}>
+          {freshOnly ? <NotSold why="Fresh product carries no glaze" /> : ddp(out.frozenGlazed.ddp)}
+        </td>
+      )}
 
       <td className={cn(tdBase, 'border-l')}>{frozenOnly ? <NotSold why={FRESH} /> : usd(out.fresh.sellingPrice)}</td>
       <td className={tdBase}>
@@ -1302,6 +1339,7 @@ function ExportCells({ out, absorbed, form }: { out: ExportOutput; absorbed: boo
       </td>
       <td className={tdBase}>{frozenOnly ? <NotSold why={FRESH} /> : usd(out.fresh.cif)}</td>
       <td className={tdBase}>{frozenOnly ? <NotSold why={FRESH} /> : usd(out.fresh.distributorT3)}</td>
+      {showDdp && <td className={tdBase}>{frozenOnly ? <NotSold why={FRESH} /> : ddp(out.fresh.ddp)}</td>}
     </>
   );
 }
@@ -1413,6 +1451,34 @@ function IngredientBadge({ name }: { name: string | null }) {
       title={`Built from ${name ?? 'a named ingredient'} rather than a whole fish. The input column is that ingredient's cost per kg, before yield.`}
     >
       {name ?? 'ingredient'}
+    </span>
+  );
+}
+
+/**
+ * Marks a SKU assembled from sub-products, and says what one unit of it is —
+ * every figure in the row is per kg, so the unit weight is what a reader needs
+ * to turn the price beside it into a price per pack.
+ */
+function CompositeBadge({ unit, weightG }: { unit?: string; weightG?: number | null }) {
+  const perUnit = unit && unit !== 'kg' ? `${unit}${weightG ? ` · ${weightG} g` : ''}` : null;
+  return (
+    <span
+      className="ml-1.5 rounded bg-muted px-1 py-px text-[9px] font-normal uppercase tracking-wide text-muted-foreground"
+      title={`Composite: assembled from sub-products, each costed separately. The raw material column is their total.${
+        perUnit ? ` Sold per ${perUnit} — figures here are per kg.` : ''
+      }`}
+    >
+      {perUnit ?? 'composite'}
+    </span>
+  );
+}
+
+/** A column that has no meaning for this row, as distinct from a zero. */
+function NotApplicable() {
+  return (
+    <span className="text-muted-foreground" title="Not applicable — this SKU is assembled from sub-products">
+      —
     </span>
   );
 }
@@ -1844,17 +1910,21 @@ function csvMatrix(
           'CIF',
           'Importer',
           'Dist->T3',
+          'Duty & levy',
+          'DDP',
           'Glazed FINAL',
           'Glazed FOB',
           'Glazed margin %',
           'Glazed whole-round margin %',
           'Glazed CIF',
           'Glazed Dist->T3',
+          'Glazed DDP',
           'Fresh FOB',
           'Fresh margin %',
           'Fresh whole-round margin %',
           'Fresh CIF',
           'Fresh Dist->T3',
+          'Fresh DDP',
           'Contribution',
         ]),
   ];
@@ -1868,6 +1938,8 @@ function csvMatrix(
       r.sku.category,
       r.sku.raw_material_basis === 'absorbed'
         ? 'by-product (absorbed)'
+        : r.sku.raw_material_basis === 'composite'
+          ? `composite (sub-products${r.sku.unit_label && r.sku.unit_label !== 'kg' ? `, per ${r.sku.unit_label}${r.sku.unit_weight_g ? ` of ${r.sku.unit_weight_g} g` : ''}` : ''})`
         : r.sku.raw_material_basis === 'ingredient'
           ? `ingredient (${r.sku.primary_input_name ?? 'unnamed'})`
           : 'full fish',
@@ -1915,17 +1987,22 @@ function csvMatrix(
       round(o.frozenPlain.cif),
       round(o.frozenPlain.importerPrice),
       round(o.frozenPlain.distributorT3),
+      // Blank where the port has no duty & levy % entered.
+      round(o.frozenPlain.dutyPerKg),
+      round(o.frozenPlain.ddp),
       round(o.frozenGlazed.finalCost),
       round(o.frozenGlazed.sellingPrice),
       pct(o.frozenGlazed.marginPct),
       pct(o.frozenGlazed.wholeRoundMarginPct),
       round(o.frozenGlazed.cif),
       round(o.frozenGlazed.distributorT3),
+      round(o.frozenGlazed.ddp),
       round(o.fresh.sellingPrice),
       pct(o.fresh.marginPct),
       pct(o.fresh.wholeRoundMarginPct),
       round(o.fresh.cif),
       round(o.fresh.distributorT3),
+      round(o.fresh.ddp),
       round(o.frozenPlain.contributionPerKg),
     ];
   });

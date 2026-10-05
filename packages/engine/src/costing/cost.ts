@@ -39,9 +39,27 @@ export function resolveYield(sku: CostSku, bucket?: SizeBucket | null): number {
 export function validateCostInput(input: CostInput): CostIssue[] {
   const { sku, market, destination } = input;
   const issues: CostIssue[] = [];
+  const composite = sku.rawMaterialBasis === 'composite';
+
+  // A composite SKU has no fish / marinade split and no yield: its raw
+  // material is a list of sub-products, already totalled. What it needs
+  // instead is that total — and a missing one must not read as a free product.
+  if (composite) {
+    const c = sku.compositeCostLkrPerKg;
+    if (c == null || !Number.isFinite(c) || c < 0) {
+      issues.push({
+        code: 'invalid_composite',
+        message:
+          'a composite SKU needs its sub-products costed — and, unless it is sold by the kg, the weight of one unit',
+      });
+    }
+    if (!(input.assumptions.fxRate > 0) && market === 'export') {
+      issues.push({ code: 'invalid_composite', message: 'sub-products are priced in LKR, so export needs an FX rate' });
+    }
+  }
 
   const split = sku.pctFish + sku.pctMarinade;
-  if (Math.abs(split - 1) > SPLIT_EPSILON) {
+  if (!composite && Math.abs(split - 1) > SPLIT_EPSILON) {
     issues.push({
       code: 'split_not_100',
       message: `% fish + % marinade = ${(split * 100).toFixed(2)}%, must be 100%`,
@@ -52,7 +70,7 @@ export function validateCostInput(input: CostInput): CostIssue[] {
   // one. An absorbed by-product is unaffected by it; an ingredient SKU needs
   // it exactly as much as a fish one does, since it is what turns a kg of wet
   // swim bladder into a kg of dried maw.
-  if (sku.rawMaterialBasis !== 'absorbed') {
+  if (sku.rawMaterialBasis !== 'absorbed' && !composite) {
     const y = resolveYield(sku, input.bucket);
     if (!(y > 0)) {
       issues.push({ code: 'invalid_yield', message: `yield must be greater than 0, got ${y}` });
@@ -80,7 +98,10 @@ export function costChain(input: CostInput): CostChain {
   const { sku, market, assumptions: a } = input;
   const o = sku.overrides ?? {};
   const wf = wholeFishCost(a, market, input.bucket);
-  const yieldUsed = resolveYield(sku, input.bucket);
+  const composite = sku.rawMaterialBasis === 'composite';
+  // Nothing is divided by a yield on a composite: its sub-products are already
+  // counted per unit of finished product. 1 keeps every downstream use inert.
+  const yieldUsed = composite ? 1 : resolveYield(sku, input.bucket);
   const domestic = market === 'domestic';
 
   const wholeFish = domestic ? wf.wholeFishLkr : wf.wholeFishUsd;
@@ -95,14 +116,27 @@ export function costChain(input: CostInput): CostChain {
   //   fish. Its input is bought, or transferred in, per kg of INPUT — so the
   //   yield divides it the same way, and a null cost reads as zero because an
   //   input the main product has already paid for really is free to this SKU.
-  const inputCost =
-    sku.rawMaterialBasis === 'ingredient' ? (sku.primaryInputCost ?? 0) : wholeFish;
+  //
+  //   A composite SKU has no single input at all — see compositeComponent.
+  const inputCost = composite
+    ? 0
+    : sku.rawMaterialBasis === 'ingredient'
+      ? (sku.primaryInputCost ?? 0)
+      : wholeFish;
   const fishComponent =
-    sku.rawMaterialBasis === 'absorbed' ? 0 : (sku.pctFish * inputCost) / yieldUsed;
+    sku.rawMaterialBasis === 'absorbed' || composite ? 0 : (sku.pctFish * inputCost) / yieldUsed;
 
   const fx = domestic ? a.fxRate : 1;
-  const marinadeComponent = sku.pctMarinade * sku.marinadeUsdPerKg * fx;
-  const rawMaterial = fishComponent + marinadeComponent;
+  const marinadeComponent = composite ? 0 : sku.pctMarinade * sku.marinadeUsdPerKg * fx;
+
+  // The one LKR-denominated input in the chain. Everything else per-SKU is
+  // entered in USD and converted UP for domestic; this is entered in LKR —
+  // sub-products are bought and made in rupees — and converted DOWN for export,
+  // at the version's FX rate.
+  const compositeLkr = composite ? (sku.compositeCostLkrPerKg ?? 0) : 0;
+  const compositeComponent = domestic ? compositeLkr : a.fxRate > 0 ? compositeLkr / a.fxRate : 0;
+
+  const rawMaterial = fishComponent + marinadeComponent + compositeComponent;
 
   const process = sku.processUsdPerKg * fx;
   const packing = sku.packingUsdPerKg * fx;
@@ -123,6 +157,7 @@ export function costChain(input: CostInput): CostChain {
     inputCost,
     fishComponent,
     marinadeComponent,
+    compositeComponent,
     rawMaterial,
     process,
     packing,
@@ -177,7 +212,10 @@ interface WholeRoundBasis {
   yieldUsed: number;
   /** The raw input this SKU actually paid for — fish, or its own ingredient. */
   inputCost: number;
-  /** A by-product never paid for the fish (Decisions §7). */
+  /**
+   * No whole-round figure to report: a by-product never paid for the fish
+   * (Decisions §7), and a composite is not made from one round input at all.
+   */
   absorbed: boolean;
 }
 
@@ -263,7 +301,8 @@ function exportState(
   freightPerKg: number,
   input: CostInput,
   basis: WholeRoundBasis,
-  glazePct: number
+  glazePct: number,
+  dutyLevyPct: number | null
 ): ExportState {
   const { assumptions: a, sku } = input;
   const m = a.margins;
@@ -282,6 +321,16 @@ function exportState(
   const importerPrice = cif * (1 + clearing) * (1 + importerMarkup);
   const distributorT3 = importerPrice * (1 + distributorMarkup);
 
+  // Duty is charged on CIF and sits beside clearing, which stays a percentage
+  // of CIF as it always was. The two markups then apply unchanged, so DDP is
+  // the distributor price with the duty carried through it. Optional: a port
+  // with nothing entered has no DDP rather than one that assumes zero duty.
+  const dutyPerKg = dutyLevyPct == null ? null : cif * dutyLevyPct;
+  const ddp =
+    dutyPerKg == null
+      ? null
+      : (cif * (1 + clearing) + dutyPerKg) * (1 + importerMarkup) * (1 + distributorMarkup);
+
   return {
     finalCost,
     fob,
@@ -292,6 +341,8 @@ function exportState(
     importerPrice,
     distributorT3,
     freightPerKg,
+    dutyPerKg,
+    ddp,
     contributionPerKg: contribution(sku.marketPrice, finalCost),
   };
 }
@@ -323,7 +374,7 @@ export function computeCost(input: CostInput): CostResult {
     conversionCost: chain.finalCost - chain.fishComponent,
     yieldUsed: chain.yieldUsed,
     inputCost: chain.inputCost,
-    absorbed: sku.rawMaterialBasis === 'absorbed',
+    absorbed: sku.rawMaterialBasis === 'absorbed' || sku.rawMaterialBasis === 'composite',
   };
 
   if (market === 'domestic') {
@@ -340,17 +391,20 @@ export function computeCost(input: CostInput): CostResult {
 
   const d = input.destination!;
   const { seaPerKg, airPerKg } = destinationPerKg(d, a.freight.containerFillKg, a.freight.airLotKg);
+  // A negative or non-numeric rate is bad data, and reads as not entered.
+  const dutyLevyPct =
+    d.dutyLevyPct != null && Number.isFinite(d.dutyLevyPct) && d.dutyLevyPct >= 0 ? d.dutyLevyPct : null;
 
   const result: ExportOutput = {
     market: 'export',
     currency: 'USD',
     chain,
-    destination: { id: d.id, name: d.name, seaPerKg, airPerKg },
-    frozenPlain: exportState(chain.finalCost, seaPerKg, input, wholeRoundBasis, 0),
-    frozenGlazed: exportState(glazed, seaPerKg, input, wholeRoundBasis, sku.glazePct),
+    destination: { id: d.id, name: d.name, seaPerKg, airPerKg, dutyLevyPct },
+    frozenPlain: exportState(chain.finalCost, seaPerKg, input, wholeRoundBasis, 0, dutyLevyPct),
+    frozenGlazed: exportState(glazed, seaPerKg, input, wholeRoundBasis, sku.glazePct, dutyLevyPct),
     // Fresh is identical to frozen-no-glaze all the way to FOB; it diverges
     // only by leaving on a plane instead of in a container.
-    fresh: exportState(chain.finalCost, airPerKg, input, wholeRoundBasis, 0),
+    fresh: exportState(chain.finalCost, airPerKg, input, wholeRoundBasis, 0, dutyLevyPct),
   };
   return { ok: true, value: { ...common, result } };
 }
