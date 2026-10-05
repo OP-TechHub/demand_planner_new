@@ -359,7 +359,7 @@ function DestinationFreight({
               <th className="py-1 pr-3 text-right font-medium">→ Air $/kg</th>
               <th
                 className="py-1 text-right font-medium"
-                title="Import duty and levies at this port, as a % of CIF. Optional — when entered, a DDP price is shown for the port."
+                title="Import duty and levies at this port, as a % of the FOB price. Optional — when entered, a DDP price is shown for the port."
               >
                 Duty &amp; levy %
               </th>
@@ -387,7 +387,7 @@ function DestinationFreight({
                     {lot > 0 ? (airRate / lot).toFixed(3) : '—'}
                   </td>
                   <td className="py-1.5 text-right">
-                    {/* Whole percent on screen, a fraction of CIF in the database. Blank = not entered, no DDP. */}
+                    {/* Whole percent on screen, a fraction of FOB in the database. Blank = not entered, no DDP. */}
                     <input name={`duty_${d.id}`} defaultValue={r.duty != null ? Number((r.duty * 100).toFixed(4)) : ''} type="number" step="any" min="0" placeholder="—" disabled={!canEdit} className={cn(inputCls, 'w-20 text-right')} />
                   </td>
                   {canManage && (
@@ -451,8 +451,8 @@ function DestinationFreight({
       )}
 
       <p className="text-[11px] text-muted-foreground">
-        Duty &amp; levy is optional and charged on CIF. Enter it as a percentage (5 for 5%) and the
-        port gains a DDP price; leave it blank and none is shown.
+        Duty &amp; levy is optional. It is worked out on the FOB price and added to CIF. Enter it as
+        a percentage (5 for 5%) and the port gains a DDP price; leave it blank and none is shown.
       </p>
 
       {canEdit && !isCurrentVersion && (

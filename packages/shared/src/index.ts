@@ -565,7 +565,7 @@ export interface CostDestinationRate {
   sea_rate_per_20ft: number;
   air_rate_per_lot: number;
   /**
-   * Import duty and levies as a fraction of CIF. Null means not entered, so no
+   * Import duty and levies as a fraction of FOB. Null means not entered, so no
    * DDP price is shown. Optional because a database that has not run the duty
    * migration returns rows without it.
    */

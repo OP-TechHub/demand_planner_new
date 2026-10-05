@@ -321,11 +321,12 @@ function exportState(
   const importerPrice = cif * (1 + clearing) * (1 + importerMarkup);
   const distributorT3 = importerPrice * (1 + distributorMarkup);
 
-  // Duty is charged on CIF and sits beside clearing, which stays a percentage
-  // of CIF as it always was. The two markups then apply unchanged, so DDP is
-  // the distributor price with the duty carried through it. Optional: a port
-  // with nothing entered has no DDP rather than one that assumes zero duty.
-  const dutyPerKg = dutyLevyPct == null ? null : cif * dutyLevyPct;
+  // Duty is assessed on the FOB price actually charged — freight is not in its
+  // base — and the amount is then added to CIF. Nothing else changes: clearing
+  // stays a percentage of CIF alone, as on the ladder above, and the two
+  // markups follow. Optional: a port with nothing entered has no DDP rather
+  // than one that assumes zero duty.
+  const dutyPerKg = dutyLevyPct == null ? null : sellingPrice * dutyLevyPct;
   const ddp =
     dutyPerKg == null
       ? null

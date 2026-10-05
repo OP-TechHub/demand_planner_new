@@ -110,9 +110,8 @@ export async function saveCosting(input: SaveCostingInput): Promise<{ error: str
   const name = input.name.trim();
   if (!name) return { error: 'Give the costing a name.' };
   if (input.skuIds.length === 0) return { error: 'No SKUs to save.' };
-  if (input.market === 'export' && input.destinationIds.length === 0) {
-    return { error: 'Pick at least one destination before saving an export costing.' };
-  }
+  // An export costing with no ports picked is not an error: each product is
+  // then costed to the port saved on it — see defaultDestFor.
 
   const supabase = await createClient();
   const {

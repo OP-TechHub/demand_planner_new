@@ -282,7 +282,7 @@ export async function publishAssumptionVersion(_prev: SaveState, fd: FormData): 
       const air = Number(String(posted(`air_${r.destination_id}`, r.air_rate_per_lot)).trim());
       // Duty & levy is optional, so unlike the freight a blank box is an
       // answer — "not entered" — rather than a typo to ignore. The screen
-      // takes whole percent; the column holds a fraction of CIF.
+      // takes whole percent; the column holds a fraction of FOB.
       const carriedDuty = r.duty_levy_pct ?? null;
       const dutyRaw = access.canEditRest ? fd.get(`duty_${r.destination_id}`) : null;
       let duty = carriedDuty;
@@ -433,7 +433,7 @@ export async function addDestination(input: {
   name: string;
   sea: number;
   air: number;
-  /** Duty & levy as a fraction of CIF. Null or absent: not entered, no DDP shown. */
+  /** Duty & levy as a fraction of FOB. Null or absent: not entered, no DDP shown. */
   duty?: number | null;
 }): Promise<{ error: string | null }> {
   const supabase = await createClient();

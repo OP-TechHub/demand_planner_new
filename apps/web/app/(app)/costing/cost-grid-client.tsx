@@ -128,9 +128,10 @@ export function CostGridClient({
   const router = useRouter();
   const [market, setMarket] = useState<CostMarket>('domestic');
   const [bucketId, setBucketId] = useState<string>(''); // '' = flat reference model
-  const [selectedDests, setSelectedDests] = useState<string[]>(() =>
-    destinations.length ? [destinations[0]!.id] : []
-  );
+  // None picked means every product is costed to the port saved on it ("Export
+  // to" in the SKU editor). Starting with the first port selected instead would
+  // override that choice for every row before anyone had asked to compare ports.
+  const [selectedDests, setSelectedDests] = useState<string[]>([]);
   const [showInactive, setShowInactive] = useState(false);
   const [query, setQuery] = useState('');
   // Everyone's by default. The grid exists to compare across the range, so it
@@ -240,9 +241,9 @@ export function CostGridClient({
       }
 
       // An export product needs a port. The page's chosen ports are used when
-      // there are any — that is how ports get compared side by side — but the
-      // domestic grid selects none, so it falls back to the port this product
-      // is normally quoted to, and then to the first active one.
+      // there are any — that is how ports get compared side by side — and with
+      // none chosen it is costed to the port this product is normally quoted
+      // to, and then to the first active one.
       const ports = activeDests.length
         ? activeDests
         : [destinations.find((d) => d.id === sku.default_destination_id) ?? destinations[0]].filter(
@@ -824,7 +825,9 @@ function Controls({
             </button>
           ))}
           {selectedDests.length === 0 && (
-            <span className="text-xs text-destructive">Pick at least one port to see CIF and below.</span>
+            <span className="text-xs text-muted-foreground">
+              Each product is costed to its own port. Pick one or more to cost every product there instead.
+            </span>
           )}
         </div>
       )}
@@ -883,7 +886,7 @@ function Grid({
   const showDdp =
     !domestic && rows.some((r) => r.result.ok && (r.result.value.result as ExportOutput).frozenPlain.ddp != null);
   const DDP_TITLE =
-    'Delivered duty paid: (CIF x (1 + clearing) + CIF x duty & levy %) x (1 + importer markup) x (1 + distributor markup)';
+    'Delivered duty paid: (CIF x (1 + clearing) + FOB x duty & levy %) x (1 + importer markup) x (1 + distributor markup)';
 
   return (
     <ScrollX className="max-h-[70vh] rounded-lg border bg-card">

@@ -6,12 +6,13 @@
 -- by the country the goods land in, so it belongs beside the freight rates,
 -- one figure per port.
 --
---     duty per kg = CIF x duty_levy_pct
+--     duty per kg = FOB x duty_levy_pct
 --     DDP         = (CIF x (1 + clearing) + duty) x (1 + importer) x (1 + distributor)
 --
--- Clearing stays a percentage of CIF, as it always was; the duty is added
--- beside it rather than compounded through it. The importer and distributor
--- markups then apply exactly as they do on the existing ladder.
+-- The duty is worked out on the FOB price, so freight is not in its base, and
+-- the amount is added to CIF. Nothing else moves: clearing stays a percentage
+-- of CIF alone, and the importer and distributor markups apply exactly as they
+-- do on the existing ladder.
 --
 -- OPTIONAL
 -- Null means "not entered", and no DDP price is shown for that port. It is not
@@ -44,4 +45,4 @@ begin
 end $$;
 
 comment on column demand_planner.cost_destination_rates.duty_levy_pct is
-  'Import duty and levies at this port, as a fraction of CIF (0.05 = 5%). Null means not entered: no DDP price is shown.';
+  'Import duty and levies at this port, as a fraction of FOB (0.05 = 5%). Null means not entered: no DDP price is shown.';

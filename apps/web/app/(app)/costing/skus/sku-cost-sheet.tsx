@@ -108,6 +108,9 @@ export function SkuCostSheet({
           {category && <Meta label="Category" value={category} />}
           {customer && <Meta label="Customer" value={customer} />}
           {destinationName && <Meta label="Destination" value={destinationName} />}
+          {exportOut?.destination?.dutyLevyPct != null && (
+            <Meta label="Duty & levy" value={`${asPct(exportOut.destination.dutyLevyPct)} of FOB`} />
+          )}
           <Meta
             label="Sold as"
             value={
@@ -227,7 +230,11 @@ export function SkuCostSheet({
                     // Only where the port has a duty & levy % entered.
                     ...(s.ddp != null
                       ? [
-                          { label: 'Duty & levy per kg', value: s.dutyPerKg },
+                          {
+                            label: `Duty & levy — ${asPct(exportOut.destination?.dutyLevyPct ?? 0)} of FOB`,
+                            value: s.dutyPerKg,
+                          },
+                          { label: 'CIF + duty & levy', value: s.cif + (s.dutyPerKg ?? 0) },
                           { label: 'DDP (duty paid)', value: s.ddp },
                         ]
                       : []),
