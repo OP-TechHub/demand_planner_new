@@ -576,7 +576,7 @@ describe('target pricing', () => {
     expect(out.fresh.ddp).toBeNull();
   });
 
-  it('builds DDP from duty on CIF, clearing as before, then the two markups', () => {
+  it('builds DDP from duty on FOB added to CIF, with clearing and the markups as before', () => {
     const base = ok(exported(fillet)).value.result as ExportOutput;
     const out = ok(
       computeCost({
@@ -589,14 +589,17 @@ describe('target pricing', () => {
     const m = A.margins;
 
     for (const s of [out.frozenPlain, out.frozenGlazed, out.fresh]) {
-      expect(s.dutyPerKg).toBeCloseTo(s.cif * 0.1, 9);
+      // On FOB, so the freight leg carries no duty.
+      expect(s.dutyPerKg).toBeCloseTo(s.sellingPrice * 0.1, 9);
       expect(s.ddp).toBeCloseTo(
-        (s.cif * (1 + m.importerClearingPct) + s.cif * 0.1) *
+        (s.cif * (1 + m.importerClearingPct) + s.sellingPrice * 0.1) *
           (1 + m.importerMarkupPct) *
           (1 + m.distributorMarkupPct),
         9
       );
     }
+    // Fresh and frozen share a FOB, so they owe the same duty despite the air leg.
+    expect(out.fresh.dutyPerKg).toBeCloseTo(out.frozenPlain.dutyPerKg!, 9);
     // Entering a duty adds a figure; it moves nothing that was already there.
     expect(out.frozenPlain.cif).toBeCloseTo(base.frozenPlain.cif, 9);
     expect(out.frozenPlain.importerPrice).toBeCloseTo(base.frozenPlain.importerPrice, 9);

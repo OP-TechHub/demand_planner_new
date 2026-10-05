@@ -168,7 +168,7 @@ export interface Destination {
   seaRatePer20ft: number;
   airRatePerLot: number;
   /**
-   * Import duty and levies at this port, as a fraction of CIF. Null or absent
+   * Import duty and levies at this port, as a fraction of FOB. Null or absent
    * means it has not been entered, and no DDP price is produced — which is not
    * the same as 0, a duty-free port whose DDP equals the distributor price.
    */
@@ -292,15 +292,16 @@ export interface ExportState {
   importerPrice: number;
   distributorT3: number;
   freightPerKg: number;
-  /** CIF x the port's duty & levy %. Null when the port has none entered. */
+  /** FOB (sellingPrice) x the port's duty & levy %. Null when the port has none entered. */
   dutyPerKg: number | null;
   /**
    * Delivered duty paid: the distributor price with the duty in it.
    *
    *   (CIF x (1 + clearing) + duty) x (1 + importer markup) x (1 + distributor markup)
    *
-   * Clearing stays a percentage of CIF; the duty is added beside it. Null when
-   * the port has no duty & levy % entered.
+   * The duty is worked out on FOB, not CIF, and added to CIF. Clearing stays
+   * on CIF alone, as it is for distributorT3. Null when the port has no duty &
+   * levy % entered.
    */
   ddp: number | null;
   contributionPerKg: number | null;

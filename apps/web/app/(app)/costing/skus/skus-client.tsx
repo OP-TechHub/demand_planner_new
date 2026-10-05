@@ -437,6 +437,8 @@ interface DownstreamPct {
   clearingPct: number;
   importerMarkupPct: number;
   distributorMarkupPct: number;
+  /** The port's duty & levy, as a fraction of FOB. Null when none is entered. */
+  dutyLevyPct: number | null;
 }
 
 interface PreviewResult {
@@ -646,6 +648,7 @@ function previewFromForm(
           importerMarkupPct: base.overrides.importerMarkupPct ?? assumptions.margins.importerMarkupPct,
           distributorMarkupPct:
             base.overrides.distributorMarkupPct ?? assumptions.margins.distributorMarkupPct,
+          dutyLevyPct: exportOut.destination?.dutyLevyPct ?? null,
         };
       } else issues.push(...res.issues.map((i) => i.message));
     }
@@ -1148,8 +1151,8 @@ function DownstreamBlock({
               </th>
               {hasDuty && (
                 <>
-                  <th className="py-0.5 font-medium" title="CIF x the port's duty & levy %">
-                    + Duty &amp; levy (USD/kg)
+                  <th className="py-0.5 font-medium" title="FOB x the port's duty & levy %">
+                    + Duty &amp; levy{pct.dutyLevyPct != null ? ` ${asPct(pct.dutyLevyPct)}` : ''} (USD/kg)
                   </th>
                   <th
                     className="py-0.5 font-medium"
@@ -1183,7 +1186,8 @@ function DownstreamBlock({
       </ScrollX>
       <p className="mt-1 text-[10px] text-muted-foreground">
         Clearing {asPct(pct.clearingPct)} · importer markup {asPct(pct.importerMarkupPct)} · distributor
-        markup {asPct(pct.distributorMarkupPct)}. None of this touches our cost or margin — change the
+        markup {asPct(pct.distributorMarkupPct)}
+        {pct.dutyLevyPct != null && ` · duty & levy ${asPct(pct.dutyLevyPct)} of FOB`}. None of this touches our cost or margin — change the
         port to see another lane.
       </p>
     </div>

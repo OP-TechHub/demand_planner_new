@@ -48,6 +48,9 @@ export function CostSheet({
   const chain = rec(out.chain);
   const wf = rec(out.wholeFish);
   const inputs = rec(line.inputs);
+  // The port's duty & levy as snapshotted with the line. Missing on a port with
+  // none entered, and on lines saved before DDP existed.
+  const dutyLevyPct = num(rec(out.destination).dutyLevyPct);
 
   const yieldUsed = num(chain.yieldUsed);
   const glazePct = num(inputs.glaze_pct) ?? 0;
@@ -88,6 +91,7 @@ export function CostSheet({
           <Meta label="Pack state" value={COST_STATE_LABEL[line.state]} />
           <Meta label="Market" value={domestic ? 'Domestic' : 'Export'} />
           {line.destination_name && <Meta label="Destination" value={line.destination_name} />}
+          {dutyLevyPct != null && <Meta label="Duty & levy" value={`${asPct(dutyLevyPct)} of FOB`} />}
           <Meta label="Currency" value={`${line.currency} per kg finished product`} />
           {yieldUsed != null && <Meta label="Yield used" value={asPct(yieldUsed)} />}
           {glazePct > 0 && <Meta label="Glaze" value={asPct(glazePct)} />}
@@ -209,7 +213,16 @@ export function CostSheet({
                   {/* Absent on a port with no duty entered, and on lines saved before DDP existed. */}
                   {num(out.ddp) != null && (
                     <>
-                      <Row label="Duty & levy per kg" value={num(out.dutyPerKg)} fmt={money} />
+                      <Row
+                        label={`Duty & levy${dutyLevyPct != null ? ` — ${asPct(dutyLevyPct)} of FOB` : ''}`}
+                        value={num(out.dutyPerKg)}
+                        fmt={money}
+                      />
+                      <Row
+                        label="CIF + duty & levy"
+                        value={(num(out.cif) ?? 0) + (num(out.dutyPerKg) ?? 0)}
+                        fmt={money}
+                      />
                       <Row label="DDP (duty paid)" value={num(out.ddp)} fmt={money} />
                     </>
                   )}
