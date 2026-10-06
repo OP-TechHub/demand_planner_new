@@ -517,6 +517,7 @@ function resolveLines(args: {
           // still be read per pack after the SKU's list has changed.
           unit_label: skuRow.unit_label ?? 'kg',
           unit_weight_g: skuRow.unit_weight_g ?? null,
+          batch_units: skuRow.batch_units ?? 1,
           composite_cost_lkr: skuRow.raw_material_basis === 'composite' ? (skuRow.composite_cost_lkr ?? null) : null,
         },
       };

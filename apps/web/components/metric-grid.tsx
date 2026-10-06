@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Search, X } from 'lucide-react';
+import { Check, Search, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { type Aggregate, type GridRow } from '@/lib/grid-csv';
 import { rowLabel } from '@/lib/grid-export';
@@ -39,7 +39,7 @@ type StatusFilter = (typeof STATUS_TABS)[number]['key'];
 
 /** Sentinel for "no component selected" — show the metric's own total rows. */
 const ALL_PARTS = '__all__';
-/** Sentinel for "no single program picked" — show every row. */
+/** Sentinel for "no programs picked" — show every row. */
 const ALL_ROWS = '__all__';
 
 /** A row's searchable text: whatever the grid shows in its first column. */
@@ -63,7 +63,7 @@ export function MetricGrid({
   filenameBase?: string;
   /** When true, show an Active / Pipeline / Combined filter over each row's `group`. */
   statusFilter?: boolean;
-  /** When true, show a search box and a single-row picker over the grid's rows. */
+  /** When true, show a search box and a multi-row picker over the grid's rows. */
   rowFilter?: boolean;
   /** Extra descriptive columns, filled from each row's `extra` array. */
   extraCols?: { label: string; align?: 'left' | 'right'; width?: string; unit?: string }[];
@@ -73,7 +73,8 @@ export function MetricGrid({
   const [sel, setSel] = useState(metrics[0]?.key);
   const [status, setStatus] = useState<StatusFilter>('combined');
   const [part, setPart] = useState(ALL_PARTS);
-  const [pick, setPick] = useState(ALL_ROWS);
+  // Keys of the rows picked in the picker; empty means every row.
+  const [picks, setPicks] = useState<string[]>([]);
   // Mirrors the grid's month selectors, so Export CSV carries the months on screen.
   const [range, setRange] = useState({ from: 1, to: horizon });
   const m = metrics.find((x) => x.key === sel) ?? metrics[0];
@@ -84,10 +85,12 @@ export function MetricGrid({
   const baseRows = activePart?.rows ?? m.rows;
   const statusRows = statusFilter && status !== 'combined' ? baseRows.filter((r) => r.group === status) : baseRows;
 
-  // A pick the status filter has since excluded is ignored rather than silently
-  // emptying the grid.
-  const picked = rowFilter && pick !== ALL_ROWS ? statusRows.find((r) => r.key === pick) : undefined;
-  const rows = picked ? [picked] : statusRows;
+  // Picks the status filter has since excluded are ignored rather than silently
+  // emptying the grid. Picked rows keep the grid's own order, not click order,
+  // so the TOTAL beneath them reads as a sub-total of the sheet above.
+  const pickSet = new Set(picks);
+  const pickedRows = rowFilter && picks.length > 0 ? statusRows.filter((r) => pickSet.has(r.key)) : [];
+  const rows = pickedRows.length > 0 ? pickedRows : statusRows;
 
   return (
     <div className="space-y-3">
@@ -137,8 +140,8 @@ export function MetricGrid({
           {rowFilter && (
             <RowPicker
               rows={statusRows}
-              value={picked ? pick : ALL_ROWS}
-              onChange={setPick}
+              value={pickedRows.map((r) => r.key)}
+              onChange={setPicks}
               label={firstColLabel.toLowerCase()}
             />
           )}
@@ -151,7 +154,7 @@ export function MetricGrid({
             subtitle: [
               m.unit ?? '',
               statusFilter && status !== 'combined' ? `${status[0]!.toUpperCase()}${status.slice(1)} only` : '',
-              picked ? rowLabel(picked) : '',
+              pickedRows.length > 0 ? pickedRows.map(rowLabel).join(', ') : '',
             ].filter(Boolean).join(' · ') || undefined,
             firstCol: firstColLabel,
             extraCols: extraCols?.map((c) => (c.unit ? `${c.label} (${c.unit})` : c.label)),
@@ -181,9 +184,10 @@ export function MetricGrid({
 }
 
 /**
- * One control that both searches and selects: type to narrow, pick to show a
- * single row, or choose "All …" to go back to the full grid. Keyboard-driven
- * (↑/↓/Enter/Esc) and closes on outside click.
+ * One control that both searches and selects: type to narrow, tick the rows to
+ * show (any number of them), or choose "All …" to go back to the full grid.
+ * The list stays open while ticking so several can be picked in one go; it
+ * closes on Esc or an outside click. Keyboard-driven (↑/↓/Enter/Esc).
  */
 function RowPicker({
   rows,
@@ -192,8 +196,9 @@ function RowPicker({
   label,
 }: {
   rows: GridRow[];
-  value: string;
-  onChange: (key: string) => void;
+  /** Keys of the picked rows; empty means all. */
+  value: string[];
+  onChange: (keys: string[]) => void;
   label: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -202,7 +207,8 @@ function RowPicker({
   const wrapRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
-  const selected = value !== ALL_ROWS ? rows.find((r) => r.key === value) ?? null : null;
+  const chosen = new Set(value);
+  const selected = rows.filter((r) => chosen.has(r.key));
   const q = query.trim().toLowerCase();
   const matches = q ? rows.filter((r) => rowText(r).includes(q)) : rows;
   const options = [{ key: ALL_ROWS, label: `All ${label}s (${rows.length})`, sublabel: '' }, ...matches];
@@ -222,8 +228,17 @@ function RowPicker({
     if (open) (listRef.current?.children[active] as HTMLElement | undefined)?.scrollIntoView({ block: 'nearest' });
   }, [active, open]);
 
-  const choose = (key: string) => { onChange(key); setQuery(''); setOpen(false); };
-  const display = selected ? `${selected.label}${selected.sublabel ? ` — ${selected.sublabel}` : ''}` : '';
+  const clear = () => { onChange([]); setQuery(''); setOpen(false); };
+  // Toggling keeps the list open so the next pick is one click away. The
+  // parent keeps the picked set in the grid's order, so click order is moot.
+  const toggle = (key: string) => {
+    if (key === ALL_ROWS) { clear(); return; }
+    onChange(chosen.has(key) ? value.filter((k) => k !== key) : [...value, key]);
+  };
+  const display =
+    selected.length === 0 ? ''
+    : selected.length === 1 ? `${selected[0]!.label}${selected[0]!.sublabel ? ` — ${selected[0]!.sublabel}` : ''}`
+    : `${selected.length} ${label}s selected`;
 
   return (
     <div ref={wrapRef} className="relative">
@@ -234,21 +249,21 @@ function RowPicker({
         aria-expanded={open}
         aria-label={label}
         value={open ? query : display}
-        placeholder={selected ? '' : `Search ${label}…`}
+        placeholder={selected.length > 0 ? '' : `Search ${label}…`}
         onFocus={() => { setQuery(''); setActive(0); setOpen(true); }}
         onChange={(e) => { setQuery(e.target.value); setActive(0); setOpen(true); }}
         onKeyDown={(e) => {
           if (e.key === 'ArrowDown') { e.preventDefault(); setActive((a) => Math.min(a + 1, options.length - 1)); }
           else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((a) => Math.max(a - 1, 0)); }
-          else if (e.key === 'Enter') { e.preventDefault(); const o = options[active]; if (o) choose(o.key); }
+          else if (e.key === 'Enter') { e.preventDefault(); const o = options[active]; if (o) toggle(o.key); }
           else if (e.key === 'Escape') { setOpen(false); setQuery(''); }
         }}
         className="w-72 rounded-md border border-border bg-card py-1.5 pl-7 pr-7 text-sm outline-none focus:ring-2 focus:ring-primary"
       />
-      {selected && !open && (
+      {selected.length > 0 && !open && (
         <button
           type="button"
-          onClick={() => choose(ALL_ROWS)}
+          onClick={clear}
           aria-label={`Show all ${label}s`}
           className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
         >
@@ -256,27 +271,50 @@ function RowPicker({
         </button>
       )}
       {open && (
-        <div ref={listRef} className="absolute z-20 mt-1 max-h-72 w-full overflow-y-auto rounded-md border bg-card shadow-lg">
-          {options.length === 1 && q ? (
-            <div className="px-3 py-2 text-sm text-muted-foreground">No {label} matches “{query}”.</div>
-          ) : (
-            options.map((o, i) => (
-              <button
-                type="button"
-                key={o.key}
-                onMouseEnter={() => setActive(i)}
-                onClick={() => choose(o.key)}
-                className={cn(
-                  'flex w-full flex-col items-start gap-0.5 px-3 py-1.5 text-left',
-                  i === active ? 'bg-primary/10' : 'hover:bg-muted',
-                  o.key === value && 'font-medium'
-                )}
-              >
-                <span className="text-sm">{o.label}</span>
-                {o.sublabel && <span className="text-xs text-muted-foreground">{o.sublabel}</span>}
+        <div className="absolute z-20 mt-1 w-full rounded-md border bg-card shadow-lg">
+          {selected.length > 0 && (
+            <div className="flex items-center justify-between border-b px-3 py-1.5 text-xs text-muted-foreground">
+              <span>{selected.length} of {rows.length} picked</span>
+              <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={clear} className="font-medium text-foreground hover:underline">
+                Clear
               </button>
-            ))
+            </div>
           )}
+          <div ref={listRef} className="max-h-72 overflow-y-auto">
+            {options.length === 1 && q ? (
+              <div className="px-3 py-2 text-sm text-muted-foreground">No {label} matches “{query}”.</div>
+            ) : (
+              options.map((o, i) => {
+                const isAll = o.key === ALL_ROWS;
+                const on = isAll ? selected.length === 0 : chosen.has(o.key);
+                return (
+                  <button
+                    type="button"
+                    key={o.key}
+                    role="option"
+                    aria-selected={on}
+                    onMouseEnter={() => setActive(i)}
+                    // Keep focus in the input so typing to narrow still works after a tick.
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => toggle(o.key)}
+                    className={cn(
+                      'flex w-full items-start gap-2 px-3 py-1.5 text-left',
+                      i === active ? 'bg-primary/10' : 'hover:bg-muted',
+                      on && 'font-medium'
+                    )}
+                  >
+                    <span className={cn('mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border', on ? 'border-primary bg-primary text-primary-foreground' : 'border-border')}>
+                      {on && <Check className="h-3 w-3" />}
+                    </span>
+                    <span className="flex flex-col items-start gap-0.5">
+                      <span className="text-sm">{o.label}</span>
+                      {o.sublabel && <span className="text-xs text-muted-foreground">{o.sublabel}</span>}
+                    </span>
+                  </button>
+                );
+              })
+            )}
+          </div>
         </div>
       )}
     </div>

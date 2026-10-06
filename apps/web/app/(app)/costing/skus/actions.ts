@@ -1,7 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { compositeCostLkr, type CostComponentInput } from '@oceanpick/shared';
+import { compositeCostLkr, type CostComponentInput, type CostOverheadInput } from '@oceanpick/shared';
 import { createClient } from '@/lib/supabase/server';
 
 export type SkuFormState = { error: string | null; ok: boolean };
@@ -121,6 +121,38 @@ function subProducts(fd: FormData): CostComponentInput[] | null | undefined | 'i
   return clean;
 }
 
+/**
+ * Read a composite SKU's per-batch overheads out of the form. Same shape and
+ * the same three outcomes as the sub-products beside it.
+ */
+function batchOverheads(fd: FormData): CostOverheadInput[] | null | undefined | 'invalid' {
+  const raw = fd.get('overheads');
+  if (raw == null) return undefined;
+  const s = String(raw).trim();
+  if (s === '') return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(s);
+  } catch {
+    return 'invalid';
+  }
+  if (!Array.isArray(parsed)) return 'invalid';
+  if (parsed.length === 0) return null;
+  if (parsed.length > 50) return 'invalid';
+
+  const clean: CostOverheadInput[] = [];
+  for (const o of parsed) {
+    if (typeof o !== 'object' || o === null) return 'invalid';
+    const { name, amount_lkr: amount } = o as Record<string, unknown>;
+    const cleanName = String(name ?? '').trim().slice(0, 200);
+    if (!cleanName) return 'invalid';
+    if (typeof amount !== 'number' || !Number.isFinite(amount) || amount < 0) return 'invalid';
+    clean.push({ name: cleanName, amount_lkr: amount });
+  }
+  return clean;
+}
+
 /** Optional number field: blank means "inherit the global value". */
 function optionalNumber(fd: FormData, key: string): number | null | undefined {
   const raw = fd.get(key);
@@ -210,6 +242,18 @@ export async function saveCostSku(_prev: SkuFormState, fd: FormData): Promise<Sk
   }
   const unitLabel = String(fd.get('unit_label') ?? 'kg').trim().slice(0, 20) || 'kg';
   const unitWeightG = optionalNumber(fd, 'unit_weight_g');
+  // Quantities and overheads are entered per batch; this is what a batch makes.
+  // Absent or blank reads as 1 — entered per unit — which is what every
+  // composite saved before batches existed already is.
+  const batchRaw = String(fd.get('batch_units') ?? '').trim();
+  const batchUnits = batchRaw === '' ? 1 : Number(batchRaw);
+  const overheads = batchOverheads(fd);
+  if (overheads === 'invalid') {
+    return { error: 'The overheads could not be read. Check each one has a name and an amount, then save again.', ok: false };
+  }
+  if (composite && !(Number.isFinite(batchUnits) && batchUnits > 0)) {
+    return { error: `Enter how many ${unitLabel === 'kg' ? 'kg' : `${unitLabel}s`} one batch makes — it must be more than 0. Use 1 if the quantities are for a single one.`, ok: false };
+  }
   if (composite) {
     if (!parts || parts.length === 0) {
       return { error: 'A composite SKU needs at least one sub-product — add what goes into it, with a quantity and a price.', ok: false };
@@ -344,7 +388,8 @@ export async function saveCostSku(_prev: SkuFormState, fd: FormData): Promise<Sk
       ? {
           unit_label: composite ? unitLabel : 'kg',
           unit_weight_g: composite && unitLabel !== 'kg' ? (unitWeightG ?? null) : null,
-          composite_cost_lkr: parts ? compositeCostLkr(parts) : null,
+          batch_units: composite ? batchUnits : 1,
+          composite_cost_lkr: parts ? compositeCostLkr(parts, composite ? batchUnits : 1, overheads ?? []) : null,
         }
       : {}),
     // The divisor lives on the SKU so the recipe can be replayed; null says the
@@ -370,7 +415,7 @@ export async function saveCostSku(_prev: SkuFormState, fd: FormData): Promise<Sk
     const recipeError = await writeMarinadeLines(supabase, id, recipe);
     if (recipeError) return { error: recipeError, ok: false };
     if (touchesParts) {
-      const partsError = await writeSubProducts(supabase, id, parts ?? null);
+      const partsError = await writeSubProducts(supabase, id, parts ?? null, overheads ?? []);
       if (partsError) return { error: partsError, ok: false };
     }
   } else {
@@ -396,7 +441,7 @@ export async function saveCostSku(_prev: SkuFormState, fd: FormData): Promise<Sk
     const recipeError = await writeMarinadeLines(supabase, (created as { id: string }).id, recipe);
     if (recipeError) return { error: recipeError, ok: false };
     if (touchesParts) {
-      const partsError = await writeSubProducts(supabase, (created as { id: string }).id, parts ?? null);
+      const partsError = await writeSubProducts(supabase, (created as { id: string }).id, parts ?? null, overheads ?? []);
       if (partsError) return { error: partsError, ok: false };
     }
 
@@ -466,18 +511,34 @@ async function writeMarinadeLines(
 async function writeSubProducts(
   supabase: Awaited<ReturnType<typeof createClient>>,
   skuId: string,
-  parts: CostComponentInput[] | null
+  parts: CostComponentInput[] | null,
+  overheads: CostOverheadInput[]
 ): Promise<string | null> {
   const { error: delError } = await supabase.from('cost_sku_components').delete().eq('sku_id', skuId);
   if (delError) return `The SKU was saved, but its sub-products could not be updated: ${friendly(delError.message)}`;
   if (!parts || parts.length === 0) return null;
 
+  // Overheads share the table: a flat amount per batch is a row of qty 1 at
+  // that price, marked so it is never mistaken for something in the pack. They
+  // sort after the sub-products and never carry an ingredient list.
+  const overheadRows = overheads.map((o, j) => ({
+    sku_id: skuId,
+    sort_order: (parts.length + j) * 10,
+    kind: 'overhead',
+    name: o.name,
+    qty: 1,
+    unit: 'batch',
+    price_lkr_per_unit: o.amount_lkr,
+    recipe_output_qty: null,
+  }));
+
   const { data: inserted, error: insError } = await supabase
     .from('cost_sku_components')
-    .insert(
-      parts.map((p, i) => ({
+    .insert([
+      ...parts.map((p, i) => ({
         sku_id: skuId,
         sort_order: i * 10,
+        kind: 'component',
         name: p.name,
         qty: p.qty,
         unit: p.unit,
@@ -486,8 +547,9 @@ async function writeSubProducts(
         price_lkr_per_unit: p.price_lkr_per_unit,
         // How many finished units the ingredient list covers; null = no list.
         recipe_output_qty: p.recipe ? p.recipe.output_qty : null,
-      }))
-    )
+      })),
+      ...overheadRows,
+    ])
     .select('id, sort_order');
   if (insError || !inserted) {
     return `The SKU was saved, but its sub-products were not — reopen it and save again. (${friendly(insError?.message ?? 'no rows returned')})`;
@@ -572,6 +634,10 @@ function friendly(message: string): string {
     m.includes('cost_sku_component')
   ) {
     return 'This database has not been updated for composite SKUs yet. Apply migration 20261005000001_costing_composite_basis.sql, then save again.';
+  }
+  // Batches and overheads arrived one migration later.
+  if (m.includes('batch_units') || m.includes("'kind' column") || m.includes('column "kind"')) {
+    return 'This database has not been updated for composite batches and overheads yet. Apply migration 20261006000001_costing_composite_batch.sql, then save again.';
   }
   if (m.includes('duplicate') || m.includes('unique')) {
     return 'A SKU with that name already exists.';

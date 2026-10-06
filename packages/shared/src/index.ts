@@ -620,6 +620,12 @@ export interface CostSkuRow {
   unit_weight_g?: number | null;
   /** LKR per unit of finished product — the total of the sub-product list. */
   composite_cost_lkr?: number | null;
+  /**
+   * How many finished units one batch makes. A composite SKU's sub-products
+   * and overheads are entered per batch and divided by this; 1 means they are
+   * entered per unit. Optional for the same reason as the unit columns.
+   */
+  batch_units?: number;
   product_form: CostProductForm;
   market_scope: CostMarketScope;
   /**
@@ -733,6 +739,12 @@ export interface CostSkuComponent {
   unit: string;
   price_lkr_per_unit: number;
   recipe_output_qty: number | null;
+  /**
+   * 'overhead' rows are flat LKR amounts per batch — labour, gas — stored as
+   * qty 1 x price. Absent on a database that predates the column, where every
+   * row is a component.
+   */
+  kind?: 'component' | 'overhead';
 }
 
 /** One ingredient behind a sub-product, priced in LKR like a marinade's. */
@@ -775,22 +787,105 @@ export function componentIngredientsLkr(lines: CostMarinadeLineInput[], forUnits
   return totalLkr / forUnits;
 }
 
+/** A flat cost per batch that belongs to no ingredient — labour, gas, transport. */
+export interface CostOverheadInput {
+  name: string;
+  amount_lkr: number;
+}
+
 /**
- * What one sub-product costs in ONE unit of the finished product: its own
- * quantity at its own price, PLUS the other ingredients used for it.
+ * What one sub-product costs in a BATCH: its own quantity at its own price,
+ * PLUS the other ingredients used for it.
  *
  * The price is never replaced by the ingredient list. Rice is priced as rice;
  * the garlic and vegetables cooked into it are extra, on top.
+ *
+ * The sub-product's own `qty` is per batch. Its ingredient list says how many
+ * finished units it covers, which need not be this batch: a gravy made 48 cups
+ * at a time is charged to a batch of 12 packs as 12/48 of what it cost.
  */
-export function componentCostLkr(c: CostComponentInput): number {
+export function componentBatchCostLkr(c: CostComponentInput, batchUnits = 1): number {
   const own = c.qty * c.price_lkr_per_unit;
-  const extras = c.recipe ? (componentIngredientsLkr(c.recipe.lines, c.recipe.output_qty) ?? 0) : 0;
-  return own + extras;
+  const extrasPerUnit = c.recipe ? (componentIngredientsLkr(c.recipe.lines, c.recipe.output_qty) ?? 0) : 0;
+  return own + extrasPerUnit * batchUnits;
 }
 
-/** LKR per ONE unit of finished product: every sub-product, ingredients included. */
-export function compositeCostLkr(components: CostComponentInput[]): number {
-  return components.reduce((sum, c) => sum + componentCostLkr(c), 0);
+/** The same, per ONE finished unit. `batchUnits` must be positive. */
+export function componentCostLkr(c: CostComponentInput, batchUnits = 1): number {
+  return componentBatchCostLkr(c, batchUnits) / batchUnits;
+}
+
+/** One line of a composite's cost, for the batch and for one finished unit. */
+export interface CompositeBreakdownLine {
+  name: string;
+  batchLkr: number;
+  perUnitLkr: number;
+}
+
+/**
+ * Where a composite's cost comes from: each sub-product and each overhead, for
+ * the batch and per finished unit, with the totals they add up to.
+ */
+export interface CompositeBreakdown {
+  batchUnits: number;
+  components: CompositeBreakdownLine[];
+  overheads: CompositeBreakdownLine[];
+  componentsBatchLkr: number;
+  overheadsBatchLkr: number;
+  batchLkr: number;
+  perUnitLkr: number;
+}
+
+/**
+ * Cost a composite from its sub-products and overheads.
+ *
+ *   batch cost    = sum(sub-products) + sum(overheads)
+ *   cost per unit = batch cost / batch_units
+ *
+ * Each line is kept as well as the totals, so a screen can show which part of
+ * a pack's cost is the fish and which is the labour, and so the per-unit lines
+ * provably add up to the per-unit total — no ingredient is counted twice.
+ *
+ * Null when the batch size is not a positive number: there is no honest
+ * per-unit figure for a batch that makes nothing.
+ */
+export function compositeBreakdownLkr(
+  components: CostComponentInput[],
+  batchUnits = 1,
+  overheads: CostOverheadInput[] = []
+): CompositeBreakdown | null {
+  if (!(batchUnits > 0) || !Number.isFinite(batchUnits)) return null;
+  const line = (name: string, batchLkr: number): CompositeBreakdownLine => ({
+    name,
+    batchLkr,
+    perUnitLkr: batchLkr / batchUnits,
+  });
+  const c = components.map((x) => line(x.name, componentBatchCostLkr(x, batchUnits)));
+  const o = overheads.map((x) => line(x.name, x.amount_lkr));
+  const componentsBatchLkr = c.reduce((s, x) => s + x.batchLkr, 0);
+  const overheadsBatchLkr = o.reduce((s, x) => s + x.batchLkr, 0);
+  const batchLkr = componentsBatchLkr + overheadsBatchLkr;
+  return {
+    batchUnits,
+    components: c,
+    overheads: o,
+    componentsBatchLkr,
+    overheadsBatchLkr,
+    batchLkr,
+    perUnitLkr: batchLkr / batchUnits,
+  };
+}
+
+/**
+ * LKR per ONE unit of finished product: every sub-product, its ingredients,
+ * and the batch's overheads. Null when the batch size is unusable.
+ */
+export function compositeCostLkr(
+  components: CostComponentInput[],
+  batchUnits = 1,
+  overheads: CostOverheadInput[] = []
+): number | null {
+  return compositeBreakdownLkr(components, batchUnits, overheads)?.perUnitLkr ?? null;
 }
 
 /**

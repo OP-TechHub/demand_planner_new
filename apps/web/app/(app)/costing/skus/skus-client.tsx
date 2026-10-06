@@ -18,6 +18,7 @@ import {
   costUnitKg,
   type CostAssumptionVersion,
   type CostComponentInput,
+  type CostOverheadInput,
   type CostDestinationRow,
   type CostMarketScope,
   type CostOdcComponentRow,
@@ -46,6 +47,8 @@ type YieldMap = Record<string, Record<string, number>>;
 type MarinadeMap = Record<string, CostSkuMarinadeLine[]>;
 /** skuId -> the sub-products of a composite SKU, in entry order. */
 type PartsMap = Record<string, CostComponentInput[]>;
+/** skuId -> the per-batch overheads of a composite SKU, in entry order. */
+type OverheadsMap = Record<string, CostOverheadInput[]>;
 
 export function SkusClient({
   skus,
@@ -53,6 +56,7 @@ export function SkusClient({
   yields,
   marinadeLines,
   components,
+  overheads,
   orgId,
   version,
   odc,
@@ -68,6 +72,7 @@ export function SkusClient({
   yields: YieldMap;
   marinadeLines: MarinadeMap;
   components: PartsMap;
+  overheads: OverheadsMap;
   orgId: string;
   version: CostAssumptionVersion;
   odc: CostOdcComponentRow[];
@@ -227,6 +232,7 @@ export function SkusClient({
           categories={categories}
           marinadeLines={marinadeLines}
           components={components}
+          overheads={overheads}
           knownIngredients={knownIngredients}
           canViewBaseCost={canViewBaseCost}
           onClose={() => setEditing(undefined)}
@@ -1210,6 +1216,7 @@ function SkuDialog({
   categories,
   marinadeLines,
   components,
+  overheads,
   knownIngredients,
   canViewBaseCost,
   onClose,
@@ -1226,6 +1233,7 @@ function SkuDialog({
   categories: string[];
   marinadeLines: MarinadeMap;
   components: PartsMap;
+  overheads: OverheadsMap;
   knownIngredients: { name: string; price: number }[];
   canViewBaseCost: boolean;
   onClose: () => void;
@@ -1330,7 +1338,13 @@ function SkuDialog({
    */
   const partsOf = (row: CostSkuRow | null): CostComponentInput[] => (row ? (components[row.id] ?? []) : []);
   const [parts, setParts] = useState<CostComponentInput[]>(() => partsOf(src));
-  const [partsTotal, setPartsTotal] = useState(() => src?.composite_cost_lkr ?? 0);
+  // Null while the batch size is unusable: there is then no per-unit figure.
+  const [partsTotal, setPartsTotal] = useState<number | null>(() => src?.composite_cost_lkr ?? 0);
+  // The batch's flat costs — labour, gas — reported by the same editor.
+  const overheadsOf = (row: CostSkuRow | null): CostOverheadInput[] => (row ? (overheads[row.id] ?? []) : []);
+  const [batchOverheads, setBatchOverheads] = useState<CostOverheadInput[]>(() => overheadsOf(src));
+  // How many finished units one batch makes. Quantities are entered per batch.
+  const [batchUnits, setBatchUnits] = useState(src?.batch_units != null ? String(src.batch_units) : '1');
   // Bumped to remount the editor when "copy its settings" replaces the list.
   const [partsKey, setPartsKey] = useState(0);
   const [unitLabel, setUnitLabel] = useState(src?.unit_label || 'kg');
@@ -1496,6 +1510,8 @@ function SkuDialog({
     // remounts the editor, which only reads its starting list once.
     setParts(partsOf(source));
     setPartsTotal(source.composite_cost_lkr ?? 0);
+    setBatchOverheads(overheadsOf(source));
+    setBatchUnits(source.batch_units != null ? String(source.batch_units) : '1');
     setPartsKey((k) => k + 1);
     setUnitLabel(source.unit_label || 'kg');
     setUnitWeight(source.unit_weight_g != null ? String(source.unit_weight_g) : '');
@@ -1572,7 +1588,9 @@ function SkuDialog({
             the server from the list itself, never taken from here. Blank while
             the list is empty, so the preview says the sub-products are missing
             instead of costing a pack with nothing in it. */}
-        <input type="hidden" name="composite_cost_lkr" value={composite && parts.length ? String(partsTotal) : ''} />
+        <input type="hidden" name="composite_cost_lkr" value={composite && parts.length && partsTotal != null ? String(partsTotal) : ''} />
+        {/* The batch's flat costs, alongside the sub-products they are costed with. */}
+        <input type="hidden" name="overheads" value={batchOverheads.length ? JSON.stringify(batchOverheads) : ''} />
 
         {state.error && (
           <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -1710,7 +1728,7 @@ function SkuDialog({
           />
           <p className="mt-1.5 text-[11px] text-muted-foreground">
             {composite
-              ? 'Assembled from sub-products, each costed on its own: list what goes into one unit, with a quantity and a price in LKR. Each has its own price; where other ingredients are used for it — the garlic and vegetables in the rice — list them too and their cost is added on top. The total is the raw material; processing, packing, cold-hold, freight, margins and pricing below are unchanged.'
+              ? 'Assembled from sub-products, each costed on its own: list what goes into one batch, with a quantity and a price in LKR, and say how many units the batch makes. Each has its own price; where other ingredients are used for it — the garlic and vegetables in the rice — list them too and their cost is added on top. Flat costs per batch — labour, gas, transport — go under Overheads. The batch total ÷ the units it makes is the raw material; processing, packing, cold-hold, freight, margins and pricing below are unchanged.'
               : absorbed
               ? 'This SKU carries no fish cost. Its cost is a floor — processing, packing, cold-hold and freight — and it is priced on contribution against the market price below, not on margin.'
               : ingredient
@@ -1775,6 +1793,23 @@ function SkuDialog({
                     what one sellable unit is — the sub-products below are per one of these
                   </span>
                 </label>
+                <label className="block">
+                  <span className="text-xs font-medium">
+                    One batch makes ({unitLabel === 'kg' ? 'kg' : `${unitLabel}s`})
+                  </span>
+                  <input
+                    name="batch_units"
+                    type="number"
+                    step="any"
+                    min="0"
+                    value={batchUnits}
+                    onChange={(e) => setBatchUnits(e.target.value)}
+                    className={cn(inputCls, 'mt-1 w-full', !(Number(batchUnits) > 0) && 'border-destructive')}
+                  />
+                  <span className="mt-0.5 block text-[10px] text-muted-foreground">
+                    quantities and overheads below are for one batch — 1 if you enter them per {unitLabel}
+                  </span>
+                </label>
                 {unitLabel !== 'kg' && (
                   <label className="block">
                     <span className="text-xs font-medium">Net weight of one {unitLabel} (g)</span>
@@ -1798,12 +1833,15 @@ function SkuDialog({
               <SubProductsEditor
                 key={partsKey}
                 initial={parts}
+                initialOverheads={batchOverheads}
+                batchUnits={Number(batchUnits) > 0 ? Number(batchUnits) : null}
                 finishedUnit={unitLabel}
                 unitKg={costUnitKg(unitLabel, Number(unitWeight) > 0 ? Number(unitWeight) : null)}
                 fxRate={version.fx_rate}
                 knownIngredients={knownIngredients}
-                onChange={(next, total) => {
+                onChange={(next, nextOverheads, total) => {
                   setParts(next);
+                  setBatchOverheads(nextOverheads);
                   // Removing a row is a click, not a keystroke, so the form's
                   // own input handler never sees it. A changed total always
                   // means the preview on screen belongs to a different recipe.
