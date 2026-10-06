@@ -18,6 +18,7 @@ import type {
   CostDestinationRate,
   CostDestinationRow,
   CostOdcComponentRow,
+  CostOverheadInput,
   CostSizeBucket,
   CostSkuBucketYield,
   CostSkuComponent,
@@ -106,6 +107,8 @@ export interface CostingContext {
    * needs these: costing itself runs off the total stored on the SKU.
    */
   components: Map<string, CostComponentInput[]>;
+  /** skuId -> the per-batch overheads of a composite SKU, in entry order. */
+  overheads: Map<string, CostOverheadInput[]>;
 }
 
 /**
@@ -195,7 +198,16 @@ export async function loadCostingContext(versionId?: string | null): Promise<Cos
     else ingredientsByComponent.set(i.component_id, [i]);
   }
   const componentMap = new Map<string, CostComponentInput[]>();
+  const overheadMap = new Map<string, CostOverheadInput[]>();
   for (const c of (componentRows ?? []) as CostSkuComponent[]) {
+    // An overhead is a flat amount per batch, stored as qty 1 x price.
+    if (c.kind === 'overhead') {
+      const o: CostOverheadInput = { name: c.name, amount_lkr: Number(c.qty) * Number(c.price_lkr_per_unit) };
+      const list = overheadMap.get(c.sku_id);
+      if (list) list.push(o);
+      else overheadMap.set(c.sku_id, [o]);
+      continue;
+    }
     const input: CostComponentInput = {
       name: c.name,
       qty: Number(c.qty),
@@ -231,6 +243,7 @@ export async function loadCostingContext(versionId?: string | null): Promise<Cos
     yields: yieldMap,
     marinadeLines: marinadeMap,
     components: componentMap,
+    overheads: overheadMap,
   };
 }
 

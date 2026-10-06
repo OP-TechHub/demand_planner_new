@@ -46,6 +46,7 @@ export default async function CostingSkusPage() {
       // The sub-products of each composite SKU, with the ingredient list behind
       // each price. Loaded for every SKU for the same reason as above.
       components={Object.fromEntries(ctx.components.entries())}
+      overheads={Object.fromEntries(ctx.overheads.entries())}
       orgId={ctx.version.org_id}
       // Passed so the editor can show what each override would inherit if left
       // blank — a new SKU shouldn't be a guess about what the defaults are.
