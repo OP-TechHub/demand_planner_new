@@ -100,7 +100,12 @@ export function SkusClient({
     return skus.filter(
       (s) =>
         matchesCostedBy(s, costedBy, currentUserId) &&
-        (!q || s.name.toLowerCase().includes(q) || s.category.toLowerCase().includes(q))
+        // Customer is searchable for the same reason the grid shows it: "which
+        // recipes are Al Rawdah's?" should be one keystroke away.
+        (!q ||
+          s.name.toLowerCase().includes(q) ||
+          s.category.toLowerCase().includes(q) ||
+          (s.customer ?? '').toLowerCase().includes(q))
     );
   }, [skus, query, costedBy, currentUserId]);
 
@@ -201,7 +206,7 @@ export function SkusClient({
             </button>
           ))}
         </div>
-        <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find a SKU…" className={cn(inputCls, 'w-48')} />
+        <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="SKU, customer or category…" className={cn(inputCls, 'w-52')} />
         <CostedByFilter
           skus={skus}
           currentUserId={currentUserId}
@@ -261,6 +266,7 @@ function RecipeTable({
         <thead>
           <tr className="text-[10px] uppercase tracking-wide text-muted-foreground">
             <th className={cn(th, 'left-0 z-30 text-left')}>SKU</th>
+            <th className={cn(th, 'text-left')}>Customer</th>
             <th className={cn(th, 'text-left')}>Added by</th>
             <th className={cn(th, 'text-left')}>Category</th>
             <th className={cn(th, 'text-left')}>Raw material</th>
@@ -294,6 +300,9 @@ function RecipeTable({
                     </span>
                   )}
                 </th>
+                <td className={cn(td, 'max-w-[160px] truncate text-left')} title={s.customer || undefined}>
+                  {s.customer ? s.customer : <span className="text-muted-foreground/50">—</span>}
+                </td>
                 <td className={cn(td, 'text-left')}>
                   {s.created_by == null ? (
                     <span className="text-muted-foreground">Company</span>
