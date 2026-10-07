@@ -3,7 +3,7 @@
 import { useMemo, useState, useTransition, type MouseEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Download, Upload, Boxes, Save, Factory, ClipboardCheck } from 'lucide-react';
+import { Download, Upload, Boxes, Save, Factory, ClipboardCheck, Plus } from 'lucide-react';
 import { toast } from '@/components/ui/toast';
 import { monthLabel, type Bucket, type HarvestCell, type HarvestRequestCell, type HarvestActualCell } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
@@ -14,6 +14,7 @@ import { ScrollX } from '@/components/ui/scroll-x';
 import { WideGridImport } from '@/components/wide-grid-import';
 import { usePasteGrid, useInputGridSelection, pasteCellCls, PendingPasteBar } from '@/components/paste-grid';
 import { HarvestEditor } from './harvest-editor';
+import { BucketModal } from '../buckets/buckets-client';
 import { importHarvest, saveHarvestCells, saveHarvestRequest, saveHarvestActual } from './actions';
 
 export function HarvestClient({
@@ -28,6 +29,8 @@ export function HarvestClient({
   canEditRequest,
   actual,
   canEditActual,
+  orgId,
+  canAddBucket,
   required,
 }: {
   planId: string;
@@ -44,6 +47,9 @@ export function HarvestClient({
   /** What was actually landed, one row per month and size. */
   actual: HarvestActualCell[];
   canEditActual: boolean;
+  orgId: string;
+  /** Holds the org-wide Buckets permission, so may add a size from the Actual Harvest section. */
+  canAddBucket: boolean;
   /** kg WR the demand book needs, indexed month−1, split by how firm the demand is. */
   required: RequiredHarvest;
 }) {
@@ -428,6 +434,8 @@ export function HarvestClient({
           buckets={buckets}
           actual={actual}
           canEditActual={canEditActual}
+          orgId={orgId}
+          canAddBucket={canAddBucket}
           planCell={cell}
           stickyCol={stickyCol}
           yearStart={yearStart}
@@ -484,6 +492,8 @@ function ActualHarvestTable({
   buckets,
   actual,
   canEditActual,
+  orgId,
+  canAddBucket,
   planCell,
   stickyCol,
   yearStart,
@@ -497,6 +507,8 @@ function ActualHarvestTable({
   buckets: Bucket[];
   actual: HarvestActualCell[];
   canEditActual: boolean;
+  orgId: string;
+  canAddBucket: boolean;
   /** Planned capacity for a bucket-month, from the grid above. */
   planCell: (bucketId: string, month: number) => number;
   stickyCol: string;
@@ -511,6 +523,9 @@ function ActualHarvestTable({
   }, [actual]);
   const [vals, setVals] = useState<Record<string, string>>(initial);
   const [saving, startSave] = useTransition();
+  const [addingBucket, setAddingBucket] = useState(false);
+  // Same default the Buckets page offers: after the last bucket, in steps of 10.
+  const nextOrder = (Math.max(0, ...buckets.map((b) => b.sort_order)) || 0) + 10;
   const dirty = useMemo(() => {
     const keys = new Set([...Object.keys(initial), ...Object.keys(vals)]);
     for (const k of keys) if ((initial[k] ?? '') !== (vals[k] ?? '')) return true;
@@ -580,11 +595,23 @@ function ActualHarvestTable({
             counted as a shortfall. Reference only, and not used by the calc engine.
           </p>
         </div>
-        {canEditActual && (
-          <Button size="sm" onClick={save} disabled={saving || !dirty}>
-            <Save className="h-4 w-4" /> {saving ? 'Saving…' : 'Save actuals'}
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          {canAddBucket && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setAddingBucket(true)}
+              title="Add a size bucket. Buckets are shared across every plan, so it appears on the capacity grid above as well."
+            >
+              <Plus className="h-4 w-4" /> Add bucket
+            </Button>
+          )}
+          {canEditActual && (
+            <Button size="sm" onClick={save} disabled={saving || !dirty}>
+              <Save className="h-4 w-4" /> {saving ? 'Saving…' : 'Save actuals'}
+            </Button>
+          )}
+        </div>
       </div>
 
       <ScrollX className="rounded-lg border border-border">
@@ -674,7 +701,21 @@ function ActualHarvestTable({
       {!canEditActual && (
         <p className="text-xs text-muted-foreground">
           Read-only — recording actuals needs the <b>Actual Harvest</b> permission on this plan (Admin → Plans → Access).
+          {!canAddBucket && <> Adding a size bucket needs the <b>Buckets</b> permission (Admin → Users).</>}
         </p>
+      )}
+
+      {/* The new bucket arrives through router.refresh() as one more row, with
+          nothing recorded. Figures typed but not yet saved stay put: the row
+          state is keyed by bucket id, not by position. */}
+      {addingBucket && canAddBucket && (
+        <BucketModal
+          orgId={orgId}
+          bucket={null}
+          defaultOrder={nextOrder}
+          onClose={() => setAddingBucket(false)}
+          onSaved={() => { setAddingBucket(false); toast.success('Bucket added'); router.refresh(); }}
+        />
       )}
     </section>
   );

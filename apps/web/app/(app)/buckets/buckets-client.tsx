@@ -172,7 +172,12 @@ export function BucketsClient({
 
 const initial: BucketFormState = { error: null, ok: false };
 
-function BucketModal({
+/**
+ * The create / edit form for one bucket. Also opened from the Harvest Plan's
+ * Actual Harvest section, so a size that was landed but never planned can be
+ * added where it is noticed rather than on another page.
+ */
+export function BucketModal({
   orgId,
   bucket,
   defaultOrder,
