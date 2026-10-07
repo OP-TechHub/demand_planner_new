@@ -35,6 +35,8 @@ export async function saveBucket(_prev: BucketFormState, fd: FormData): Promise<
   }
 
   revalidatePath('/buckets');
+  // The harvest grids are one row per bucket, so a new or renamed one shows there too.
+  revalidatePath('/harvest-plan');
   return { error: null, ok: true };
 }
 

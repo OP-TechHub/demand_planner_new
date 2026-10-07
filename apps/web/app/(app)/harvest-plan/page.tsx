@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { getActivePlan, getProfile, getMyPlanGrants } from '@/lib/plan';
 import {
   canEditPlanSection,
+  canEditSection,
   canExportData,
   type Bucket,
   type HarvestCell,
@@ -93,6 +94,10 @@ export default async function HarvestPlanPage() {
   // Recording what was landed is the farm's job — its own grant again, so holding
   // neither capacity nor the request confers it.
   const canEditActual = canEditPlanSection(plan, me, grants.has('harvest_actual'));
+  // Buckets are org-wide, not per plan, so adding one from the Actual Harvest
+  // section is the Buckets permission (Admin → Users), not the actuals grant —
+  // the same rule the Buckets page and its RLS policy apply.
+  const canAddBucket = canEditSection(me.role, profile?.edit_sections, 'buckets');
 
   // Passed as rows rather than a keyed object: the grid needs the size too, and
   // a null bucket has to survive the trip intact rather than collapsing into a
@@ -119,6 +124,8 @@ export default async function HarvestPlanPage() {
       canEditRequest={canEditRequest}
       actual={actual}
       canEditActual={canEditActual}
+      orgId={plan.org_id}
+      canAddBucket={canAddBucket}
       required={required}
     />
   );
