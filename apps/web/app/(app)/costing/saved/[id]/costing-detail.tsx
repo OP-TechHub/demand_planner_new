@@ -176,7 +176,7 @@ export function CostingDetail({
       l.currency,
       round(l.final_cost),
       round(l.selling_price),
-      round(l.contribution_per_kg),
+      round(contributionPerKg(l)),
       marginPct(l) == null ? '' : round(marginPct(l)! * 100),
     ]);
     downloadCsv(`${slug(costing.name)}.csv`, toCsv([head, ...body]));
@@ -357,9 +357,9 @@ export function CostingDetail({
                   <td className={cn(td, 'font-semibold')}>{money(l.final_cost, l.currency)}</td>
                   <td className={td}>{l.selling_price != null ? money(l.selling_price, l.currency) : '—'}</td>
                   <td className={td}>
-                    {l.contribution_per_kg != null ? (
-                      <span className={l.contribution_per_kg >= 0 ? 'text-success' : 'text-destructive'}>
-                        {money(l.contribution_per_kg, l.currency)}
+                    {contributionPerKg(l) != null ? (
+                      <span className={contributionPerKg(l)! >= 0 ? 'text-success' : 'text-destructive'}>
+                        {money(contributionPerKg(l)!, l.currency)}
                       </span>
                     ) : (
                       '—'
@@ -676,6 +676,16 @@ const round = (n: number | null): number | null => (n == null ? null : Math.roun
  */
 const marginPct = (l: CostCostingLine): number | null =>
   l.selling_price != null && l.selling_price > 0 ? (l.selling_price - l.final_cost) / l.selling_price : null;
+
+/**
+ * Selling price less FINAL cost, per kg. The engine stores this only for a
+ * by-product, whose price is what the market bears rather than cost-plus; on
+ * every other line it is null, and the read-only API fills it from the price
+ * and cost. The same rule here, so the column reads for every row. The stored
+ * figure wins where there is one, so a by-product still shows what was saved.
+ */
+const contributionPerKg = (l: CostCostingLine): number | null =>
+  l.contribution_per_kg ?? (l.selling_price != null ? l.selling_price - l.final_cost : null);
 
 /** Same thresholds as the SKU preview's margin badge, so a thin line reads the same on both pages. */
 function MarginCell({ pct }: { pct: number | null }) {
