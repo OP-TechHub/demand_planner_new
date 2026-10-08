@@ -167,7 +167,7 @@ export function CostingDetail({
   }
 
   function onExport() {
-    const head = ['SKU', 'Port', 'Market', 'State', 'Currency', 'FINAL cost', 'Selling price', 'Contribution/kg'];
+    const head = ['SKU', 'Port', 'Market', 'State', 'Currency', 'FINAL cost', 'Selling price', 'Contribution/kg', 'Margin %'];
     const body = visible.map((l) => [
       l.sku_name,
       l.destination_name ?? '',
@@ -177,6 +177,7 @@ export function CostingDetail({
       round(l.final_cost),
       round(l.selling_price),
       round(l.contribution_per_kg),
+      marginPct(l) == null ? '' : round(marginPct(l)! * 100),
     ]);
     downloadCsv(`${slug(costing.name)}.csv`, toCsv([head, ...body]));
   }
@@ -324,6 +325,9 @@ export function CostingDetail({
               <th className={th}>FINAL cost (per kg)</th>
               <th className={th}>Selling price (per kg)</th>
               <th className={th}>Contribution (per kg)</th>
+              <th className={th} title="(Selling price − FINAL cost) ÷ selling price — the same margin the SKU preview shows">
+                Margin (%)
+              </th>
               {showReprice && (
                 <>
                   <th className={cn(th, 'border-l')}>Today&apos;s cost (per kg)</th>
@@ -360,6 +364,9 @@ export function CostingDetail({
                     ) : (
                       '—'
                     )}
+                  </td>
+                  <td className={td}>
+                    <MarginCell pct={marginPct(l)} />
                   </td>
                   {showReprice && (
                     <>
@@ -657,6 +664,25 @@ const toQuoteItem = (l: CostCostingLine): QuoteItem => ({
 });
 
 const round = (n: number | null): number | null => (n == null ? null : Math.round(n * 10000) / 10000);
+
+/**
+ * Margin as the engine defines it: (price − cost) ÷ price, from the two columns
+ * beside it. Not read from the stored contribution: the engine only records a
+ * contribution for a by-product priced on what the market bears, so a cost-plus
+ * line carries none and would read as having no margin. For a cost-plus line
+ * this is the same figure the engine stored as its gross margin; for a
+ * by-product it is the margin on the market price it was actually given. Null
+ * without a price — there is no margin on a line that was never priced.
+ */
+const marginPct = (l: CostCostingLine): number | null =>
+  l.selling_price != null && l.selling_price > 0 ? (l.selling_price - l.final_cost) / l.selling_price : null;
+
+/** Same thresholds as the SKU preview's margin badge, so a thin line reads the same on both pages. */
+function MarginCell({ pct }: { pct: number | null }) {
+  if (pct == null) return <>—</>;
+  const tone = pct < 0 ? 'text-destructive' : pct < 0.15 ? 'text-warning' : 'text-success';
+  return <span className={cn('font-medium', tone)}>{(pct * 100).toFixed(1)}%</span>;
+}
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'costing';
 const chip = (active: boolean) =>
   cn(
