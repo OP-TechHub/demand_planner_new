@@ -42,13 +42,13 @@ import { MarinadeBuilder } from './marinade-builder';
 import { SubProductsEditor } from './sub-products-editor';
 import { archiveCostSku, saveCostSku, saveSkuBucketYield, type SkuFormState } from './actions';
 
-type YieldMap = Record<string, Record<string, number>>;
+export type YieldMap = Record<string, Record<string, number>>;
 /** skuId -> its marinade ingredients, in entry order. */
-type MarinadeMap = Record<string, CostSkuMarinadeLine[]>;
+export type MarinadeMap = Record<string, CostSkuMarinadeLine[]>;
 /** skuId -> the sub-products of a composite SKU, in entry order. */
-type PartsMap = Record<string, CostComponentInput[]>;
+export type PartsMap = Record<string, CostComponentInput[]>;
 /** skuId -> the per-batch overheads of a composite SKU, in entry order. */
-type OverheadsMap = Record<string, CostOverheadInput[]>;
+export type OverheadsMap = Record<string, CostOverheadInput[]>;
 
 export function SkusClient({
   skus,
@@ -1212,7 +1212,24 @@ function DownstreamBlock({
 
 // ---------------------------------------------------------------------------
 
-function SkuDialog({
+/**
+ * Run the dialog on a saved costing's own copy of a product instead of on
+ * the SKU master. The form is the same one; what differs is where it saves,
+ * and what is fixed: the product's name and market, and the costing's grade
+ * and port, which every line on a costing shares.
+ */
+export interface SkuDialogCostingMode {
+  costingId: string;
+  costingName: string;
+  skuName: string;
+  /** The market the product's lines are costed in on this costing. */
+  market: 'domestic' | 'export';
+  bucketId: string | null;
+  destinationId: string | null;
+  saveAction: (prev: SkuFormState, fd: FormData) => Promise<SkuFormState>;
+}
+
+export function SkuDialog({
   sku,
   orgId,
   buckets,
@@ -1229,6 +1246,7 @@ function SkuDialog({
   knownIngredients,
   canViewBaseCost,
   onClose,
+  costing = null,
 }: {
   sku: CostSkuRow | null;
   orgId: string;
@@ -1246,10 +1264,12 @@ function SkuDialog({
   knownIngredients: { name: string; price: number }[];
   canViewBaseCost: boolean;
   onClose: () => void;
+  /** Set to edit a saved costing's copy of this product rather than the SKU itself. */
+  costing?: SkuDialogCostingMode | null;
 }) {
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
-  const [state, action, pending] = useActionState<SkuFormState, FormData>(saveCostSku, { error: null, ok: false });
+  const [state, action, pending] = useActionState<SkuFormState, FormData>(costing?.saveAction ?? saveCostSku, { error: null, ok: false });
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [downloadOpen, setDownloadOpen] = useState(false);
   // The customer-facing quotation, built off the same preview. While it is open
@@ -1266,14 +1286,14 @@ function SkuDialog({
   // because the grade moves the cost and reopening on the reference model was
   // re-reading the product at a size it is never sold at.
   const [previewBucketId, setPreviewBucketId] = useState(() =>
-    knownBucket(sku?.default_bucket_id, buckets)
+    knownBucket(costing ? costing.bucketId : sku?.default_bucket_id, buckets)
   );
   // Which port the past-FOB ladder is costed to, and what a CIF quotation is
   // priced against. Stored on the SKU, so reopening it shows the port that was
   // picked rather than whichever one sorts first; a SKU that has never had one
   // still falls back to the first destination, as every SKU used to.
   const [previewDestId, setPreviewDestId] = useState(() =>
-    activeDestination(sku?.default_destination_id, destinations)
+    activeDestination(costing ? costing.destinationId : sku?.default_destination_id, destinations)
   );
 
   /**
@@ -1372,7 +1392,7 @@ function SkuDialog({
     const bucket = previewBucketId ? (buckets.find((b) => b.id === previewBucketId) ?? null) : null;
     // A brand-new SKU has no stored per-grade yields, so resolveYield falls
     // back to its flat yield — correct, and the sheet says which grade it used.
-    return { bucket, bucketYields: src?.id ? yields[src.id] : undefined };
+    return { bucket, bucketYields: costing ? undefined : src?.id ? yields[src.id] : undefined };
   }
 
   /** Cost a form snapshot at the grade and port currently selected. */
@@ -1549,7 +1569,14 @@ function SkuDialog({
         className="my-8 w-full max-w-2xl space-y-4 rounded-lg border bg-card p-5 shadow-lg"
       >
         <div className="flex items-start justify-between gap-4">
-          <h2 className="text-lg font-semibold">{sku ? sku.name : 'New SKU'}</h2>
+          <h2 className="text-lg font-semibold">
+            {costing ? (
+              <>
+                {costing.skuName}
+                <span className="ml-2 text-sm font-normal text-muted-foreground">on costing “{costing.costingName}”</span>
+              </>
+            ) : sku ? sku.name : 'New SKU'}
+          </h2>
           <button
             type="button"
             onClick={onClose}
@@ -1568,6 +1595,22 @@ function SkuDialog({
         )}
         {sku && <input type="hidden" name="id" value={sku.id} />}
         <input type="hidden" name="org_id" value={orgId} />
+        {costing && (
+          <>
+            {/* Fixed on a costing: which product, which market. The save reads
+                the rest of the form exactly as the SKU master would. */}
+            <input type="hidden" name="costing_id" value={costing.costingId} />
+            <input type="hidden" name="sku_name" value={costing.skuName} />
+            <input type="hidden" name="name" value={costing.skuName} />
+            <input type="hidden" name="status" value="active" />
+            <input type="hidden" name="market_scope" value={costing.market} />
+            <p className="rounded-md bg-primary/5 px-3 py-2 text-xs text-primary">
+              This is the costing&apos;s <strong className="font-medium">own copy</strong> of the recipe. Saving re-costs
+              every state and port of {costing.skuName} on this costing, at its pinned assumptions, grade and port.
+              The SKU master is not changed.
+            </p>
+          </>
+        )}
         {/*
           The marinade recipe rides along with the form rather than saving on
           its own. A brand-new SKU has no id for its ingredients to belong to
@@ -1610,6 +1653,7 @@ function SkuDialog({
         {/* Market first: it frames everything below it, and it decides which
             grid this SKU turns up in. */}
         <div className="grid gap-3 sm:grid-cols-2">
+          {!costing && (
           <Select
             label="Costing for"
             name="market_scope"
@@ -1620,6 +1664,7 @@ function SkuDialog({
               ['export', 'Export only (USD)'],
             ]}
           />
+          )}
           <Select
             label="Product form"
             name="product_form"
@@ -1634,6 +1679,7 @@ function SkuDialog({
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2">
+          {!costing && (
           <div className="sm:col-span-2">
             <label className="block">
               <span className="text-xs font-medium">Name</span>
@@ -1672,6 +1718,7 @@ function SkuDialog({
               </p>
             )}
           </div>
+          )}
 
           <label className="block">
             <span className="text-xs font-medium">Category</span>
@@ -1699,7 +1746,9 @@ function SkuDialog({
             )}
           </label>
 
-          <Select label="Status" name="status" defaultValue={src?.status ?? 'active'} options={[['active', 'Active'], ['inactive', 'Inactive']]} />
+          {!costing && (
+            <Select label="Status" name="status" defaultValue={src?.status ?? 'active'} options={[['active', 'Active'], ['inactive', 'Inactive']]} />
+          )}
 
           {/* Free text for now. When the customer master lands, a costing will
               pick from it and this becomes the thing to migrate from. */}
@@ -2155,6 +2204,7 @@ function SkuDialog({
               // a way of looking at it.
               name="default_bucket_id"
               value={previewBucketId}
+              disabled={!!costing}
               onChange={(e) => {
                 setPreviewBucketId(e.target.value);
                 invalidatePreview();
@@ -2169,7 +2219,9 @@ function SkuDialog({
               ))}
             </select>
             <span className="text-[10px] text-muted-foreground">
-              {previewBucketId
+              {costing
+                ? 'Fixed by the costing: every product on it is costed at this grade. The yield on the form is the yield used.'
+                : previewBucketId
                 ? 'Uses this grade\u2019s FCR and yield \u2014 the Cost Grid at the same grade will agree.'
                 : 'The flat model. Pick a grade to match what the Cost Grid shows at that grade.'}
             </span>
@@ -2185,6 +2237,7 @@ function SkuDialog({
               // is quoted against — so it is saved with it.
               name="default_destination_id"
               value={previewDestId}
+              disabled={!!costing}
               onChange={(e) => {
                 setPreviewDestId(e.target.value);
                 invalidatePreview();
@@ -2198,8 +2251,9 @@ function SkuDialog({
               ))}
             </select>
             <span className="text-[10px] text-muted-foreground">
-              Saved with the SKU. Sets the freight that turns FOB into CIF, and the ladder past it —
-              cost, FOB and margin are the same for every port.
+              {costing
+                ? 'Fixed by the costing: the port this line was costed to.'
+                : 'Saved with the SKU. Sets the freight that turns FOB into CIF, and the ladder past it — cost, FOB and margin are the same for every port.'}
             </span>
           </label>
         )}
@@ -2219,7 +2273,7 @@ function SkuDialog({
         )}
 
         <div className="flex items-center justify-between gap-2">
-          {sku ? <ArchiveButton id={sku.id} onDone={onClose} /> : <span />}
+          {sku && !costing ? <ArchiveButton id={sku.id} onDone={onClose} /> : <span />}
           <div className="flex gap-2">
             <button type="button" onClick={onClose} className="rounded-md border px-3 py-1.5 text-sm font-medium hover:bg-muted">
               Cancel
@@ -2281,14 +2335,14 @@ function SkuDialog({
                       <FileText className="h-3.5 w-3.5" /> Download as Word
                     </button>
                     <p className="border-t bg-muted/40 px-3 py-1.5 text-[11px] text-muted-foreground">
-                      The cost build-up for this SKU, at current assumptions.
+                      {costing ? 'The cost build-up as it would be saved on this costing.' : 'The cost build-up for this SKU, at current assumptions.'}
                     </p>
                   </div>
                 </>
               )}
             </div>
             <button type="submit" disabled={pending} className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-50">
-              {pending ? 'Saving…' : pricingMode === 'target' ? 'Save with target price' : 'Save'}
+              {pending ? 'Saving…' : costing ? 'Save to costing' : pricingMode === 'target' ? 'Save with target price' : 'Save'}
             </button>
           </div>
         </div>
