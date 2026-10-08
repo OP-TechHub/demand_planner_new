@@ -19,6 +19,7 @@ import {
 import { computeCost, type DomesticOutput, type ExportOutput } from '@oceanpick/engine';
 import type {
   CostCosting,
+  CostCostingLine,
   CostDestinationRow,
   CostMarket,
   CostMarketScope,
@@ -776,5 +777,124 @@ export async function removeProductFromCosting(
 
   revalidatePath('/costing/saved');
   revalidatePath(`/costing/saved/${costingId}`);
+  return { error: null };
+}
+
+/**
+ * Change the selling price on one saved line, after the fact.
+ *
+ * A price is not a number that stands alone: contribution, gross margin, the
+ * whole-round margin and — for export — CIF, the importer and distributor
+ * prices and DDP are all built on it. So rather than overwrite one column and
+ * leave the breakdown sheet contradicting the table, the line is run through
+ * the engine again at the costing's own assumptions version with the new price
+ * as a target, and every price-derived figure is rewritten together.
+ *
+ * The cost must not move. If the product's recipe or the version has changed
+ * since the save, the recost would quietly shift FINAL cost under a sheet that
+ * claims to report what was quoted — so that is refused, and the honest route
+ * is to take the product off and add it again.
+ *
+ * Owner or admin only, as for everything else on a costing; RLS enforces it,
+ * and a silent no-op is reported rather than claimed as a save.
+ */
+export async function setCostingLinePrice(
+  lineId: string,
+  price: number
+): Promise<{ error: string | null }> {
+  if (!Number.isFinite(price) || price <= 0) return { error: 'Enter a price above zero.' };
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: 'Your session expired. Sign in again.' };
+
+  const { data: lineRow } = await supabase.from('cost_costing_lines').select('*').eq('id', lineId).maybeSingle();
+  if (!lineRow) return { error: 'That line no longer exists.' };
+  const line = lineRow as CostCostingLine;
+  if (!line.sku_id) {
+    return { error: 'The product behind this line has been deleted, so its price cannot be changed.' };
+  }
+
+  const { data: costingRow } = await supabase
+    .from('cost_costings')
+    .select('*')
+    .eq('id', line.costing_id)
+    .is('deleted_at', null)
+    .maybeSingle();
+  if (!costingRow) return { error: 'That costing no longer exists.' };
+  const costing = costingRow as CostCosting;
+
+  const ctx = await loadCostingContext(costing.version_id);
+  // The same guard as adding a product: the context falls back to the current
+  // version when the pinned one is gone, and re-pricing on today's assumptions
+  // is exactly what this must not do.
+  if (!ctx || ctx.version.id !== costing.version_id) {
+    return { error: 'The assumptions version this costing was built on no longer exists.' };
+  }
+  const skuRow = ctx.skus.find((s) => s.id === line.sku_id);
+  if (!skuRow) {
+    return { error: 'The product behind this line has been deleted, so its price cannot be changed.' };
+  }
+
+  // The line's own market, not the costing's: a sheet can mix the two.
+  const market: CostMarket = line.currency === 'LKR' ? 'domestic' : 'export';
+  const dest = line.destination_id ? ctx.destinations.find((d) => d.id === line.destination_id) : undefined;
+  if (market === 'export' && !dest) {
+    return { error: 'The port this line was costed to is no longer active, so its price cannot be changed.' };
+  }
+
+  const assumptions = toAssumptions(applyOverrides(ctx.version, costing.assumption_overrides), ctx.odc);
+  const bucketRow = costing.bucket_id ? ctx.buckets.find((b) => b.id === costing.bucket_id) : null;
+  const result = computeCost({
+    market,
+    assumptions,
+    // The new price acts as the target AND as what the market bears, so a
+    // cost-plus product and a by-product both come out priced at it, with
+    // contribution read against it.
+    sku: { ...toSku(skuRow, market, ctx.yields.get(skuRow.id)), pricingMode: 'target', targetPrice: price, marketPrice: price },
+    bucket: bucketRow ? toBucket(bucketRow) : null,
+    destination: dest ? toDestination(dest, ctx.rates.get(dest.id)) : null,
+  });
+  if (!result.ok) return { error: 'This product can no longer be costed — its fish/marinade split is broken.' };
+
+  let state: DomesticOutput['unglazed'] | ExportOutput['frozenPlain'] | undefined;
+  let outputs: Record<string, unknown> = {};
+  if (market === 'domestic') {
+    const out = result.value.result as DomesticOutput;
+    state = line.state === 'unglazed' ? out.unglazed : line.state === 'glazed' ? out.glazed : undefined;
+    if (state) outputs = { ...state, chain: out.chain, wholeFish: result.value.wholeFish };
+  } else {
+    const out = result.value.result as ExportOutput;
+    state =
+      line.state === 'frozen_plain' ? out.frozenPlain
+      : line.state === 'frozen_glazed' ? out.frozenGlazed
+      : line.state === 'fresh' ? out.fresh
+      : undefined;
+    if (state) outputs = { ...state, chain: out.chain, destination: out.destination, wholeFish: result.value.wholeFish };
+  }
+  if (!state) return { error: 'This line\'s pack state no longer applies to the product.' };
+
+  if (Math.abs(state.finalCost - Number(line.final_cost)) > 0.005) {
+    return {
+      error:
+        'This product\'s recipe has changed since the costing was saved, so its price cannot be edited in place. ' +
+        'Take it off the costing and add it again to re-cost it.',
+    };
+  }
+
+  const { data, error } = await supabase
+    .from('cost_costing_lines')
+    .update({ selling_price: state.sellingPrice, contribution_per_kg: state.contributionPerKg, outputs })
+    .eq('id', lineId)
+    .select('id');
+  if (error) return { error: error.message };
+  if (!data?.length) return { error: 'Only the person who made a costing can change its prices.' };
+
+  await supabase.from('cost_costings').update({ updated_by: user.id }).eq('id', line.costing_id);
+
+  revalidatePath('/costing/saved');
+  revalidatePath(`/costing/saved/${line.costing_id}`);
   return { error: null };
 }
