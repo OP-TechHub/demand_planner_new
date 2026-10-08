@@ -37,7 +37,14 @@ import { BaseCostToggle, num, rec } from '@/components/cost-sheet-parts';
 import { QuoteBuilder } from '@/components/quote-builder';
 import type { QuoteItem } from '@/components/quote-sheet';
 import { toast } from '@/components/ui/toast';
-import { addSkusToCosting, removeProductFromCosting, setCostingLinePrice, setCostingVisibility } from '../../actions';
+import {
+  addSkusToCosting,
+  removeProductFromCosting,
+  setCostingLinePrice,
+  setCostingVisibility,
+  updateCostingProductInputs,
+  type CostingInputEdits,
+} from '../../actions';
 import { CostSheet, COST_SHEET_ID } from './cost-sheet';
 
 /** A SKU the owner may still put on this costing. */
@@ -94,6 +101,12 @@ export function CostingDetail({
   const [state, setState] = useState<CostProductState | 'all'>('all');
   // The line whose breakdown sheet is open, for print / Word / preview.
   const [sheetLine, setSheetLine] = useState<CostCostingLine | null>(null);
+  // Re-read from the current lines, so an edit saved from inside the dialog
+  // shows there after the refresh rather than on the copy that opened it.
+  const sheet = useMemo(
+    () => (sheetLine ? lines.find((l) => l.id === sheetLine.id) ?? sheetLine : null),
+    [lines, sheetLine]
+  );
   // The customer-facing quotation built off these lines. Never open at the same
   // time as a breakdown: both mount a print copy, and print reveals every one.
   const [quoteOpen, setQuoteOpen] = useState(false);
@@ -188,9 +201,9 @@ export function CostingDetail({
   const repriceAvailable = !pinnedIsCurrent && Object.keys(repriced).length > 0;
 
   function onWord() {
-    if (!sheetLine) return;
-    const title = `${costing.name} — ${sheetLine.sku_name}`;
-    const name = `${slugify(costing.name, 'costing')}-${slugify(sheetLine.sku_name, 'sku')}-${sheetLine.state}`;
+    if (!sheet) return;
+    const title = `${costing.name} — ${sheet.sku_name}`;
+    const name = `${slugify(costing.name, 'costing')}-${slugify(sheet.sku_name, 'sku')}-${sheet.state}`;
     // The sheet is always mounted while a line is selected, so a miss here means
     // the id moved rather than a timing problem — say so instead of failing mute.
     if (!downloadDoc(name, COST_SHEET_ID, title)) {
@@ -377,6 +390,14 @@ export function CostingDetail({
                 <tr key={l.id} className="group border-b last:border-0 hover:bg-muted/30">
                   <th className={cn(td, 'sticky left-0 z-10 max-w-[240px] truncate bg-card text-left font-medium')} title={l.sku_name}>
                     {l.sku_name}
+                    {hasEditedInputs(l) && (
+                      <span
+                        className="ml-1.5 rounded bg-primary/10 px-1 py-px text-[9px] font-normal uppercase text-primary"
+                        title="Inputs behind this line were edited on this costing — open the breakdown to see which"
+                      >
+                        edited
+                      </span>
+                    )}
                   </th>
                   {showPort && <td className={cn(td, 'text-left')}>{l.destination_name ?? '—'}</td>}
                   {/* The currency is the market: both are set when the line is
@@ -386,7 +407,16 @@ export function CostingDetail({
                     <span className="text-muted-foreground/60">{l.currency}</span>
                   </td>
                   <td className={cn(td, 'text-left text-muted-foreground')}>{COST_STATE_LABEL[l.state]}</td>
-                  <td className={cn(td, 'font-semibold')}>{money(l.final_cost, l.currency)}</td>
+                  <td className={cn(td, 'font-semibold')}>
+                    <button
+                      type="button"
+                      onClick={() => { setQuoteOpen(false); setProductsOpen(false); setSheetLine(l); }}
+                      title={canEdit && l.sku_id ? 'Open the cost breakdown, where the inputs behind this figure can be edited' : 'Open the cost breakdown'}
+                      className="rounded px-1 font-semibold underline decoration-dotted underline-offset-2 hover:bg-muted hover:text-primary"
+                    >
+                      {money(l.final_cost, l.currency)}
+                    </button>
+                  </td>
                   <td className={td}>
                     {priceEdit?.id === l.id ? (
                       <input
@@ -498,13 +528,13 @@ export function CostingDetail({
         the dialog's fixed positioning, so a sheet longer than a page still
         prints in full.
       */}
-      {sheetLine && (
+      {sheet && (
         <>
           <Dialog
             open
             onClose={() => setSheetLine(null)}
             title="Cost breakdown"
-            description={`${sheetLine.sku_name} · ${COST_STATE_LABEL[sheetLine.state]}${sheetLine.destination_name ? ` · ${sheetLine.destination_name}` : ''}`}
+            description={`${sheet.sku_name} · ${COST_STATE_LABEL[sheet.state]}${sheet.destination_name ? ` · ${sheet.destination_name}` : ''}`}
             className="max-w-3xl print:hidden"
             footer={
               <>
@@ -523,8 +553,16 @@ export function CostingDetail({
                 <BaseCostToggle include={includeBaseCost} onChange={setIncludeBaseCost} />
               </div>
             )}
+            {canEdit && sheet.sku_id && (
+              <LineInputsEditor
+                key={sheet.id}
+                costingId={costing.id}
+                line={sheet}
+                onSaved={() => router.refresh()}
+              />
+            )}
             <div className="max-h-[65vh] overflow-y-auto rounded-md border">
-              <CostSheet costing={costing} line={sheetLine} pinnedLabel={pinnedLabel} authorName={authorName} showBaseCost={sheetBaseCost} />
+              <CostSheet costing={costing} line={sheet} pinnedLabel={pinnedLabel} authorName={authorName} showBaseCost={sheetBaseCost} />
             </div>
             <p className="mt-3 text-xs text-muted-foreground">
               Both formats hold the figures as saved, not as they would price today. The Word file is editable, so
@@ -535,7 +573,7 @@ export function CostingDetail({
           <div className="hidden print:block">
             <CostSheet
               costing={costing}
-              line={sheetLine}
+              line={sheet}
               pinnedLabel={pinnedLabel}
               authorName={authorName}
               showBaseCost={sheetBaseCost}
@@ -543,6 +581,126 @@ export function CostingDetail({
             />
           </div>
         </>
+      )}
+    </div>
+  );
+}
+
+const hasEditedInputs = (l: CostCostingLine) => {
+  const e = rec(l.inputs).edited_fields;
+  return Array.isArray(e) && e.length > 0;
+};
+
+/**
+ * The inputs behind one product's cost, editable on this costing.
+ *
+ * Shown above the breakdown sheet for whoever may change the costing. The
+ * fields are the ones the sheet's build-up is made of; the whole-fish cost is
+ * not among them because that comes from the assumptions version, which the
+ * costing pins. A save re-costs every state and port of the product, since
+ * these describe the product rather than one pack state.
+ */
+function LineInputsEditor({
+  costingId,
+  line,
+  onSaved,
+}: {
+  costingId: string;
+  line: CostCostingLine;
+  onSaved: () => void;
+}) {
+  const router = useRouter();
+  const inputs = rec(line.inputs);
+  const basis = inputs.raw_material_basis;
+  const composite = basis === 'composite';
+  const ingredient = basis === 'ingredient';
+  const absorbed = basis === 'absorbed';
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [pending, start] = useTransition();
+
+  type Field = { key: keyof CostingInputEdits; label: string; pct?: boolean; show: boolean; hint?: string };
+  const fields: Field[] = [
+    { key: 'yield_used', label: 'Yield (%)', pct: true, show: !composite, hint: 'Finished product per kg of input' },
+    { key: 'glaze_pct', label: 'Glaze (%)', pct: true, show: true, hint: 'Added ice on frozen states' },
+    { key: 'pct_fish', label: ingredient ? 'Input share of pack (%)' : 'Fish share of pack (%)', pct: true, show: !composite },
+    { key: 'pct_marinade', label: 'Marinade share of pack (%)', pct: true, show: !composite },
+    { key: 'marinade_usd_per_kg', label: 'Marinade (USD/kg)', show: !composite },
+    { key: 'process_usd_per_kg', label: 'Processing (USD/kg)', show: true },
+    { key: 'packing_usd_per_kg', label: 'Packing (USD/kg)', show: true },
+    { key: 'primary_input_cost', label: `Input cost (${line.currency}/kg input)`, show: ingredient },
+  ];
+  const current = (f: Field) => {
+    const v = num(inputs[f.key]);
+    if (v == null) return '';
+    return f.pct ? String(Math.round(v * 1000) / 10) : String(Math.round(v * 10000) / 10000);
+  };
+  const value = (f: Field) => draft[f.key] ?? current(f);
+  const changed = fields.filter((f) => f.show && draft[f.key] != null && draft[f.key] !== current(f));
+
+  function save() {
+    const edits: CostingInputEdits = {};
+    for (const f of changed) {
+      const n = Number(draft[f.key]);
+      if (draft[f.key]!.trim() === '' || !Number.isFinite(n)) { toast.error(`${f.label} must be a number.`); return; }
+      edits[f.key] = f.pct ? n / 100 : n;
+    }
+    start(async () => {
+      const res = await updateCostingProductInputs(costingId, line.sku_name, edits);
+      if (res.error) toast.error(res.error);
+      else { toast.success('Costing updated'); setDraft({}); onSaved(); router.refresh(); }
+    });
+  }
+
+  return (
+    <div className="mb-3 rounded-md border bg-muted/20 text-xs">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center justify-between px-3 py-2 text-left font-medium hover:bg-muted/40"
+        aria-expanded={open}
+      >
+        <span className="inline-flex items-center gap-1.5">
+          <Pencil className="h-3.5 w-3.5 text-muted-foreground" /> Edit the inputs behind this cost
+        </span>
+        <span className="font-normal text-muted-foreground">{open ? 'Hide' : 'Show'}</span>
+      </button>
+      {open && (
+        <div className="space-y-3 border-t px-3 py-3">
+          <p className="text-muted-foreground">
+            These change <b>this costing only</b>, not the SKU&apos;s recipe, and apply to every state and port of{' '}
+            <b>{line.sku_name}</b> on it. The cost is rebuilt on the costing&apos;s pinned assumptions.
+            {absorbed && ' A by-product keeps its market price; only its contribution moves.'}
+          </p>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
+            {fields.filter((f) => f.show).map((f) => (
+              <label key={f.key} className="block" title={f.hint}>
+                <span className="text-[11px] font-medium text-muted-foreground">{f.label}</span>
+                <input
+                  type="number"
+                  step="any"
+                  min="0"
+                  max={f.pct ? 100 : undefined}
+                  value={value(f)}
+                  disabled={pending}
+                  onChange={(e) => setDraft((d) => ({ ...d, [f.key]: e.target.value }))}
+                  className={cn(
+                    'mt-0.5 w-full rounded-md border bg-background px-2 py-1 text-right tabular-nums outline-none focus:ring-2 focus:ring-primary',
+                    draft[f.key] != null && draft[f.key] !== current(f) && 'border-primary'
+                  )}
+                />
+              </label>
+            ))}
+          </div>
+          <div className="flex items-center justify-end gap-2">
+            <Button size="sm" variant="outline" disabled={pending || changed.length === 0} onClick={() => setDraft({})}>
+              Reset
+            </Button>
+            <Button size="sm" disabled={pending || changed.length === 0} onClick={save}>
+              {pending ? 'Re-costing…' : `Save and re-cost${changed.length > 0 ? ` (${changed.length})` : ''}`}
+            </Button>
+          </div>
+        </div>
       )}
     </div>
   );

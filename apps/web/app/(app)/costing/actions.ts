@@ -16,7 +16,7 @@ import {
   type CostingContext,
   type OverridableField,
 } from '@/lib/costing';
-import { computeCost, type DomesticOutput, type ExportOutput } from '@oceanpick/engine';
+import { computeCost, type CostSku, type DomesticOutput, type ExportOutput } from '@oceanpick/engine';
 import type {
   CostCosting,
   CostCostingLine,
@@ -886,7 +886,14 @@ export async function setCostingLinePrice(
 
   const { data, error } = await supabase
     .from('cost_costing_lines')
-    .update({ selling_price: state.sellingPrice, contribution_per_kg: state.contributionPerKg, outputs })
+    .update({
+      selling_price: state.sellingPrice,
+      contribution_per_kg: state.contributionPerKg,
+      outputs,
+      // Remembered on the snapshot, so a later edit to the line's inputs
+      // re-costs under this price rather than falling back to cost-plus.
+      inputs: { ...line.inputs, target_price: price },
+    })
     .eq('id', lineId)
     .select('id');
   if (error) return { error: error.message };
@@ -896,5 +903,187 @@ export async function setCostingLinePrice(
 
   revalidatePath('/costing/saved');
   revalidatePath(`/costing/saved/${line.costing_id}`);
+  return { error: null };
+}
+
+/** The inputs behind a saved line that may be edited on the costing, with their bounds. */
+const EDITABLE_INPUTS = {
+  yield_used: { label: 'Yield', min: 0, max: 1, exclusiveMin: true },
+  glaze_pct: { label: 'Glaze', min: 0, max: 1 },
+  pct_fish: { label: 'Fish share', min: 0, max: 1 },
+  pct_marinade: { label: 'Marinade share', min: 0, max: 1 },
+  marinade_usd_per_kg: { label: 'Marinade cost', min: 0 },
+  process_usd_per_kg: { label: 'Processing cost', min: 0 },
+  packing_usd_per_kg: { label: 'Packing cost', min: 0 },
+  primary_input_cost: { label: 'Input cost', min: 0 },
+} as const;
+type EditableInput = keyof typeof EDITABLE_INPUTS;
+/** Fractions for the percentages (0.38, not 38); money per kg for the rest. */
+export type CostingInputEdits = Partial<Record<EditableInput, number>>;
+
+/**
+ * Edit the inputs behind a product on a saved costing — yield, glaze, the
+ * fish / marinade split and the per-kg marinade, processing and packing costs
+ * — and re-cost it in place.
+ *
+ * This is the costing's own copy of the recipe, not the SKU master: a figure
+ * negotiated for one customer belongs on their sheet, not on every costing
+ * from now on. Every state and every port of the product is re-costed
+ * together, because these inputs describe the product, not one pack state —
+ * a Frozen line with a different processing cost from its Fresh twin would
+ * be a contradiction, not a choice.
+ *
+ * Each line is rebuilt from its OWN snapshot, with the edits laid over it and
+ * only the figures the snapshot never carried (margins, transport and the
+ * other per-SKU overrides) read from the live SKU. So a field left alone keeps
+ * the value it was saved with even where the SKU master has since moved, and
+ * the costing's pinned assumptions version is used throughout. A price typed
+ * over the line earlier is kept as its target; otherwise the price follows the
+ * cost the way the SKU is set up to.
+ */
+export async function updateCostingProductInputs(
+  costingId: string,
+  skuName: string,
+  edits: CostingInputEdits
+): Promise<{ error: string | null }> {
+  const clean: Partial<Record<EditableInput, number>> = {};
+  for (const key of Object.keys(EDITABLE_INPUTS) as EditableInput[]) {
+    const v = edits[key];
+    if (v == null) continue;
+    const rule: { label: string; min: number; max?: number; exclusiveMin?: boolean } = EDITABLE_INPUTS[key];
+    if (typeof v !== 'number' || !Number.isFinite(v)) return { error: `${rule.label} must be a number.` };
+    if (v < rule.min || (rule.exclusiveMin && v <= rule.min) || (rule.max != null && v > rule.max)) {
+      return { error: rule.max != null ? `${rule.label} must be between 0% and 100%.` : `${rule.label} cannot be negative.` };
+    }
+    clean[key] = v;
+  }
+  const editedKeys = Object.keys(clean) as EditableInput[];
+  if (editedKeys.length === 0) return { error: 'Nothing was changed.' };
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: 'Your session expired. Sign in again.' };
+
+  const [{ data: costingRow }, { data: lineRows }] = await Promise.all([
+    supabase.from('cost_costings').select('*').eq('id', costingId).is('deleted_at', null).maybeSingle(),
+    supabase.from('cost_costing_lines').select('*').eq('costing_id', costingId).eq('sku_name', skuName),
+  ]);
+  if (!costingRow) return { error: 'That costing no longer exists.' };
+  const costing = costingRow as CostCosting;
+  const lines = (lineRows ?? []) as CostCostingLine[];
+  if (lines.length === 0) return { error: 'That product is not on this costing.' };
+  const skuId = lines[0]!.sku_id;
+  if (!skuId) return { error: 'The product behind these lines has been deleted, so they cannot be re-costed.' };
+
+  const ctx = await loadCostingContext(costing.version_id);
+  if (!ctx || ctx.version.id !== costing.version_id) {
+    return { error: 'The assumptions version this costing was built on no longer exists.' };
+  }
+  const skuRow = ctx.skus.find((s) => s.id === skuId);
+  if (!skuRow) return { error: 'The product behind these lines has been deleted, so they cannot be re-costed.' };
+
+  const assumptions = toAssumptions(applyOverrides(ctx.version, costing.assumption_overrides), ctx.odc);
+  const bucketRow = costing.bucket_id ? ctx.buckets.find((b) => b.id === costing.bucket_id) : null;
+  const bucket = bucketRow ? toBucket(bucketRow) : null;
+
+  const updates: { id: string; patch: Record<string, unknown> }[] = [];
+  for (const line of lines) {
+    const market: CostMarket = line.currency === 'LKR' ? 'domestic' : 'export';
+    const dest = line.destination_id ? ctx.destinations.find((d) => d.id === line.destination_id) : undefined;
+    if (market === 'export' && !dest) {
+      return { error: `The port ${line.destination_name ?? ''} is no longer active, so this product cannot be re-costed.`.replace('  ', ' ') };
+    }
+
+    const snap = line.inputs as Record<string, unknown>;
+    const n = (k: string): number | undefined => (typeof snap[k] === 'number' ? (snap[k] as number) : undefined);
+    const pick = (k: EditableInput): number | undefined => clean[k] ?? n(k);
+    const base = toSku(skuRow, market, ctx.yields.get(skuRow.id));
+    const targetPrice = n('target_price');
+    const yieldUsed = pick('yield_used');
+    const sku: CostSku = {
+      ...base,
+      glazePct: pick('glaze_pct') ?? base.glazePct,
+      pctFish: pick('pct_fish') ?? base.pctFish,
+      pctMarinade: pick('pct_marinade') ?? base.pctMarinade,
+      marinadeUsdPerKg: pick('marinade_usd_per_kg') ?? base.marinadeUsdPerKg,
+      processUsdPerKg: pick('process_usd_per_kg') ?? base.processUsdPerKg,
+      packingUsdPerKg: pick('packing_usd_per_kg') ?? base.packingUsdPerKg,
+      primaryInputCost: pick('primary_input_cost') ?? base.primaryInputCost,
+      // The snapshot's yield is the one that was used — bucket or flat — and
+      // an edited one is the one wanted. Either way the bucket must not
+      // override it.
+      baseYield: yieldUsed ?? base.baseYield,
+      bucketYields: yieldUsed != null ? undefined : base.bucketYields,
+      ...(targetPrice != null && targetPrice > 0
+        ? { pricingMode: 'target' as const, targetPrice, marketPrice: targetPrice }
+        : {}),
+    };
+
+    const result = computeCost({
+      market,
+      assumptions,
+      sku,
+      bucket,
+      destination: dest ? toDestination(dest, ctx.rates.get(dest.id)) : null,
+    });
+    if (!result.ok) {
+      return { error: 'With those inputs the product cannot be costed — check that the fish and marinade shares add up.' };
+    }
+
+    let state: DomesticOutput['unglazed'] | ExportOutput['frozenPlain'] | undefined;
+    let outputs: Record<string, unknown> = {};
+    if (market === 'domestic') {
+      const out = result.value.result as DomesticOutput;
+      state = line.state === 'unglazed' ? out.unglazed : line.state === 'glazed' ? out.glazed : undefined;
+      if (state) outputs = { ...state, chain: out.chain, wholeFish: result.value.wholeFish };
+    } else {
+      const out = result.value.result as ExportOutput;
+      state =
+        line.state === 'frozen_plain' ? out.frozenPlain
+        : line.state === 'frozen_glazed' ? out.frozenGlazed
+        : line.state === 'fresh' ? out.fresh
+        : undefined;
+      if (state) outputs = { ...state, chain: out.chain, destination: out.destination, wholeFish: result.value.wholeFish };
+    }
+    if (!state) return { error: 'A line\'s pack state no longer applies to the product.' };
+
+    // A by-product keeps the market price it was saved at: its cost is a floor
+    // under that price, not a base for it, so only contribution moves.
+    const absorbed = snap.raw_material_basis === 'absorbed';
+    const sellingPrice = absorbed ? line.selling_price : state.sellingPrice;
+    const contribution = absorbed
+      ? (sellingPrice == null ? null : sellingPrice - state.finalCost)
+      : state.contributionPerKg;
+
+    const already = Array.isArray(snap.edited_fields) ? (snap.edited_fields as string[]) : [];
+    updates.push({
+      id: line.id,
+      patch: {
+        final_cost: state.finalCost,
+        selling_price: sellingPrice,
+        contribution_per_kg: contribution,
+        inputs: {
+          ...snap,
+          ...clean,
+          yield_used: state ? result.value.result.chain.yieldUsed : snap.yield_used,
+          edited_fields: [...new Set([...already, ...editedKeys])],
+        },
+        outputs,
+      },
+    });
+  }
+
+  for (const u of updates) {
+    const { data, error } = await supabase.from('cost_costing_lines').update(u.patch).eq('id', u.id).select('id');
+    if (error) return { error: error.message };
+    if (!data?.length) return { error: 'Only the person who made a costing can change what is on it.' };
+  }
+
+  await supabase.from('cost_costings').update({ updated_by: user.id }).eq('id', costingId);
+
+  revalidatePath('/costing/saved');
+  revalidatePath(`/costing/saved/${costingId}`);
   return { error: null };
 }

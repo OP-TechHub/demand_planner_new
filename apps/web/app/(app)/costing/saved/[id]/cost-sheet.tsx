@@ -52,6 +52,11 @@ export function CostSheet({
   // none entered, and on lines saved before DDP existed.
   const dutyLevyPct = num(rec(out.destination).dutyLevyPct);
 
+  // Inputs typed over on this costing, as against the SKU master — so a reader
+  // of the sheet knows these figures are this sheet's, not the recipe's.
+  const edited = Array.isArray(inputs.edited_fields)
+    ? (inputs.edited_fields as unknown[]).filter((k): k is string => typeof k === 'string').map((k) => EDITED_LABEL[k] ?? k)
+    : [];
   const yieldUsed = num(chain.yieldUsed);
   const glazePct = num(inputs.glaze_pct) ?? 0;
   const pctFish = num(inputs.pct_fish);
@@ -96,6 +101,7 @@ export function CostSheet({
           {yieldUsed != null && <Meta label="Yield used" value={asPct(yieldUsed)} />}
           {glazePct > 0 && <Meta label="Glaze" value={asPct(glazePct)} />}
           <Meta label="Assumptions" value={`Built on ${pinnedLabel}`} />
+          {edited.length > 0 && <Meta label="Edited on this costing" value={edited.join(', ')} />}
         </tbody>
       </table>
 
@@ -264,3 +270,15 @@ export function CostSheet({
     </div>
   );
 }
+
+/** Plain names for the inputs a costing may edit over its SKU's recipe. */
+const EDITED_LABEL: Record<string, string> = {
+  yield_used: 'yield',
+  glaze_pct: 'glaze',
+  pct_fish: 'fish share',
+  pct_marinade: 'marinade share',
+  marinade_usd_per_kg: 'marinade cost',
+  process_usd_per_kg: 'processing cost',
+  packing_usd_per_kg: 'packing cost',
+  primary_input_cost: 'input cost',
+};
