@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useMemo, useState, useTransition } from 'react';
+import { useMemo, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ArrowLeft,
@@ -11,6 +11,7 @@ import {
   Globe,
   ListPlus,
   Lock,
+  Pencil,
   Printer,
   Search,
   TrendingDown,
@@ -35,7 +36,8 @@ import { cn } from '@/lib/utils';
 import { BaseCostToggle, num, rec } from '@/components/cost-sheet-parts';
 import { QuoteBuilder } from '@/components/quote-builder';
 import type { QuoteItem } from '@/components/quote-sheet';
-import { addSkusToCosting, removeProductFromCosting, setCostingVisibility } from '../../actions';
+import { toast } from '@/components/ui/toast';
+import { addSkusToCosting, removeProductFromCosting, setCostingLinePrice, setCostingVisibility } from '../../actions';
 import { CostSheet, COST_SHEET_ID } from './cost-sheet';
 
 /** A SKU the owner may still put on this costing. */
@@ -100,6 +102,12 @@ export function CostingDetail({
   // a copy that is going outside. Only reachable when showBaseCost is true.
   const [includeBaseCost, setIncludeBaseCost] = useState(true);
   const sheetBaseCost = showBaseCost && includeBaseCost;
+  // The one line whose selling price is being typed over, and the draft. The
+  // save goes through the engine, so the rest of the row follows the price.
+  const [priceEdit, setPriceEdit] = useState<{ id: string; draft: string } | null>(null);
+  const [pricePending, startPrice] = useTransition();
+  // Escape closes the box, and the blur that follows must not save it.
+  const priceCancelled = useRef(false);
 
   const isPrivate = costing.visibility === 'private';
   const overrides = Object.entries(costing.assumption_overrides ?? {});
@@ -125,6 +133,30 @@ export function CostingDetail({
   // dollar export ones, and rupees are whole numbers where dollars carry cents.
   const money = (n: number, currency: string) =>
     currency === 'LKR' ? Math.round(n).toLocaleString() : n.toFixed(2);
+
+  function openPriceEdit(l: CostCostingLine) {
+    const draft =
+      l.selling_price == null ? '' : l.currency === 'LKR' ? String(Math.round(l.selling_price)) : l.selling_price.toFixed(2);
+    priceCancelled.current = false;
+    setPriceEdit({ id: l.id, draft });
+  }
+
+  function commitPrice(l: CostCostingLine) {
+    if (!priceEdit || priceEdit.id !== l.id) return;
+    if (priceCancelled.current) { priceCancelled.current = false; setPriceEdit(null); return; }
+    const next = Number(priceEdit.draft);
+    // Nothing typed, or the same figure again: close without a round trip.
+    if (!priceEdit.draft.trim() || !Number.isFinite(next) || (l.selling_price != null && Math.abs(next - l.selling_price) < 0.005)) {
+      setPriceEdit(null);
+      return;
+    }
+    if (next <= 0) { toast.error('Enter a price above zero.'); return; }
+    startPrice(async () => {
+      const res = await setCostingLinePrice(l.id, next);
+      if (res.error) toast.error(res.error);
+      else { toast.success('Price updated'); setPriceEdit(null); router.refresh(); }
+    });
+  }
 
   // Which markets are actually on this sheet, read off the lines rather than
   // the costing's own market — that one only decides which market a product
@@ -342,7 +374,7 @@ export function CostingDetail({
               const now = repriced[l.id];
               const delta = now ? now.finalCost - l.final_cost : null;
               return (
-                <tr key={l.id} className="border-b last:border-0 hover:bg-muted/30">
+                <tr key={l.id} className="group border-b last:border-0 hover:bg-muted/30">
                   <th className={cn(td, 'sticky left-0 z-10 max-w-[240px] truncate bg-card text-left font-medium')} title={l.sku_name}>
                     {l.sku_name}
                   </th>
@@ -355,7 +387,43 @@ export function CostingDetail({
                   </td>
                   <td className={cn(td, 'text-left text-muted-foreground')}>{COST_STATE_LABEL[l.state]}</td>
                   <td className={cn(td, 'font-semibold')}>{money(l.final_cost, l.currency)}</td>
-                  <td className={td}>{l.selling_price != null ? money(l.selling_price, l.currency) : '—'}</td>
+                  <td className={td}>
+                    {priceEdit?.id === l.id ? (
+                      <input
+                        type="number"
+                        step="any"
+                        min="0"
+                        autoFocus
+                        value={priceEdit.draft}
+                        disabled={pricePending}
+                        onChange={(e) => setPriceEdit({ id: l.id, draft: e.target.value })}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') { e.preventDefault(); commitPrice(l); }
+                          else if (e.key === 'Escape') { priceCancelled.current = true; setPriceEdit(null); }
+                        }}
+                        onBlur={() => commitPrice(l)}
+                        aria-label={`Selling price — ${l.sku_name}, ${COST_STATE_LABEL[l.state]}`}
+                        className="w-24 rounded border bg-background px-1.5 py-0.5 text-right text-xs tabular-nums outline-none focus:ring-2 focus:ring-primary"
+                      />
+                    ) : (
+                      <span className="inline-flex items-center justify-end gap-1.5">
+                        {l.selling_price != null ? money(l.selling_price, l.currency) : '—'}
+                        {/* Only a line whose product still exists can be re-priced:
+                            the engine needs the recipe to rebuild the figures under it. */}
+                        {canEdit && l.sku_id && (
+                          <button
+                            type="button"
+                            onClick={() => openPriceEdit(l)}
+                            title="Change the selling price. Contribution, margin and the breakdown follow it; the cost does not move."
+                            aria-label={`Edit selling price — ${l.sku_name}`}
+                            className="rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus:opacity-100 group-hover:opacity-100"
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </button>
+                        )}
+                      </span>
+                    )}
+                  </td>
                   <td className={td}>
                     {contributionPerKg(l) != null ? (
                       <span className={contributionPerKg(l)! >= 0 ? 'text-success' : 'text-destructive'}>
