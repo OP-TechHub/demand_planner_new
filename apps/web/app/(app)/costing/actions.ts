@@ -3,6 +3,8 @@
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { parseSkuForm } from '@/lib/sku-form';
+import type { SkuFormState } from './skus/actions';
 import {
   applyOverrides,
   getBaseCostAccess,
@@ -535,6 +537,16 @@ function resolveLines(args: {
           customer: skuRow.customer,
           pack_size: skuRow.pack_size,
           pricing_mode: skuRow.pricing_mode,
+          // Which states it is sold in, and the grade it was costed at — both
+          // named on the sheet, as on the SKU's own, because the same recipe
+          // costs differently per grade and a Fresh price for a frozen-only
+          // product is a price for something nobody can order.
+          product_form: skuRow.product_form,
+          bucket_label: bucket?.label ?? null,
+          // Which terms the SKU overrode itself, as against inherited — so the
+          // full form, reopened on this costing, shows "follows" and
+          // "override" the way the SKU dialog does.
+          sku_overrides: skuOverridesOf(skuRow),
           // The margins and adders AS APPLIED — the SKU's override where it had
           // one, the version's figure otherwise. Snapshotted so the sheet can
           // show what the price was built on, and so an edit on the costing
@@ -1113,7 +1125,18 @@ export async function updateCostingProductInputs(
           // Written back in full, so a line from before the terms were
           // snapshotted carries them from here on.
           ...resolvedTerms(sku.overrides, assumptions, destination),
+          product_form: skuRow.product_form,
+          bucket_label: bucket?.label ?? null,
           ...clean,
+          // A term typed here is this costing's own override from now on.
+          sku_overrides: {
+            ...((snap.sku_overrides as Record<string, number | null> | undefined) ?? skuOverridesOf(skuRow)),
+            ...Object.fromEntries(
+              (Object.keys(clean) as EditableInput[])
+                .filter((k): k is TermKey => (TERM_KEYS as readonly string[]).includes(k))
+                .map((k) => [TERM_TO_OVERRIDE[k], clean[k]])
+            ),
+          },
           yield_used: state ? result.value.result.chain.yieldUsed : snap.yield_used,
           edited_fields: [...new Set([...already, ...editedKeys])],
         },
@@ -1193,4 +1216,181 @@ function overridesFrom(get: (k: TermKey) => number | undefined, fallback: SkuOve
     distributorMarkupPct: get('distributor_markup_pct') ?? fallback?.distributorMarkupPct,
     dutyLevyPct: get('duty_levy_pct') ?? fallback?.dutyLevyPct,
   };
+}
+
+const TERM_TO_OVERRIDE: Record<TermKey, string> = {
+  rack_margin_pct: 'override_rack_margin_pct',
+  fob_margin_pct: 'override_fob_margin_pct',
+  transport_lkr: 'override_transport_lkr',
+  cold_hold_lkr: 'override_cold_hold_lkr',
+  freight_to_port_usd: 'override_freight_to_port_usd',
+  cold_chain_usd: 'override_cold_chain_usd',
+  importer_clearing_pct: 'override_importer_clearing_pct',
+  importer_markup_pct: 'override_importer_markup_pct',
+  distributor_markup_pct: 'override_distributor_markup_pct',
+  duty_levy_pct: 'override_duty_levy_pct',
+};
+
+/** The SKU's own overrides, as the dialog's "Margins and adders" section holds them. */
+function skuOverridesOf(row: CostSkuRow): Record<string, number | null> {
+  return {
+    override_rack_margin_pct: row.override_rack_margin_pct ?? null,
+    override_fob_margin_pct: row.override_fob_margin_pct ?? null,
+    override_transport_lkr: row.override_transport_lkr ?? null,
+    override_cold_hold_lkr: row.override_cold_hold_lkr ?? null,
+    override_freight_to_port_usd: row.override_freight_to_port_usd ?? null,
+    override_cold_chain_usd: row.override_cold_chain_usd ?? null,
+    override_importer_clearing_pct: row.override_importer_clearing_pct ?? null,
+    override_importer_markup_pct: row.override_importer_markup_pct ?? null,
+    override_distributor_markup_pct: row.override_distributor_markup_pct ?? null,
+    override_duty_levy_pct: row.override_duty_levy_pct ?? null,
+  };
+}
+
+/**
+ * Save the SKU dialog's full form onto a saved costing — this costing's own
+ * copy of the product, not the SKU master.
+ *
+ * The form is read exactly as the SKU master reads it, so what is a valid
+ * recipe there is valid here and nothing else is. The product is then costed
+ * again through the same routine a save uses, at the costing's pinned
+ * assumptions, its grade and the ports its lines were costed to, and each
+ * existing line (one per state and port) is rewritten with the result. The
+ * SKU master is never written.
+ *
+ * The grade's per-size yield is deliberately NOT applied: the yield typed on
+ * the form is the yield, since that is what the form showed. The FCR of the
+ * grade still is, as on the Cost Grid at that grade.
+ */
+export async function saveCostingProduct(_prev: SkuFormState, fd: FormData): Promise<SkuFormState> {
+  const costingId = String(fd.get('costing_id') ?? '').trim();
+  const skuName = String(fd.get('sku_name') ?? '').trim();
+  if (!costingId || !skuName) return { error: 'Missing costing.', ok: false };
+
+  const parsed = parseSkuForm(fd);
+  if (!parsed.ok) return parsed;
+  const { payload, recipe, parts, overheads } = parsed;
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: 'Your session expired. Sign in again.', ok: false };
+
+  const [{ data: costingRow }, { data: lineRows }] = await Promise.all([
+    supabase.from('cost_costings').select('*').eq('id', costingId).is('deleted_at', null).maybeSingle(),
+    supabase.from('cost_costing_lines').select('*').eq('costing_id', costingId).eq('sku_name', skuName),
+  ]);
+  if (!costingRow) return { error: 'That costing no longer exists.', ok: false };
+  const costing = costingRow as CostCosting;
+  const lines = (lineRows ?? []) as CostCostingLine[];
+  if (lines.length === 0) return { error: 'That product is not on this costing.', ok: false };
+  const skuId = lines[0]!.sku_id;
+  if (!skuId) return { error: 'The product behind these lines has been deleted, so they cannot be re-costed.', ok: false };
+
+  const ctx = await loadCostingContext(costing.version_id);
+  if (!ctx || ctx.version.id !== costing.version_id) {
+    return { error: 'The assumptions version this costing was built on no longer exists.', ok: false };
+  }
+  const live = ctx.skus.find((s) => s.id === skuId);
+  if (!live) return { error: 'The product behind these lines has been deleted, so they cannot be re-costed.', ok: false };
+
+  // The lines' own market, read off their currency: the form's hidden scope
+  // says the same, but what is stored is what must be costed.
+  const lineMarket: CostMarket = lines[0]!.currency === 'LKR' ? 'domestic' : 'export';
+  const snap = lines[0]!.inputs as Record<string, unknown>;
+  // The live SKU underneath, the costing's own copy over it, and the form over
+  // both — so a column the form never posts (the sub-product total of a
+  // non-composite, say) keeps what this costing already had.
+  const row = {
+    ...live,
+    unit_label: (snap.unit_label as string | undefined) ?? live.unit_label,
+    unit_weight_g: (snap.unit_weight_g as number | null | undefined) ?? live.unit_weight_g,
+    batch_units: (snap.batch_units as number | undefined) ?? live.batch_units,
+    composite_cost_lkr: (snap.composite_cost_lkr as number | null | undefined) ?? live.composite_cost_lkr,
+    ...payload,
+    id: live.id,
+    name: skuName,
+    market_scope: lineMarket,
+  } as CostSkuRow;
+
+  const assumptions = toAssumptions(applyOverrides(ctx.version, costing.assumption_overrides), ctx.odc);
+  const bucketRow = costing.bucket_id ? ctx.buckets.find((b) => b.id === costing.bucket_id) : null;
+  const destIds = new Set(lines.map((l) => l.destination_id).filter((d): d is string => !!d));
+  const dests = ctx.destinations.filter((d) => destIds.has(d.id));
+  if (lineMarket === 'export' && dests.length === 0) {
+    return { error: 'None of the ports these lines were costed to is still active, so the product cannot be re-costed.', ok: false };
+  }
+
+  const { lines: fresh } = resolveLines({
+    // No per-grade yields: the yield on the form is the yield.
+    ctx: { ...ctx, yields: new Map() },
+    costingId,
+    market: lineMarket,
+    assumptions,
+    bucket: bucketRow ? toBucket(bucketRow) : null,
+    bucketId: costing.bucket_id,
+    skus: [row],
+    dests,
+    startSort: 0,
+  });
+  if (fresh.length === 0) {
+    return { error: 'With those inputs the product cannot be costed — check that the fish and marinade shares total 100%.', ok: false };
+  }
+  const byKey = new Map(fresh.map((l) => [`${l.state}:${(l.destination_id as string | null) ?? ''}`, l]));
+
+  // Which of the editable figures actually moved, for the "edited" tag.
+  const num = (o: Record<string, unknown>, k: string) => (typeof o[k] === 'number' ? (o[k] as number) : null);
+  const watched = [
+    ...(Object.keys(EDITABLE_INPUTS) as string[]),
+    'product_form', 'category', 'customer', 'pack_size', 'pricing_mode', 'target_price',
+  ];
+
+  let touched = 0;
+  for (const line of lines) {
+    const f = byKey.get(`${line.state}:${line.destination_id ?? ''}`);
+    // A port no longer active, or a state the recipe no longer has: left as it was.
+    if (!f) continue;
+    const old = line.inputs as Record<string, unknown>;
+    const next = f.inputs as Record<string, unknown>;
+    const targetPrice =
+      payload.pricing_mode === 'target'
+        ? (lineMarket === 'domestic' ? payload.market_price_lkr : payload.market_price_usd) ?? null
+        : null;
+    const already = Array.isArray(old.edited_fields) ? (old.edited_fields as string[]) : [];
+    const moved = watched.filter((k) => {
+      const a = k === 'target_price' ? num(old, k) : (typeof old[k] === 'string' ? old[k] : num(old, k));
+      const b = k === 'target_price' ? targetPrice : (typeof next[k] === 'string' ? next[k] : num(next, k));
+      return a !== b;
+    });
+    const { error } = await supabase
+      .from('cost_costing_lines')
+      .update({
+        final_cost: f.final_cost,
+        selling_price: f.selling_price,
+        contribution_per_kg: f.contribution_per_kg,
+        inputs: {
+          ...next,
+          // How the marinade cost and the sub-product total were built, kept
+          // with the line so the form reopens on them rather than on the SKU's.
+          marinade_recipe: recipe === undefined ? (old.marinade_recipe ?? null) : recipe,
+          sub_products: parts === undefined ? (old.sub_products ?? null) : parts,
+          overheads: overheads === undefined ? (old.overheads ?? null) : overheads,
+          target_price: targetPrice,
+          edited_fields: [...new Set([...already, ...moved])],
+        },
+        outputs: f.outputs,
+      })
+      .eq('id', line.id)
+      .select('id');
+    if (error) return { error: error.message, ok: false };
+    touched += 1;
+  }
+  if (touched === 0) return { error: 'Only the person who made a costing can change what is on it.', ok: false };
+
+  await supabase.from('cost_costings').update({ updated_by: user.id }).eq('id', costingId);
+
+  revalidatePath('/costing/saved');
+  revalidatePath(`/costing/saved/${costingId}`);
+  return { error: null, ok: true };
 }

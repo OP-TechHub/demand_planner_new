@@ -1,15 +1,17 @@
 import { notFound } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { computeCost, type DomesticOutput, type ExportOutput } from '@oceanpick/engine';
-import type {
-  CostAssumptionVersion,
-  CostCosting,
+import {
+  COST_CATEGORIES,
+  type CostAssumptionVersion,
+  type CostCosting,
   CostCostingDestination,
   CostCostingLine,
   CostProductState,
 } from '@oceanpick/shared';
 import {
   applyOverrides,
+  forClient,
   getBaseCostAccess,
   loadCostingContext,
   stripBaseCostOutputs,
@@ -20,7 +22,7 @@ import {
   toSku,
 } from '@/lib/costing';
 import { getProfile } from '@/lib/plan';
-import { CostingDetail, type AddableSku, type RepricedLine } from './costing-detail';
+import { CostingDetail, type AddableSku, type RepricedLine, type SavedCostingEditor } from './costing-detail';
 
 /**
  * One saved costing, as sent — plus what it would cost at today's assumptions.
@@ -59,6 +61,38 @@ export default async function SavedCostingPage({ params }: { params: Promise<{ i
   const authorName = (authorRow as { full_name: string } | null)?.full_name ?? 'Unknown';
 
   const repriced = current ? reprice(costing, lines, current) : new Map<string, number>();
+
+  // The full SKU form, run on this costing. It costs in the browser, so it is
+  // handed the costing's PINNED assumptions (with the costing's own overrides
+  // laid over them), masked the way the SKU page masks them. Only for someone
+  // who may change the costing, and only while the pinned version exists —
+  // the context falls back to the current one otherwise, which is exactly
+  // what a saved costing must never be re-costed on.
+  const pinnedCtx = canEdit ? await loadCostingContext(costing.version_id) : null;
+  const editor: SavedCostingEditor | null =
+    pinnedCtx && pinnedCtx.version.id === costing.version_id
+      ? {
+          orgId: costing.org_id,
+          ...forClient(
+            { version: applyOverrides(pinnedCtx.version, costing.assumption_overrides), odc: pinnedCtx.odc },
+            baseCost
+          ),
+          buckets: pinnedCtx.buckets,
+          destinations: pinnedCtx.destinations,
+          rates: Object.fromEntries(
+            [...pinnedCtx.rates.entries()].map(([rid, r]) => [
+              rid,
+              { sea: r.sea_rate_per_20ft, air: r.air_rate_per_lot, duty: r.duty_levy_pct ?? null },
+            ])
+          ),
+          skus: pinnedCtx.skus,
+          categories: [...new Set([...COST_CATEGORIES, ...pinnedCtx.skus.map((s) => s.category).filter(Boolean)])],
+          marinadeLines: Object.fromEntries(pinnedCtx.marinadeLines.entries()),
+          components: Object.fromEntries(pinnedCtx.components.entries()),
+          overheads: Object.fromEntries(pinnedCtx.overheads.entries()),
+          knownIngredients: knownIngredientsOf(pinnedCtx.marinadeLines, pinnedCtx.components),
+        }
+      : null;
 
   // What the owner may still add. Products already on the sheet are excluded by
   // their snapshot name — that is what the lines are keyed on, and it is what a
@@ -111,6 +145,13 @@ export default async function SavedCostingPage({ params }: { params: Promise<{ i
       addable={addable}
       repriced={Object.fromEntries(repriced) as Record<string, RepricedLine>}
       showBaseCost={baseCost.canView}
+      editor={editor}
+      // The grade this costing was built at, for the sheet. Grades are
+      // org-level and rarely renamed, so the current context's label serves
+      // lines saved before the grade was snapshotted with them.
+      gradeLabel={
+        current && costing.bucket_id ? (current.buckets.find((b) => b.id === costing.bucket_id)?.label ?? null) : null
+      }
     />
   );
 }
@@ -176,4 +217,27 @@ function reprice(
     }
   }
   return out;
+}
+
+/**
+ * Every marinade ingredient anyone has priced, with its most recent price —
+ * what the marinade builder offers as you type. The same rule the SKUs page
+ * applies: last entry wins, names matched case-insensitively.
+ */
+function knownIngredientsOf(
+  marinadeLines: Map<string, { ingredient: string; price_lkr_per_kg: number }[]>,
+  components: Map<string, { recipe?: { lines: { ingredient: string; price_lkr_per_kg: number }[] } | null }[]>
+): { name: string; price: number }[] {
+  const byKey = new Map<string, { name: string; price: number }>();
+  const note = (ingredient: string, price: number) => {
+    const key = ingredient.trim().toLowerCase();
+    if (!key) return;
+    const seen = byKey.get(key);
+    byKey.set(key, { name: seen?.name ?? ingredient.trim(), price });
+  };
+  for (const lines of marinadeLines.values()) for (const l of lines) note(l.ingredient, l.price_lkr_per_kg);
+  for (const parts of components.values()) {
+    for (const p of parts) for (const l of p.recipe?.lines ?? []) note(l.ingredient, l.price_lkr_per_kg);
+  }
+  return [...byKey.values()].sort((a, b) => a.name.localeCompare(b.name));
 }

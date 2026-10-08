@@ -20,8 +20,16 @@ import {
 } from 'lucide-react';
 import {
   COST_STATE_LABEL,
+  type CostAssumptionVersion,
+  type CostComponentInput,
   type CostCosting,
+  type CostDestinationRow,
   type CostMarket,
+  type CostOdcComponentRow,
+  type CostOverheadInput,
+  type CostSizeBucket,
+  type CostSkuMarinadeLine,
+  type CostSkuRow,
   type CostMarketScope,
   type CostCostingDestination,
   type CostCostingLine,
@@ -40,11 +48,18 @@ import { toast } from '@/components/ui/toast';
 import {
   addSkusToCosting,
   removeProductFromCosting,
+  saveCostingProduct,
   setCostingLinePrice,
   setCostingVisibility,
   updateCostingProductInputs,
   type CostingInputEdits,
 } from '../../actions';
+import {
+  SkuDialog,
+  type MarinadeMap,
+  type OverheadsMap,
+  type PartsMap,
+} from '../../skus/skus-client';
 import { CostSheet, COST_SHEET_ID, fallbackTerm } from './cost-sheet';
 
 /** A SKU the owner may still put on this costing. */
@@ -62,6 +77,28 @@ export interface RepricedLine {
   sellingPrice: number | null;
 }
 
+/**
+ * What the full SKU form needs to run on this costing: the pinned assumptions
+ * (masked for a reader without base-cost view), the grades, ports and rates,
+ * and the vocabulary the form offers. Null when the reader may not edit the
+ * costing, or when its pinned version no longer exists.
+ */
+export interface SavedCostingEditor {
+  orgId: string;
+  version: CostAssumptionVersion;
+  odc: CostOdcComponentRow[];
+  buckets: CostSizeBucket[];
+  destinations: CostDestinationRow[];
+  rates: Record<string, { sea: number; air: number; duty?: number | null }>;
+  /** The live SKU rows: the product behind a line is looked up here. */
+  skus: CostSkuRow[];
+  categories: string[];
+  marinadeLines: MarinadeMap;
+  components: PartsMap;
+  overheads: OverheadsMap;
+  knownIngredients: { name: string; price: number }[];
+}
+
 export function CostingDetail({
   costing,
   lines,
@@ -74,6 +111,8 @@ export function CostingDetail({
   addable,
   repriced,
   showBaseCost,
+  gradeLabel,
+  editor,
 }: {
   costing: CostCosting;
   lines: CostCostingLine[];
@@ -93,6 +132,10 @@ export function CostingDetail({
    * were sent — this flag only decides what the sheet draws.
    */
   showBaseCost: boolean;
+  /** The size grade the costing was built at, or null for the reference size. */
+  gradeLabel: string | null;
+  /** What the full SKU form needs; null when it is not on offer. */
+  editor: SavedCostingEditor | null;
 }) {
   const router = useRouter();
   const [visibilityPending, startVisibility] = useTransition();
@@ -118,6 +161,8 @@ export function CostingDetail({
   // The one line whose selling price is being typed over, and the draft. The
   // save goes through the engine, so the rest of the row follows the price.
   const [priceEdit, setPriceEdit] = useState<{ id: string; draft: string } | null>(null);
+  // The line whose product is open in the full SKU form, on this costing.
+  const [formLine, setFormLine] = useState<CostCostingLine | null>(null);
   const [pricePending, startPrice] = useTransition();
   // Escape closes the box, and the blur that follows must not save it.
   const priceCancelled = useRef(false);
@@ -553,6 +598,22 @@ export function CostingDetail({
                 <BaseCostToggle include={includeBaseCost} onChange={setIncludeBaseCost} />
               </div>
             )}
+            {canEdit && editor && sheet.sku_id && editor.skus.some((x) => x.id === sheet.sku_id) && (
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-md border bg-primary/5 px-3 py-2 text-xs">
+                <span>
+                  Open the <b>full SKU form</b> for {sheet.sku_name} on this costing — recipe, margins and adders,
+                  pricing, with Calculate, Quotation and Download — and re-cost every state and port of it.
+                </span>
+                <Button
+                  size="sm"
+                  // The breakdown closes first: both it and the form mount a
+                  // print copy of a sheet, and print reveals every one.
+                  onClick={() => { setSheetLine(null); setFormLine(sheet); }}
+                >
+                  <Pencil className="h-4 w-4" /> Edit full form
+                </Button>
+              </div>
+            )}
             {canEdit && sheet.sku_id && (
               <LineInputsEditor
                 key={sheet.id}
@@ -562,7 +623,7 @@ export function CostingDetail({
               />
             )}
             <div className="max-h-[65vh] overflow-y-auto rounded-md border">
-              <CostSheet costing={costing} line={sheet} pinnedLabel={pinnedLabel} authorName={authorName} showBaseCost={sheetBaseCost} />
+              <CostSheet costing={costing} line={sheet} pinnedLabel={pinnedLabel} authorName={authorName} showBaseCost={sheetBaseCost} gradeLabel={gradeLabel} />
             </div>
             <p className="mt-3 text-xs text-muted-foreground">
               Both formats hold the figures as saved, not as they would price today. The Word file is editable, so
@@ -577,13 +638,149 @@ export function CostingDetail({
               pinnedLabel={pinnedLabel}
               authorName={authorName}
               showBaseCost={sheetBaseCost}
+              gradeLabel={gradeLabel}
               elementId={COST_SHEET_ID}
             />
           </div>
         </>
       )}
+
+      {formLine && editor && (() => {
+        const row = rowFromLine(formLine, costing, editor);
+        if (!row) return null;
+        return (
+          <SkuDialog
+            sku={row}
+            orgId={editor.orgId}
+            buckets={editor.buckets}
+            // No per-grade yields on a costing: the yield on the form is the yield.
+            yields={{}}
+            version={editor.version}
+            odc={editor.odc}
+            destinations={editor.destinations}
+            rates={editor.rates}
+            allSkus={editor.skus}
+            categories={editor.categories}
+            marinadeLines={{ [row.id]: marinadeLinesFor(formLine, row.id, editor) }}
+            components={{ [row.id]: partsFor(formLine, row.id, editor) }}
+            overheads={{ [row.id]: overheadsFor(formLine, row.id, editor) }}
+            knownIngredients={editor.knownIngredients}
+            canViewBaseCost={showBaseCost}
+            costing={{
+              costingId: costing.id,
+              costingName: costing.name,
+              skuName: formLine.sku_name,
+              market: formLine.currency === 'LKR' ? 'domestic' : 'export',
+              bucketId: costing.bucket_id,
+              destinationId: formLine.destination_id,
+              saveAction: saveCostingProduct,
+            }}
+            onClose={() => setFormLine(null)}
+          />
+        );
+      })()}
     </div>
   );
+}
+
+/**
+ * The costing's own copy of a product, as a SKU row the dialog can open: the
+ * live SKU underneath, and everything the line snapshotted over it. The
+ * line's state and port are not part of the recipe, so they are not here;
+ * the grade and port the dialog shows are the costing's, passed separately.
+ */
+function rowFromLine(line: CostCostingLine, costing: CostCosting, editor: SavedCostingEditor): CostSkuRow | null {
+  const live = editor.skus.find((s) => s.id === line.sku_id);
+  if (!live) return null;
+  const i = rec(line.inputs);
+  const n = (k: string) => num(i[k]);
+  const t = (k: string) => (typeof i[k] === 'string' ? (i[k] as string) : undefined);
+  const domestic = line.currency === 'LKR';
+  const target = n('target_price');
+  const recipe = rec(i.marinade_recipe);
+  // The SKU's own overrides as snapshotted; a line from before they were
+  // recorded shows the SKU's current ones, which is the best reading there is.
+  const ov = rec(i.sku_overrides);
+  const o = (k: keyof CostSkuRow & `override_${string}`): number | null =>
+    k in ov ? (num(ov[k]) ?? null) : ((live[k] as number | null | undefined) ?? null);
+  return {
+    ...live,
+    override_rack_margin_pct: o('override_rack_margin_pct'),
+    override_fob_margin_pct: o('override_fob_margin_pct'),
+    override_transport_lkr: o('override_transport_lkr'),
+    override_cold_hold_lkr: o('override_cold_hold_lkr'),
+    override_freight_to_port_usd: o('override_freight_to_port_usd'),
+    override_cold_chain_usd: o('override_cold_chain_usd'),
+    override_importer_clearing_pct: o('override_importer_clearing_pct'),
+    override_importer_markup_pct: o('override_importer_markup_pct'),
+    override_distributor_markup_pct: o('override_distributor_markup_pct'),
+    override_duty_levy_pct: o('override_duty_levy_pct'),
+    market_scope: domestic ? 'domestic' : 'export',
+    product_form: (t('product_form') as CostSkuRow['product_form'] | undefined) ?? live.product_form,
+    category: t('category') ?? live.category,
+    customer: t('customer') ?? live.customer,
+    pack_size: t('pack_size') ?? live.pack_size,
+    raw_material_basis: (t('raw_material_basis') as CostSkuRow['raw_material_basis'] | undefined) ?? live.raw_material_basis,
+    glaze_pct: n('glaze_pct') ?? live.glaze_pct,
+    // The yield the line was costed at — bucket or flat — is the one to show.
+    base_yield: n('yield_used') ?? live.base_yield,
+    pct_fish: n('pct_fish') ?? live.pct_fish,
+    pct_marinade: n('pct_marinade') ?? live.pct_marinade,
+    marinade_usd_per_kg: n('marinade_usd_per_kg') ?? live.marinade_usd_per_kg,
+    process_usd_per_kg: n('process_usd_per_kg') ?? live.process_usd_per_kg,
+    packing_usd_per_kg: n('packing_usd_per_kg') ?? live.packing_usd_per_kg,
+    primary_input_name: t('primary_input_name') ?? live.primary_input_name,
+    primary_input_cost_lkr: domestic ? (n('primary_input_cost') ?? live.primary_input_cost_lkr) : live.primary_input_cost_lkr,
+    primary_input_cost_usd: domestic ? live.primary_input_cost_usd : (n('primary_input_cost') ?? live.primary_input_cost_usd),
+    unit_label: t('unit_label') ?? live.unit_label,
+    unit_weight_g: n('unit_weight_g') ?? live.unit_weight_g,
+    batch_units: n('batch_units') ?? live.batch_units,
+    composite_cost_lkr: n('composite_cost_lkr') ?? live.composite_cost_lkr,
+    // A price typed over the line is a target; otherwise the mode as saved.
+    pricing_mode: target != null ? 'target' : ((t('pricing_mode') as CostSkuRow['pricing_mode'] | undefined) ?? live.pricing_mode),
+    market_price_lkr: domestic && target != null ? target : live.market_price_lkr,
+    market_price_usd: !domestic && target != null ? target : live.market_price_usd,
+    marinade_total_dose_g: i.marinade_recipe === null ? null : (num(recipe.total_dose_g) ?? live.marinade_total_dose_g),
+    default_bucket_id: costing.bucket_id,
+    default_destination_id: line.destination_id ?? live.default_destination_id,
+  };
+}
+
+/** The marinade recipe behind the line's marinade cost: the costing's own if it has one, else the SKU's. */
+function marinadeLinesFor(line: CostCostingLine, id: string, editor: SavedCostingEditor): CostSkuMarinadeLine[] {
+  const i = rec(line.inputs);
+  if (i.marinade_recipe === null) return [];
+  const r = rec(i.marinade_recipe);
+  if (Array.isArray(r.lines)) {
+    return (r.lines as unknown[]).map((l, idx) => {
+      const x = rec(l);
+      return {
+        id: `${id}:m${idx}`,
+        sku_id: id,
+        sort_order: idx * 10,
+        ingredient: String(x.ingredient ?? ''),
+        qty_g: num(x.qty_g) ?? 0,
+        price_lkr_per_kg: num(x.price_lkr_per_kg) ?? 0,
+      };
+    });
+  }
+  return editor.marinadeLines[id] ?? [];
+}
+
+/** A composite's sub-products: the costing's own list if it has one, else the SKU's. */
+function partsFor(line: CostCostingLine, id: string, editor: SavedCostingEditor): CostComponentInput[] {
+  const i = rec(line.inputs);
+  if (i.sub_products === null) return [];
+  if (Array.isArray(i.sub_products)) return i.sub_products as CostComponentInput[];
+  return editor.components[id] ?? [];
+}
+
+/** A composite's per-batch overheads, by the same rule. */
+function overheadsFor(line: CostCostingLine, id: string, editor: SavedCostingEditor): CostOverheadInput[] {
+  const i = rec(line.inputs);
+  if (i.overheads === null) return [];
+  if (Array.isArray(i.overheads)) return i.overheads as CostOverheadInput[];
+  return editor.overheads[id] ?? [];
 }
 
 const hasEditedInputs = (l: CostCostingLine) => {

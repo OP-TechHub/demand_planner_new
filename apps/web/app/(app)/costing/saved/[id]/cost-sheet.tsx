@@ -18,6 +18,7 @@ export function CostSheet({
   pinnedLabel,
   authorName,
   showBaseCost,
+  gradeLabel,
   elementId,
 }: {
   costing: CostCosting;
@@ -36,6 +37,11 @@ export function CostSheet({
    * The on-screen preview renders the same sheet without an id, so the two
    * can coexist and only one of them is ever the document.
    */
+  /**
+   * The grade the costing was built at, from the page, for a line saved before
+   * the grade travelled with it. A line's own snapshot wins where it has one.
+   */
+  gradeLabel?: string | null;
   elementId?: string;
 }) {
   // The line's own market, not the costing's: a costing can hold rupee
@@ -108,8 +114,33 @@ export function CostSheet({
           {line.destination_name && <Meta label="Destination" value={line.destination_name} />}
           {dutyLevyPct != null && <Meta label="Duty & levy" value={`${asPct(dutyLevyPct)} of FOB`} />}
           <Meta label="Currency" value={`${line.currency} per kg finished product`} />
+          {text('product_form') && (
+            <Meta
+              label="Sold as"
+              value={
+                text('product_form') === 'frozen' ? 'Frozen only'
+                : text('product_form') === 'fresh' ? 'Fresh only (air)'
+                : 'Frozen and fresh'
+              }
+            />
+          )}
+          <Meta
+            label="Size grade"
+            value={
+              text('bucket_label') ?? gradeLabel ?? (inputs.bucket_id ? 'Sized — grade not recorded' : 'Reference size (no grade)')
+            }
+          />
           {yieldUsed != null && <Meta label="Yield used" value={asPct(yieldUsed)} />}
           {glazePct > 0 && <Meta label="Glaze" value={asPct(glazePct)} />}
+          <Meta
+            label="Raw material"
+            value={
+              absorbed ? 'Absorbed by-product'
+              : composite ? 'Composite — sub-products costed separately'
+              : ingredientName ? `Primary ingredient — ${ingredientName}`
+              : 'Full fish'
+            }
+          />
           <Meta label="Assumptions" value={`Built on ${pinnedLabel}`} />
           {edited.length > 0 && <Meta label="Edited on this costing" value={edited.join(', ')} />}
         </tbody>
