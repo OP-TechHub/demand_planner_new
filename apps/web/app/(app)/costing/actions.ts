@@ -16,7 +16,15 @@ import {
   type CostingContext,
   type OverridableField,
 } from '@/lib/costing';
-import { computeCost, type CostSku, type DomesticOutput, type ExportOutput } from '@oceanpick/engine';
+import {
+  computeCost,
+  type CostAssumptions,
+  type CostSku,
+  type Destination,
+  type DomesticOutput,
+  type ExportOutput,
+  type SkuOverrides,
+} from '@oceanpick/engine';
 import type {
   CostCosting,
   CostCostingLine,
@@ -467,12 +475,13 @@ function resolveLines(args: {
         skipped.push(skuRow.name);
         continue;
       }
+      const destination = dest ? toDestination(dest, ctx.rates.get(dest.id)) : null;
       const result = computeCost({
         market: skuMarket,
         assumptions,
         sku: engineSku,
         bucket,
-        destination: dest ? toDestination(dest, ctx.rates.get(dest.id)) : null,
+        destination,
       });
 
       // A SKU whose split is broken is not costed, so there is nothing honest to
@@ -520,6 +529,17 @@ function resolveLines(args: {
           unit_weight_g: skuRow.unit_weight_g ?? null,
           batch_units: skuRow.batch_units ?? 1,
           composite_cost_lkr: skuRow.raw_material_basis === 'composite' ? (skuRow.composite_cost_lkr ?? null) : null,
+          // Who and what the recipe was written for, so the sheet can say so
+          // after the SKU has been renamed, rescoped or deleted.
+          category: skuRow.category,
+          customer: skuRow.customer,
+          pack_size: skuRow.pack_size,
+          pricing_mode: skuRow.pricing_mode,
+          // The margins and adders AS APPLIED — the SKU's override where it had
+          // one, the version's figure otherwise. Snapshotted so the sheet can
+          // show what the price was built on, and so an edit on the costing
+          // re-costs under these rather than under whatever the SKU says today.
+          ...resolvedTerms(engineSku.overrides, assumptions, destination),
         },
       };
 
@@ -847,13 +867,23 @@ export async function setCostingLinePrice(
 
   const assumptions = toAssumptions(applyOverrides(ctx.version, costing.assumption_overrides), ctx.odc);
   const bucketRow = costing.bucket_id ? ctx.buckets.find((b) => b.id === costing.bucket_id) : null;
+  const baseSku = toSku(skuRow, market, ctx.yields.get(skuRow.id));
+  const snapNum = (k: string): number | undefined =>
+    typeof line.inputs[k] === 'number' ? (line.inputs[k] as number) : undefined;
   const result = computeCost({
     market,
     assumptions,
     // The new price acts as the target AND as what the market bears, so a
     // cost-plus product and a by-product both come out priced at it, with
     // contribution read against it.
-    sku: { ...toSku(skuRow, market, ctx.yields.get(skuRow.id)), pricingMode: 'target', targetPrice: price, marketPrice: price },
+    sku: {
+      ...baseSku,
+      // The margins and adders the line was saved under, not the SKU's current ones.
+      overrides: overridesFrom(snapNum, baseSku.overrides),
+      pricingMode: 'target',
+      targetPrice: price,
+      marketPrice: price,
+    },
     bucket: bucketRow ? toBucket(bucketRow) : null,
     destination: dest ? toDestination(dest, ctx.rates.get(dest.id)) : null,
   });
@@ -916,6 +946,18 @@ const EDITABLE_INPUTS = {
   process_usd_per_kg: { label: 'Processing cost', min: 0 },
   packing_usd_per_kg: { label: 'Packing cost', min: 0 },
   primary_input_cost: { label: 'Input cost', min: 0 },
+  // The margins and adders, as the SKU dialog offers them. A margin of 100%
+  // would make the cost-plus price infinite, so it stops short of it.
+  rack_margin_pct: { label: 'Rack margin', min: 0, max: 1, exclusiveMax: true },
+  fob_margin_pct: { label: 'FOB margin', min: 0, max: 1, exclusiveMax: true },
+  transport_lkr: { label: 'Transport', min: 0 },
+  cold_hold_lkr: { label: 'Cold holding', min: 0 },
+  freight_to_port_usd: { label: 'Freight to port', min: 0 },
+  cold_chain_usd: { label: 'Cold chain', min: 0 },
+  importer_clearing_pct: { label: 'Importer clearing', min: 0 },
+  importer_markup_pct: { label: 'Importer markup', min: 0 },
+  distributor_markup_pct: { label: 'Distributor markup', min: 0 },
+  duty_levy_pct: { label: 'Duty & levy', min: 0 },
 } as const;
 type EditableInput = keyof typeof EDITABLE_INPUTS;
 /** Fractions for the percentages (0.38, not 38); money per kg for the rest. */
@@ -950,10 +992,14 @@ export async function updateCostingProductInputs(
   for (const key of Object.keys(EDITABLE_INPUTS) as EditableInput[]) {
     const v = edits[key];
     if (v == null) continue;
-    const rule: { label: string; min: number; max?: number; exclusiveMin?: boolean } = EDITABLE_INPUTS[key];
+    const rule: { label: string; min: number; max?: number; exclusiveMin?: boolean; exclusiveMax?: boolean } =
+      EDITABLE_INPUTS[key];
     if (typeof v !== 'number' || !Number.isFinite(v)) return { error: `${rule.label} must be a number.` };
-    if (v < rule.min || (rule.exclusiveMin && v <= rule.min) || (rule.max != null && v > rule.max)) {
-      return { error: rule.max != null ? `${rule.label} must be between 0% and 100%.` : `${rule.label} cannot be negative.` };
+    if (v < rule.min || (rule.exclusiveMin && v <= rule.min)) {
+      return { error: rule.exclusiveMin ? `${rule.label} must be above zero.` : `${rule.label} cannot be negative.` };
+    }
+    if (rule.max != null && (v > rule.max || (rule.exclusiveMax && v >= rule.max))) {
+      return { error: rule.exclusiveMax ? `${rule.label} must be below 100%.` : `${rule.label} must be between 0% and 100%.` };
     }
     clean[key] = v;
   }
@@ -1004,6 +1050,9 @@ export async function updateCostingProductInputs(
     const yieldUsed = pick('yield_used');
     const sku: CostSku = {
       ...base,
+      // The margins and adders as saved on the line, with any edits over them.
+      // A line from before they were snapshotted falls back to the SKU's own.
+      overrides: overridesFrom(pick, base.overrides),
       glazePct: pick('glaze_pct') ?? base.glazePct,
       pctFish: pick('pct_fish') ?? base.pctFish,
       pctMarinade: pick('pct_marinade') ?? base.pctMarinade,
@@ -1021,13 +1070,8 @@ export async function updateCostingProductInputs(
         : {}),
     };
 
-    const result = computeCost({
-      market,
-      assumptions,
-      sku,
-      bucket,
-      destination: dest ? toDestination(dest, ctx.rates.get(dest.id)) : null,
-    });
+    const destination = dest ? toDestination(dest, ctx.rates.get(dest.id)) : null;
+    const result = computeCost({ market, assumptions, sku, bucket, destination });
     if (!result.ok) {
       return { error: 'With those inputs the product cannot be costed — check that the fish and marinade shares add up.' };
     }
@@ -1066,6 +1110,9 @@ export async function updateCostingProductInputs(
         contribution_per_kg: contribution,
         inputs: {
           ...snap,
+          // Written back in full, so a line from before the terms were
+          // snapshotted carries them from here on.
+          ...resolvedTerms(sku.overrides, assumptions, destination),
           ...clean,
           yield_used: state ? result.value.result.chain.yieldUsed : snap.yield_used,
           edited_fields: [...new Set([...already, ...editedKeys])],
@@ -1086,4 +1133,64 @@ export async function updateCostingProductInputs(
   revalidatePath('/costing/saved');
   revalidatePath(`/costing/saved/${costingId}`);
   return { error: null };
+}
+
+/** The margins and adders a line snapshots, under the names the sheet and the editor use. */
+const TERM_KEYS = [
+  'rack_margin_pct',
+  'fob_margin_pct',
+  'transport_lkr',
+  'cold_hold_lkr',
+  'freight_to_port_usd',
+  'cold_chain_usd',
+  'importer_clearing_pct',
+  'importer_markup_pct',
+  'distributor_markup_pct',
+  'duty_levy_pct',
+] as const;
+type TermKey = (typeof TERM_KEYS)[number];
+
+/**
+ * The margins and adders as they apply to one line: the SKU's override where
+ * it has one, the version's figure otherwise — and for duty, the port's.
+ * Duty may be absent: a port with none entered has no DDP, which is not 0.
+ */
+function resolvedTerms(
+  o: SkuOverrides | undefined,
+  a: CostAssumptions,
+  destination: Destination | null
+): Record<TermKey, number | null> {
+  return {
+    rack_margin_pct: o?.rackMarginPct ?? a.margins.rackPct,
+    fob_margin_pct: o?.fobMarginPct ?? a.margins.fobPct,
+    transport_lkr: o?.transportLkr ?? a.domestic.transportLkr,
+    cold_hold_lkr: o?.coldHoldLkr ?? a.domestic.coldHoldLkr,
+    freight_to_port_usd: o?.freightToPortUsd ?? a.export.freightToPortUsd,
+    cold_chain_usd: o?.coldChainUsd ?? a.export.coldChainUsd,
+    importer_clearing_pct: o?.importerClearingPct ?? a.margins.importerClearingPct,
+    importer_markup_pct: o?.importerMarkupPct ?? a.margins.importerMarkupPct,
+    distributor_markup_pct: o?.distributorMarkupPct ?? a.margins.distributorMarkupPct,
+    duty_levy_pct: o?.dutyLevyPct ?? destination?.dutyLevyPct ?? null,
+  };
+}
+
+/**
+ * Engine overrides from a line's snapshot: every term the snapshot carries is
+ * pinned as an override, so the engine applies exactly what was saved rather
+ * than the version's current figure. A term the snapshot lacks (a line saved
+ * before terms were recorded) keeps the SKU's own override, or inherits.
+ */
+function overridesFrom(get: (k: TermKey) => number | undefined, fallback: SkuOverrides | undefined): SkuOverrides {
+  return {
+    rackMarginPct: get('rack_margin_pct') ?? fallback?.rackMarginPct,
+    fobMarginPct: get('fob_margin_pct') ?? fallback?.fobMarginPct,
+    transportLkr: get('transport_lkr') ?? fallback?.transportLkr,
+    coldHoldLkr: get('cold_hold_lkr') ?? fallback?.coldHoldLkr,
+    freightToPortUsd: get('freight_to_port_usd') ?? fallback?.freightToPortUsd,
+    coldChainUsd: get('cold_chain_usd') ?? fallback?.coldChainUsd,
+    importerClearingPct: get('importer_clearing_pct') ?? fallback?.importerClearingPct,
+    importerMarkupPct: get('importer_markup_pct') ?? fallback?.importerMarkupPct,
+    distributorMarkupPct: get('distributor_markup_pct') ?? fallback?.distributorMarkupPct,
+    dutyLevyPct: get('duty_levy_pct') ?? fallback?.dutyLevyPct,
+  };
 }

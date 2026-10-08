@@ -45,7 +45,7 @@ import {
   updateCostingProductInputs,
   type CostingInputEdits,
 } from '../../actions';
-import { CostSheet, COST_SHEET_ID } from './cost-sheet';
+import { CostSheet, COST_SHEET_ID, fallbackTerm } from './cost-sheet';
 
 /** A SKU the owner may still put on this costing. */
 export interface AddableSku {
@@ -619,19 +619,38 @@ function LineInputsEditor({
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [pending, start] = useTransition();
 
-  type Field = { key: keyof CostingInputEdits; label: string; pct?: boolean; show: boolean; hint?: string };
+  const domestic = line.currency === 'LKR';
+  type Group = 'recipe' | 'adders' | 'downstream';
+  type Field = { key: keyof CostingInputEdits; label: string; pct?: boolean; show: boolean; hint?: string; group: Group };
   const fields: Field[] = [
-    { key: 'yield_used', label: 'Yield (%)', pct: true, show: !composite, hint: 'Finished product per kg of input' },
-    { key: 'glaze_pct', label: 'Glaze (%)', pct: true, show: true, hint: 'Added ice on frozen states' },
-    { key: 'pct_fish', label: ingredient ? 'Input share of pack (%)' : 'Fish share of pack (%)', pct: true, show: !composite },
-    { key: 'pct_marinade', label: 'Marinade share of pack (%)', pct: true, show: !composite },
-    { key: 'marinade_usd_per_kg', label: 'Marinade (USD/kg)', show: !composite },
-    { key: 'process_usd_per_kg', label: 'Processing (USD/kg)', show: true },
-    { key: 'packing_usd_per_kg', label: 'Packing (USD/kg)', show: true },
-    { key: 'primary_input_cost', label: `Input cost (${line.currency}/kg input)`, show: ingredient },
+    { group: 'recipe', key: 'yield_used', label: 'Yield (%)', pct: true, show: !composite, hint: 'Finished product per kg of input' },
+    { group: 'recipe', key: 'glaze_pct', label: 'Glaze (%)', pct: true, show: true, hint: 'Added ice on frozen states' },
+    { group: 'recipe', key: 'pct_fish', label: ingredient ? 'Input share of pack (%)' : 'Fish share of pack (%)', pct: true, show: !composite },
+    { group: 'recipe', key: 'pct_marinade', label: 'Marinade share of pack (%)', pct: true, show: !composite },
+    { group: 'recipe', key: 'marinade_usd_per_kg', label: 'Marinade (USD/kg)', show: !composite },
+    { group: 'recipe', key: 'process_usd_per_kg', label: 'Processing (USD/kg)', show: true },
+    { group: 'recipe', key: 'packing_usd_per_kg', label: 'Packing (USD/kg)', show: true },
+    { group: 'recipe', key: 'primary_input_cost', label: `Input cost (${line.currency}/kg input)`, show: ingredient },
+    // The margins and adders, as the SKU dialog sets them out — the ones for
+    // this line's market. A by-product has no margin: its cost is a floor.
+    { group: 'adders', key: 'rack_margin_pct', label: 'Rack margin (%)', pct: true, show: domestic && !absorbed, hint: 'Price = cost ÷ (1 − margin)' },
+    { group: 'adders', key: 'transport_lkr', label: 'Transport (LKR/kg)', show: domestic },
+    { group: 'adders', key: 'cold_hold_lkr', label: 'Cold holding (LKR/kg)', show: domestic },
+    { group: 'adders', key: 'fob_margin_pct', label: 'FOB margin (%)', pct: true, show: !domestic && !absorbed, hint: 'FOB = cost ÷ (1 − margin)' },
+    { group: 'adders', key: 'freight_to_port_usd', label: 'Freight to port (USD/kg)', show: !domestic },
+    { group: 'adders', key: 'cold_chain_usd', label: 'Cold chain (USD/kg)', show: !domestic },
+    { group: 'downstream', key: 'importer_clearing_pct', label: 'Importer clearing (%)', pct: true, show: !domestic, hint: 'On CIF' },
+    { group: 'downstream', key: 'importer_markup_pct', label: 'Importer markup (%)', pct: true, show: !domestic },
+    { group: 'downstream', key: 'distributor_markup_pct', label: 'Distributor markup (%)', pct: true, show: !domestic },
+    { group: 'downstream', key: 'duty_levy_pct', label: 'Duty & levy (% of FOB)', pct: true, show: !domestic, hint: 'Blank means the port has none entered, so no DDP' },
+  ];
+  const groups: { key: Group; label: string; note?: string }[] = [
+    { key: 'recipe', label: 'Recipe' },
+    { key: 'adders', label: 'Margin and adders' },
+    { key: 'downstream', label: 'Downstream — past FOB', note: 'These shape CIF, importer, distributor and DDP; they do not move the cost or FOB.' },
   ];
   const current = (f: Field) => {
-    const v = num(inputs[f.key]);
+    const v = num(inputs[f.key]) ?? fallbackTerm(line, f.key);
     if (v == null) return '';
     return f.pct ? String(Math.round(v * 1000) / 10) : String(Math.round(v * 10000) / 10000);
   };
@@ -672,8 +691,17 @@ function LineInputsEditor({
             <b>{line.sku_name}</b> on it. The cost is rebuilt on the costing&apos;s pinned assumptions.
             {absorbed && ' A by-product keeps its market price; only its contribution moves.'}
           </p>
-          <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
-            {fields.filter((f) => f.show).map((f) => (
+          {groups.map((g) => {
+            const gf = fields.filter((f) => f.show && f.group === g.key);
+            if (gf.length === 0) return null;
+            return (
+          <div key={g.key}>
+            <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              {g.label}
+              {g.note && <span className="ml-1.5 font-normal normal-case tracking-normal">— {g.note}</span>}
+            </div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
+            {gf.map((f) => (
               <label key={f.key} className="block" title={f.hint}>
                 <span className="text-[11px] font-medium text-muted-foreground">{f.label}</span>
                 <input
@@ -691,7 +719,10 @@ function LineInputsEditor({
                 />
               </label>
             ))}
+            </div>
           </div>
+            );
+          })}
           <div className="flex items-center justify-end gap-2">
             <Button size="sm" variant="outline" disabled={pending || changed.length === 0} onClick={() => setDraft({})}>
               Reset

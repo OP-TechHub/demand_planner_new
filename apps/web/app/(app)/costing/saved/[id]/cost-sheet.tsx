@@ -81,6 +81,13 @@ export function CostSheet({
   const stateFinal = num(out.finalCost) ?? line.final_cost;
   const glazeCredit = chainFinal != null ? stateFinal - chainFinal : null;
 
+  // The margins and adders as they applied to this line. Snapshotted with the
+  // line since this section existed; an older line gives back what its own
+  // figures imply, and a dash where nothing can be read back.
+  const term = (k: string) => num(inputs[k]) ?? fallbackTerm(line, k);
+  const text = (k: string) => (typeof inputs[k] === 'string' && (inputs[k] as string).trim() ? (inputs[k] as string) : null);
+  const pctFmt = (n: number) => `${(n * 100).toFixed(1)}%`;
+
   return (
     <div id={elementId} style={S.sheet}>
       <SheetHeader
@@ -93,6 +100,9 @@ export function CostSheet({
       <table style={S.metaTable}>
         <tbody>
           <Meta label="Product" value={line.sku_name} />
+          {text('category') && <Meta label="Category" value={text('category')!} />}
+          {text('customer') && <Meta label="Customer" value={text('customer')!} />}
+          {text('pack_size') && <Meta label="Pack size" value={text('pack_size')!} />}
           <Meta label="Pack state" value={COST_STATE_LABEL[line.state]} />
           <Meta label="Market" value={domestic ? 'Domestic' : 'Export'} />
           {line.destination_name && <Meta label="Destination" value={line.destination_name} />}
@@ -183,6 +193,35 @@ export function CostSheet({
             />
           )}
           <Row label="FINAL COST" value={stateFinal} fmt={money} total />
+        </tbody>
+      </table>
+
+      {/*
+        What the price was built on, as the SKU dialog sets them out: the
+        margin, the adders that moved the cost above, and for export the
+        ladder past FOB. A by-product has no margin to show — its cost is a
+        floor — but its adders still applied.
+      */}
+      <h2 style={S.h2}>Margins and adders, as applied</h2>
+      <table style={S.table}>
+        <tbody>
+          {domestic ? (
+            <>
+              {!absorbed && <Row label="Rack margin" value={term('rack_margin_pct')} fmt={pctFmt} />}
+              <Row label="Transport (LKR/kg)" value={term('transport_lkr')} fmt={money} />
+              <Row label="Cold holding (LKR/kg)" value={term('cold_hold_lkr')} fmt={money} />
+            </>
+          ) : (
+            <>
+              {!absorbed && <Row label="FOB margin" value={term('fob_margin_pct')} fmt={pctFmt} />}
+              <Row label="Freight to port (USD/kg)" value={term('freight_to_port_usd')} fmt={money} />
+              <Row label="Cold chain (USD/kg)" value={term('cold_chain_usd')} fmt={money} />
+              <Row label="Importer clearing" value={term('importer_clearing_pct')} fmt={pctFmt} />
+              <Row label="Importer markup" value={term('importer_markup_pct')} fmt={pctFmt} />
+              <Row label="Distributor markup" value={term('distributor_markup_pct')} fmt={pctFmt} />
+              <Row label="Duty & levy (of FOB)" value={term('duty_levy_pct')} fmt={pctFmt} />
+            </>
+          )}
         </tbody>
       </table>
 
@@ -281,4 +320,39 @@ const EDITED_LABEL: Record<string, string> = {
   process_usd_per_kg: 'processing cost',
   packing_usd_per_kg: 'packing cost',
   primary_input_cost: 'input cost',
+  rack_margin_pct: 'rack margin',
+  fob_margin_pct: 'FOB margin',
+  transport_lkr: 'transport',
+  cold_hold_lkr: 'cold holding',
+  freight_to_port_usd: 'freight to port',
+  cold_chain_usd: 'cold chain',
+  importer_clearing_pct: 'importer clearing',
+  importer_markup_pct: 'importer markup',
+  distributor_markup_pct: 'distributor markup',
+  duty_levy_pct: 'duty & levy',
 };
+
+/**
+ * A margin or adder read back from a line saved before they were snapshotted.
+ * The margin is what the cost-plus price implies over the cost; the adders are
+ * the chain's own lines, which are those figures in the line's currency. The
+ * downstream percentages cannot be separated from the stored ladder, so they
+ * stay null.
+ */
+export function fallbackTerm(line: CostCostingLine, key: string): number | null {
+  const out = rec(line.outputs);
+  const chain = rec(out.chain);
+  const fin = num(out.finalCost) ?? line.final_cost;
+  const implied = (p: number | null) => (p != null && p > 0 ? 1 - fin / p : null);
+  switch (key) {
+    case 'rack_margin_pct': return implied(num(out.rackRate));
+    case 'fob_margin_pct': return implied(num(out.fob));
+    case 'transport_lkr':
+    case 'freight_to_port_usd': return num(chain.freight);
+    case 'cold_hold_lkr':
+    case 'cold_chain_usd': return num(chain.coldHold);
+    case 'duty_levy_pct': return num(rec(out.destination).dutyLevyPct);
+    default: return null;
+  }
+}
+
