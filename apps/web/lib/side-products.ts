@@ -3,8 +3,7 @@
  * Summary's periods.
  *
  * The engine's `plan_summary` covers programs only — it is the V30 parity
- * figure and knows nothing about either of these tables, both of which are
- * ORG-scoped rather than plan-scoped. So the same read-time arithmetic the
+ * figure and knows nothing about either of these tables. So the same read-time arithmetic the
  * Revenue & Cost page and the home dashboard already do is done here once, and
  * folded into the summary rows the table renders:
  *
@@ -15,7 +14,7 @@
  * Feedstock is `rolling_results.rolling_wr` — the whole round the engine really
  * allocated — matched on `item_code`, which survives a scenario fork.
  */
-import { fetchAllByPlan, fetchAllPaged } from '@/lib/fetch-all';
+import { fetchAllByPlan } from '@/lib/fetch-all';
 
 /** The Annual Summary's periods as 1-based `month_index` ranges (M1 = first month). */
 const PERIODS: { period: string; start: number; end: number }[] = [
@@ -58,17 +57,13 @@ export async function sideProductTotals(
     supabase.from('programs').select('id, item_code').eq('plan_id', planId).is('deleted_at', null),
     supabase.from('secondary_products')
       .select('basis, source_item_code, yield_pct, price_per_kg')
-      .eq('is_archived', false),
-    supabase.from('other_products').select('id, unit_cost, unit_revenue').eq('is_archived', false),
+      .eq('plan_id', planId).eq('is_archived', false),
+    supabase.from('other_products').select('id, unit_cost, unit_revenue').eq('plan_id', planId).eq('is_archived', false),
     // Tolerated rather than thrown: `other_products` is a newer table than this
     // page, so on a database whose migration hasn't been applied yet the Annual
     // Summary still renders — without the other-product rows, which are empty
     // there anyway — instead of failing outright.
-    fetchAllPaged(
-      (from: number, to: number) =>
-        supabase.from('other_product_months').select('product_id, month_index, quantity').range(from, to),
-      'other_product_months'
-    ).catch(() => [] as any[]),
+    fetchAllByPlan(supabase, 'other_product_months', 'product_id, month_index, quantity', planId).catch(() => [] as any[]),
   ]);
 
   const zeros = () => new Array<number>(horizon).fill(0);

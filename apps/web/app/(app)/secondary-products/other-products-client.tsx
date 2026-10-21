@@ -32,6 +32,7 @@ const num0 = (n: number) => Math.round(n).toLocaleString();
 
 export function OtherProductsClient({
   orgId,
+  planId,
   planStartDate,
   horizon,
   products,
@@ -39,6 +40,8 @@ export function OtherProductsClient({
   canEdit,
 }: {
   orgId: string;
+  /** The plan these lines belong to — each plan keeps its own set. */
+  planId: string;
   planStartDate: string;
   horizon: number;
   products: OtherProduct[];
@@ -260,6 +263,7 @@ export function OtherProductsClient({
       {modal && canEdit && (
         <ProductModal
           orgId={orgId}
+          planId={planId}
           product={modal.product}
           planStartDate={planStartDate}
           horizon={horizon}
@@ -278,7 +282,7 @@ export function OtherProductsClient({
           planStartDate={planStartDate}
           horizon={horizon}
           templateName="other-products-template.csv"
-          onImport={(rows) => importOtherQuantities(orgId, rows)}
+          onImport={(rows) => importOtherQuantities(orgId, planId, rows)}
           onClose={() => setImporting(false)}
           onDone={() => { setImporting(false); router.refresh(); }}
         />
@@ -287,6 +291,7 @@ export function OtherProductsClient({
       {qtyFor && canEdit && (
         <QuantityEditor
           orgId={orgId}
+          planId={planId}
           product={qtyFor}
           planStartDate={planStartDate}
           horizon={horizon}
@@ -373,6 +378,7 @@ const initial: OtherFormState = { error: null, ok: false };
 
 function ProductModal({
   orgId,
+  planId,
   product,
   planStartDate,
   horizon,
@@ -381,6 +387,7 @@ function ProductModal({
   onSaved,
 }: {
   orgId: string;
+  planId: string;
   product: OtherProduct | null;
   planStartDate: string;
   horizon: number;
@@ -403,6 +410,7 @@ function ProductModal({
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm" onClick={onClose}>
       <form action={formAction} className="w-full max-w-md rounded-lg bg-card p-5 text-sm shadow-xl" onClick={(e) => e.stopPropagation()}>
         <input type="hidden" name="org_id" value={orgId} />
+        <input type="hidden" name="plan_id" value={planId} />
         {product && <input type="hidden" name="id" value={product.id} />}
         <h2 className="mb-3 text-sm font-semibold">{product ? 'Edit product' : 'Add other product'}</h2>
 
@@ -477,6 +485,7 @@ function ProductModal({
  */
 function QuantityEditor({
   orgId,
+  planId,
   product,
   planStartDate,
   horizon,
@@ -485,6 +494,7 @@ function QuantityEditor({
   onSaved,
 }: {
   orgId: string;
+  planId: string;
   product: OtherProduct;
   planStartDate: string;
   horizon: number;
@@ -528,7 +538,7 @@ function QuantityEditor({
       payload.push({ month_index: mo, quantity: n });
     }
     startTransition(async () => {
-      const res = await saveOtherQuantities(product.id, orgId, payload);
+      const res = await saveOtherQuantities(product.id, orgId, planId, payload);
       if (res.error) setError(res.error);
       else onSaved();
     });

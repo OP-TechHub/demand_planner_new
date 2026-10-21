@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Plus, CalendarPlus } from 'lucide-react';
+import { monthLabel } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -180,10 +181,10 @@ export function ScenariosClient({
           initialSourceId={duplicating?.id}
           initialName={duplicating ? `${duplicating.name} (copy)` : ''}
           onClose={() => { setCreating(false); setDuplicating(null); }}
-          onCreate={(name, description, sourcePlanId) => {
+          onCreate={(name, description, sourcePlanId, opts) => {
             setError(null);
             start(async () => {
-              const res = await createScenario(name, description, { sourcePlanId });
+              const res = await createScenario(name, description, { sourcePlanId, ...opts });
               if (res.error) setError(res.error);
               else {
                 toast.success(`Created “${name.trim()}”`);
@@ -337,7 +338,18 @@ function CreateModal({
   initialSourceId?: string;
   initialName?: string;
   onClose: () => void;
-  onCreate: (name: string, description: string, sourcePlanId: string) => void;
+  onCreate: (
+    name: string,
+    description: string,
+    sourcePlanId: string,
+    opts: {
+      planStartDate: string;
+      horizonMonths: number;
+      copy: CopyParts;
+      copyFromMonth: number;
+      copyToMonth: number;
+    }
+  ) => void;
   pending: boolean;
   error: string | null;
 }) {
@@ -346,17 +358,72 @@ function CreateModal({
   const [description, setDescription] = useState('');
   const source = sources.find((s) => s.id === sourceId);
 
+  // The same choices as "New official plan": the window, what comes across,
+  // and which stretch of the source. Defaults reproduce the plain full copy.
+  const srcStart = source ? source.planStartDate.slice(0, 7) : '';
+  const srcEnd = srcStart ? addMonthsYM(srcStart, source!.horizonMonths - 1) : '';
+  const [startMonth, setStartMonth] = useState(srcStart);
+  const [endMonth, setEndMonth] = useState(srcEnd);
+  const [copyParts, setCopyParts] = useState<CopyParts>({ demand: true, harvest: true, secondary: true, other: true });
+  const [copyFrom, setCopyFrom] = useState(srcStart);
+  const [copyTo, setCopyTo] = useState(srcEnd);
+
+  const horizon = monthsBetween(startMonth, endMonth);
+  const windowOk = horizon >= 1 && horizon <= 60;
+  const copyFromIdx = monthsBetween(srcStart, copyFrom);
+  const copyToIdx = monthsBetween(srcStart, copyTo);
+  const copyRangeOk = copyFromIdx >= 1 && copyToIdx >= copyFromIdx && copyToIdx <= (source?.horizonMonths ?? 0);
+  const copiedMonths = copyRangeOk ? Math.min(copyToIdx - copyFromIdx + 1, horizon) : 0;
+
+  /** See the official-plan dialog: the copy starts at the new start month when the source covers it. */
+  function defaultRange(start: string, src: ForkSource | undefined, len: number) {
+    if (!src) { setCopyFrom(''); setCopyTo(''); return; }
+    const s = src.planStartDate.slice(0, 7);
+    const e = addMonthsYM(s, src.horizonMonths - 1);
+    const from = start && start >= s && start <= e ? start : s;
+    const to = addMonthsYM(from, Math.max(len, 1) - 1);
+    setCopyFrom(from);
+    setCopyTo(to > e ? e : to);
+  }
+
+  function chooseSource(id: string) {
+    setSourceId(id);
+    const src = sources.find((s) => s.id === id);
+    const s = src ? src.planStartDate.slice(0, 7) : '';
+    setStartMonth(s);
+    setEndMonth(s ? addMonthsYM(s, (src?.horizonMonths ?? 1) - 1) : '');
+    defaultRange(s, src, src?.horizonMonths ?? 1);
+  }
+
+  function chooseStart(ym: string) {
+    setStartMonth(ym);
+    defaultRange(ym, source, monthsBetween(ym, endMonth));
+  }
+
+  const canCreate = !pending && name.trim() !== '' && !!sourceId && windowOk && copyRangeOk;
+
   return (
     <Dialog
       open
       onClose={onClose}
       title="New scenario"
-      description="A full what-if copy — programs, demand, harvest, POs and settings. The plan you copy is never affected."
-      className="max-w-sm"
+      description="A what-if copy of a plan — programs and settings always, the rest as you choose. The plan you copy is never affected."
+      className="max-w-md"
       footer={
         <>
           <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button onClick={() => onCreate(name, description, sourceId)} disabled={pending || !name.trim() || !sourceId}>
+          <Button
+            onClick={() =>
+              onCreate(name, description, sourceId, {
+                planStartDate: `${startMonth}-01`,
+                horizonMonths: horizon,
+                copy: copyParts,
+                copyFromMonth: copyFromIdx,
+                copyToMonth: copyToIdx,
+              })
+            }
+            disabled={!canCreate}
+          >
             {pending ? 'Forking…' : 'Create'}
           </Button>
         </>
@@ -364,10 +431,10 @@ function CreateModal({
     >
       <div className="space-y-3">
         <div className="space-y-1.5">
-          <SourceSelect sources={sources} value={sourceId} onChange={setSourceId} label="Copy from" />
+          <SourceSelect sources={sources} value={sourceId} onChange={chooseSource} label="Copy from" />
           {source && (
             <span className="block text-xs text-muted-foreground">
-              Inherits its window: {windowOf(source)}.
+              Its window: {windowOf(source)}.
             </span>
           )}
         </div>
@@ -379,11 +446,86 @@ function CreateModal({
           <span className="text-xs font-medium text-muted-foreground">Description (optional)</span>
           <Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} />
         </label>
+
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block space-y-1.5">
+            <span className="text-xs font-medium text-muted-foreground">Start month</span>
+            <Input type="month" value={startMonth} onChange={(e) => chooseStart(e.target.value)} />
+          </label>
+          <label className="block space-y-1.5">
+            <span className="text-xs font-medium text-muted-foreground">End month</span>
+            <Input type="month" value={endMonth} onChange={(e) => setEndMonth(e.target.value)} />
+          </label>
+        </div>
+        <p className="-mt-1 text-xs">
+          {windowOk ? (
+            <span className="text-muted-foreground">
+              Plan length: <span className="font-medium text-foreground">{horizon} month{horizon === 1 ? '' : 's'}</span>.
+            </span>
+          ) : (
+            <span className="text-destructive">{startMonth && endMonth ? 'End must be on/after the start, within 60 months.' : 'Pick a start and end month.'}</span>
+          )}
+        </p>
+
+        <fieldset className="text-sm">
+          <legend className="mb-1 text-xs font-medium text-muted-foreground">What to copy</legend>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+            {([
+              ['demand', 'Demand overrides & POs'],
+              ['harvest', 'Harvest capacity, request & actuals'],
+              ['secondary', 'By-products (secondary products)'],
+              ['other', 'Other products & quantities'],
+            ] as const).map(([key, label]) => (
+              <label key={key} className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={copyParts[key]}
+                  onChange={(e) => setCopyParts({ ...copyParts, [key]: e.target.checked })}
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+          <span className="mt-1 block text-xs text-muted-foreground">Anything unticked starts empty in the scenario.</span>
+        </fieldset>
+
+        <div>
+          <span className="mb-1 block text-xs font-medium text-muted-foreground">
+            Months to copy from {source ? `“${source.name}”` : 'the source'}
+          </span>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block space-y-1.5">
+              <span className="text-xs text-muted-foreground">From</span>
+              <Input type="month" value={copyFrom} min={srcStart} max={srcEnd} onChange={(e) => setCopyFrom(e.target.value)} />
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-xs text-muted-foreground">To</span>
+              <Input type="month" value={copyTo} min={srcStart} max={srcEnd} onChange={(e) => setCopyTo(e.target.value)} />
+            </label>
+          </div>
+          <p className="mt-1 text-xs">
+            {copyRangeOk && windowOk ? (
+              <span className="text-muted-foreground">
+                The source’s {monthLabel(`${copyFrom}-01`, 1)} becomes the scenario’s first month ({monthLabel(`${startMonth}-01`, 1)}).{' '}
+                <span className="font-medium text-foreground">{copiedMonths} month{copiedMonths === 1 ? '' : 's'}</span> copied
+                {copiedMonths < horizon && <>; the remaining {horizon - copiedMonths} start empty</>}.
+              </span>
+            ) : (
+              <span className="text-destructive">
+                {source ? `Pick months between ${monthLabel(`${srcStart}-01`, 1)} and ${monthLabel(`${srcEnd}-01`, 1)}, end on or after start.` : 'Pick a plan to copy from.'}
+              </span>
+            )}
+          </p>
+        </div>
+
         {error && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
       </div>
     </Dialog>
   );
 }
+
+/** Which parts of the source a copy takes; programs and settings always come. */
+type CopyParts = { demand: boolean; harvest: boolean; secondary: boolean; other: boolean };
 
 function fyStartOptions(yearsAhead: number): { value: string; label: string }[] {
   const now = new Date();
@@ -612,10 +754,11 @@ function NewPlanModal({
 
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={copyData} onChange={(e) => setCopyData(e.target.checked)} />
-          Also copy demand overrides, POs &amp; harvest capacity from {source?.name ? `“${source.name}”` : 'the source plan'}
+          Also copy demand overrides, POs, harvest capacity &amp; other-product quantities from {source?.name ? `“${source.name}”` : 'the source plan'}
         </label>
         <p className="text-xs text-muted-foreground">
-          Off = programs come in with their baseline demand and empty harvest, ready to plan the new year from scratch.
+          Off = programs come in with their baseline demand and empty harvest, ready to plan the new year from scratch;
+          by-product rates and other-product lines still come along, without quantities.
           On = months past the new plan&apos;s length are dropped.
         </p>
 

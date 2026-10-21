@@ -4,7 +4,7 @@ import { NotComputed } from '@/components/output-grid';
 import type { GridRow } from '@/lib/grid-csv';
 import { StalePlanNotice } from '../stale-banner';
 import { MetricGrid, type Metric } from '@/components/metric-grid';
-import { fetchAllByPlan, fetchAllPaged } from '@/lib/fetch-all';
+import { fetchAllByPlan } from '@/lib/fetch-all';
 import { programOrder, gridRowsFor, unitGridRowsFor } from '@/lib/outputs';
 
 export default async function RevenueCostPage() {
@@ -19,22 +19,19 @@ export default async function RevenueCostPage() {
     supabase.from('programs')
       .select('id, status, item_code, primary_yield, barra_cost_wr, packing_cost_fp, processing_cost_fp, storage_cost_fp, freight_cost_fp, other_costs_fp')
       .eq('plan_id', plan.id).is('deleted_at', null),
-    // By-product definitions are org-scoped, not plan-scoped, and keyed by item_code.
+    // By-product definitions are part of the plan, keyed by item_code.
     supabase.from('secondary_products')
       .select('basis, source_item_code, yield_pct, price_per_kg')
-      .eq('is_archived', false).order('sort_order'),
-    // Other products are org-scoped too: traded lines outside the harvest plan,
-    // with a quantity typed in per month at flat per-unit cost and revenue rates.
+      .eq('plan_id', plan.id).eq('is_archived', false).order('sort_order'),
+    // Other products: traded lines outside the harvest plan, with a quantity
+    // typed in per month at flat per-unit cost and revenue rates.
     supabase.from('other_products')
       .select('id, name, unit_label, unit_cost, unit_revenue')
-      .eq('is_archived', false).order('sort_order'),
+      .eq('plan_id', plan.id).eq('is_archived', false).order('sort_order'),
     // Tolerated rather than thrown, as on the Annual Summary: on a database
     // without the other_products migration the page still renders, minus those rows.
-    fetchAllPaged(
-      (from: number, to: number) =>
-        supabase.from('other_product_months').select('product_id, month_index, quantity').range(from, to),
-      'other_product_months'
-    ).catch(() => [] as { product_id: string; month_index: number; quantity: number }[]),
+    fetchAllByPlan(supabase, 'other_product_months', 'product_id, month_index, quantity', plan.id)
+      .catch(() => [] as { product_id: string; month_index: number; quantity: number }[]),
   ]);
   type CostProg = {
     id: string; status: string; item_code: string; primary_yield: number; barra_cost_wr: number;

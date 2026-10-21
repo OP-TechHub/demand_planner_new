@@ -65,22 +65,56 @@ export function PlansAdminClient({ plans, users }: { plans: AdminPlan[]; users: 
   const [newEnd, setNewEnd] = useState('');     // 'YYYY-MM'
   const [newErr, setNewErr] = useState<string | null>(null);
   const [creating, startCreate] = useTransition();
+  // What comes across from the source, and which stretch of it. Everything, by
+  // default: that is what cloning meant before there was a choice.
+  const [copyParts, setCopyParts] = useState({ demand: true, harvest: true, secondary: true, other: true });
+  const [copyFrom, setCopyFrom] = useState(''); // 'YYYY-MM', a month of the source
+  const [copyTo, setCopyTo] = useState('');     // 'YYYY-MM', a month of the source
 
   const master = plans.find((p) => p.type === 'master');
   const horizon = monthsBetween(newStart, newEnd);
   const windowOk = horizon >= 1 && horizon <= 60;
+
+  const sourcePlan = plans.find((p) => p.id === newSource);
+  const srcStart = sourcePlan ? sourcePlan.plan_start_date.slice(0, 7) : '';
+  const srcEnd = srcStart ? addMonthsYM(srcStart, sourcePlan!.horizon_months - 1) : '';
+  // The source's month numbers for the chosen stretch (1 = its first month).
+  const copyFromIdx = monthsBetween(srcStart, copyFrom);
+  const copyToIdx = monthsBetween(srcStart, copyTo);
+  const copyRangeOk =
+    copyFromIdx >= 1 && copyToIdx >= copyFromIdx && copyToIdx <= (sourcePlan?.horizon_months ?? 0);
+  const copiedMonths = copyRangeOk ? Math.min(copyToIdx - copyFromIdx + 1, horizon) : 0;
+
+  /**
+   * Where in the source the copy starts: the new plan's own start month when
+   * the source covers it — so FY27 cloned from a plan that spans FY26–FY30
+   * takes FY27's figures, not FY26's under a new label — else the source's
+   * first month. It runs to the end of the source or the new plan's length,
+   * whichever comes first.
+   */
+  function defaultRange(start: string, src: AdminPlan | undefined, len: number) {
+    if (!src) { setCopyFrom(''); setCopyTo(''); return; }
+    const s = src.plan_start_date.slice(0, 7);
+    const e = addMonthsYM(s, src.horizon_months - 1);
+    const from = start && start >= s && start <= e ? start : s;
+    const to = addMonthsYM(from, Math.max(len, 1) - 1);
+    setCopyFrom(from);
+    setCopyTo(to > e ? e : to);
+  }
 
   // Default the start/end pickers to a plan's own window.
   function windowFromPlan(p: AdminPlan | undefined) {
     const start = p ? p.plan_start_date.slice(0, 7) : '';
     setNewStart(start);
     setNewEnd(start ? addMonthsYM(start, (p?.horizon_months ?? 1) - 1) : '');
+    defaultRange(start, p, p?.horizon_months ?? 1);
   }
 
   function openNew() {
     setNewErr(null);
     setNewName('');
     setNewSource(master?.id ?? '');
+    setCopyParts({ demand: true, harvest: true, secondary: true, other: true });
     windowFromPlan(master);
     setNewOpen(true);
   }
@@ -91,16 +125,26 @@ export function PlansAdminClient({ plans, users }: { plans: AdminPlan[]; users: 
     windowFromPlan(plans.find((p) => p.id === id));
   }
 
+  // Moving the new plan's start moves the default stretch with it.
+  function chooseStart(ym: string) {
+    setNewStart(ym);
+    defaultRange(ym, sourcePlan, monthsBetween(ym, newEnd));
+  }
+
   function createOfficial() {
     setNewErr(null);
     if (!newName.trim()) { setNewErr('Name is required.'); return; }
     if (!windowOk) { setNewErr('Pick a start and end month within 60 months.'); return; }
+    if (!copyRangeOk) { setNewErr('Pick the months to copy from inside the source plan, end on or after start.'); return; }
     startCreate(async () => {
       const res = await createScenario(newName.trim(), '', {
         official: true,
         sourcePlanId: newSource || undefined,
         planStartDate: `${newStart}-01`,
         horizonMonths: horizon,
+        copy: copyParts,
+        copyFromMonth: copyFromIdx,
+        copyToMonth: copyToIdx,
       });
       if (res.error) { setNewErr(res.error); return; }
       toast.success('Official plan created.');
@@ -268,13 +312,13 @@ export function PlansAdminClient({ plans, users }: { plans: AdminPlan[]; users: 
                 </option>
               ))}
             </select>
-            <span className="mt-1 block text-xs text-muted-foreground">Copies that plan’s programs, demand, harvest, and settings.</span>
+            <span className="mt-1 block text-xs text-muted-foreground">Programs and settings always come across. Choose the rest below.</span>
           </label>
 
           <div className="grid grid-cols-2 gap-3">
             <label className="block text-sm">
               <span className="mb-1 block font-medium">Start month</span>
-              <Input type="month" value={newStart} onChange={(e) => setNewStart(e.target.value)} />
+              <Input type="month" value={newStart} onChange={(e) => chooseStart(e.target.value)} />
             </label>
             <label className="block text-sm">
               <span className="mb-1 block font-medium">End month</span>
@@ -285,12 +329,61 @@ export function PlansAdminClient({ plans, users }: { plans: AdminPlan[]; users: 
             {windowOk ? (
               <span className="text-muted-foreground">
                 Plan length: <span className="font-medium text-foreground">{horizon} month{horizon === 1 ? '' : 's'}</span>
-                {horizon >= 12 && <> (~{(horizon / 12).toFixed(horizon % 12 === 0 ? 0 : 1)} yr)</>}. Demand &amp; harvest past the end month aren’t copied.
+                {horizon >= 12 && <> (~{(horizon / 12).toFixed(horizon % 12 === 0 ? 0 : 1)} yr)</>}.
               </span>
             ) : (
               <span className="text-destructive">{newStart && newEnd ? 'End must be on/after the start, within 60 months.' : 'Pick a start and end month.'}</span>
             )}
           </p>
+
+          <fieldset className="text-sm">
+            <legend className="mb-1 font-medium">What to copy</legend>
+            <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+              {([
+                ['demand', 'Demand overrides & POs'],
+                ['harvest', 'Harvest capacity, request & actuals'],
+                ['secondary', 'By-products (secondary products)'],
+                ['other', 'Other products & quantities'],
+              ] as const).map(([key, label]) => (
+                <label key={key} className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={copyParts[key]}
+                    onChange={(e) => setCopyParts({ ...copyParts, [key]: e.target.checked })}
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+            <span className="mt-1 block text-xs text-muted-foreground">Anything unticked starts empty in the new plan.</span>
+          </fieldset>
+
+          <div>
+            <span className="mb-1 block text-sm font-medium">Months to copy from {sourcePlan ? `“${sourcePlan.name}”` : 'the source'}</span>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block text-sm">
+                <span className="mb-1 block text-xs text-muted-foreground">From</span>
+                <Input type="month" value={copyFrom} min={srcStart} max={srcEnd} onChange={(e) => setCopyFrom(e.target.value)} />
+              </label>
+              <label className="block text-sm">
+                <span className="mb-1 block text-xs text-muted-foreground">To</span>
+                <Input type="month" value={copyTo} min={srcStart} max={srcEnd} onChange={(e) => setCopyTo(e.target.value)} />
+              </label>
+            </div>
+            <p className="mt-1 text-xs">
+              {copyRangeOk && windowOk ? (
+                <span className="text-muted-foreground">
+                  The source’s {monthLabel(`${copyFrom}-01`, 1)} becomes the new plan’s first month ({monthLabel(`${newStart}-01`, 1)}).{' '}
+                  <span className="font-medium text-foreground">{copiedMonths} month{copiedMonths === 1 ? '' : 's'}</span> copied
+                  {copiedMonths < horizon && <>; the remaining {horizon - copiedMonths} start empty</>}.
+                </span>
+              ) : (
+                <span className="text-destructive">
+                  {sourcePlan ? `Pick months between ${monthLabel(`${srcStart}-01`, 1)} and ${monthLabel(`${srcEnd}-01`, 1)}, end on or after start.` : 'Pick a plan to clone from.'}
+                </span>
+              )}
+            </p>
+          </div>
 
           {newErr && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{newErr}</p>}
           <div className="flex justify-end gap-2">
