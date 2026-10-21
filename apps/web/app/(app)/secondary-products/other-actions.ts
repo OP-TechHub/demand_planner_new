@@ -14,6 +14,7 @@ export type OtherFormState = { error: string | null; ok: boolean };
 export async function saveOtherProduct(_prev: OtherFormState, fd: FormData): Promise<OtherFormState> {
   const id = String(fd.get('id') ?? '').trim();
   const orgId = String(fd.get('org_id') ?? '').trim();
+  const planId = String(fd.get('plan_id') ?? '').trim();
   const name = String(fd.get('name') ?? '').trim();
   const unitLabel = String(fd.get('unit_label') ?? 'kg').trim() || 'kg';
   const unitCost = Number(String(fd.get('unit_cost') ?? '').trim());
@@ -54,26 +55,31 @@ export async function saveOtherProduct(_prev: OtherFormState, fd: FormData): Pro
 
   let productId = id;
   let productOrg = orgId;
+  let productPlan = planId;
   if (id) {
-    const { error } = await supabase.from('other_products').update(row).eq('id', id);
+    const { data, error } = await supabase.from('other_products').update(row).eq('id', id).select('org_id, plan_id').single();
     if (error) return { error: friendly(error.message), ok: false };
+    productOrg = data.org_id;
+    productPlan = data.plan_id;
   } else {
     if (!orgId) return { error: 'Missing organization.', ok: false };
+    if (!planId) return { error: 'Missing plan.', ok: false };
     const { data, error } = await supabase
       .from('other_products')
-      .insert({ ...row, org_id: orgId, created_by: user.id })
-      .select('id, org_id')
+      .insert({ ...row, org_id: orgId, plan_id: planId, created_by: user.id })
+      .select('id, org_id, plan_id')
       .single();
     if (error) return { error: friendly(error.message), ok: false };
     productId = data.id;
     productOrg = data.org_id;
+    productPlan = data.plan_id;
   }
 
   // Fills the chosen months and leaves every other month alone — this is a
   // shortcut into the quantity row, not a replacement for it.
   if (quantity !== null && quantity > 0 && productId) {
     const months = [];
-    for (let m = fromMonth; m <= toMonth; m++) months.push({ product_id: productId, org_id: productOrg, month_index: m, quantity });
+    for (let m = fromMonth; m <= toMonth; m++) months.push({ product_id: productId, org_id: productOrg, plan_id: productPlan, month_index: m, quantity });
     const { error } = await supabase
       .from('other_product_months')
       .upsert(months, { onConflict: 'product_id,month_index' });
@@ -110,10 +116,12 @@ export async function setOtherArchived(id: string, archived: boolean): Promise<{
 export async function saveOtherQuantities(
   productId: string,
   orgId: string,
+  planId: string,
   quantities: { month_index: number; quantity: number }[]
 ): Promise<{ error: string | null }> {
   if (!productId) return { error: 'Missing product.' };
   if (!orgId) return { error: 'Missing organization.' };
+  if (!planId) return { error: 'Missing plan.' };
 
   const rows = quantities.filter((q) => Number.isFinite(q.quantity) && q.quantity > 0);
   if (rows.some((q) => !Number.isInteger(q.month_index) || q.month_index < 1 || q.month_index > 60)) {
@@ -139,7 +147,7 @@ export async function saveOtherQuantities(
     const { error } = await supabase
       .from('other_product_months')
       .upsert(
-        rows.map((q) => ({ product_id: productId, org_id: orgId, month_index: q.month_index, quantity: q.quantity })),
+        rows.map((q) => ({ product_id: productId, org_id: orgId, plan_id: planId, month_index: q.month_index, quantity: q.quantity })),
         { onConflict: 'product_id,month_index' }
       );
     if (error) return { error: error.message };
@@ -152,7 +160,7 @@ export async function saveOtherQuantities(
 function friendly(message: string): string {
   if (/other_products_unique_name/.test(message)) return 'A product with that name already exists.';
   if (/row-level security/i.test(message)) {
-    return 'You do not have access to change other products. An admin can grant it on the Users screen.';
+    return 'You do not have access to change other products on this plan — it may be locked, or you may need the grant from an admin on the Users screen.';
   }
   return message;
 }
@@ -164,15 +172,16 @@ function friendly(message: string): string {
  * Cells present in the file are written; months the file leaves out are left
  * alone, so a file covering one year doesn't wipe the other four. Products are
  * matched on NAME, which is what the sheet carries and what the unique
- * constraint already guarantees within an org.
+ * constraint already guarantees within a plan.
  */
-export async function importOtherQuantities(orgId: string, rows: WideRow[]): Promise<WideImportResult> {
+export async function importOtherQuantities(orgId: string, planId: string, rows: WideRow[]): Promise<WideImportResult> {
   if (!orgId) return { error: 'Missing organization.', count: 0, unknown: [] };
+  if (!planId) return { error: 'Missing plan.', count: 0, unknown: [] };
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: 'Your session expired. Sign in again.', count: 0, unknown: [] };
 
-  const { data: products } = await supabase.from('other_products').select('id, name').eq('org_id', orgId);
+  const { data: products } = await supabase.from('other_products').select('id, name').eq('plan_id', planId);
   const idByName = new Map(
     ((products ?? []) as { id: string; name: string }[]).map((p) => [p.name.trim().toLowerCase(), p.id])
   );
@@ -184,7 +193,7 @@ export async function importOtherQuantities(orgId: string, rows: WideRow[]): Pro
     if (!pid) { unknown.add(row.key); continue; }
     for (const c of row.cells) {
       if (c.month < 1 || c.month > 60 || !Number.isFinite(c.value) || c.value < 0) continue;
-      upserts.push({ product_id: pid, org_id: orgId, month_index: c.month, quantity: c.value });
+      upserts.push({ product_id: pid, org_id: orgId, plan_id: planId, month_index: c.month, quantity: c.value });
     }
   }
 

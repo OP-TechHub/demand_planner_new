@@ -1,4 +1,4 @@
-import { canEditSecondaryProducts, type UserRole } from '@oceanpick/shared';
+import { canEditPlanSection, canEditSecondaryProducts, type UserRole } from '@oceanpick/shared';
 import { createClient } from '@/lib/supabase/server';
 import { getActivePlan, getProfile } from '@/lib/plan';
 import { NotComputed } from '@/components/output-grid';
@@ -29,6 +29,7 @@ export default async function SecondaryProductsPage() {
     supabase
       .from('secondary_products')
       .select('id, basis, source_item_code, name, yield_pct, price_per_kg, sort_order, is_archived')
+      .eq('plan_id', plan.id)
       .order('sort_order'),
     supabase
       .from('programs')
@@ -36,13 +37,14 @@ export default async function SecondaryProductsPage() {
       .eq('plan_id', plan.id).is('deleted_at', null).order('sort_order'),
     fetchAllByPlan(supabase, 'rolling_results', 'program_id, month_index, rolling_wr', plan.id),
     getProfile(),
-    // Other products are org-wide, like the by-product definitions: no plan_id,
-    // so they survive a scenario fork with no clone logic.
+    // Other products belong to the plan, like the by-product definitions: a
+    // clone copies them, and each plan may price them its own way.
     supabase
       .from('other_products')
       .select('id, name, unit_label, unit_cost, unit_revenue, sort_order, is_archived')
+      .eq('plan_id', plan.id)
       .order('sort_order'),
-    supabase.from('other_product_months').select('product_id, month_index, quantity'),
+    supabase.from('other_product_months').select('product_id, month_index, quantity').eq('plan_id', plan.id),
   ]);
 
   const programs = (progs ?? []) as { id: string; item_code: string; item_description: string }[];
@@ -101,12 +103,16 @@ export default async function SecondaryProductsPage() {
   }
 
   const computed = rr.length > 0;
-  // Admins, plus anyone an admin has granted this one section. The database
-  // enforces the same rule, so a stale page can only ever offer an edit that
-  // then fails — never one that quietly succeeds.
-  const canEdit = canEditSecondaryProducts(
-    (profile?.role ?? 'viewer') as UserRole,
-    profile?.edit_sections
+  // The plan's rule first — never on a locked plan, an admin anywhere, the
+  // owner on their own sandbox — and on an official plan the section grant.
+  // The database (can_write_side_products) enforces the same rule, so a stale
+  // page can only ever offer an edit that then fails — never one that quietly
+  // succeeds.
+  const role = (profile?.role ?? 'viewer') as UserRole;
+  const canEdit = canEditPlanSection(
+    plan,
+    { id: profile?.id ?? '', role },
+    canEditSecondaryProducts(role, profile?.edit_sections)
   );
 
   return (
@@ -125,6 +131,7 @@ export default async function SecondaryProductsPage() {
       ) : (
         <SecondaryProductsClient
           orgId={plan.org_id}
+          planId={plan.id}
           planStartDate={plan.plan_start_date}
           horizon={horizon}
           definitions={definitions}
@@ -138,6 +145,7 @@ export default async function SecondaryProductsPage() {
       <div className="border-t pt-6">
         <OtherProductsClient
           orgId={plan.org_id}
+          planId={plan.id}
           planStartDate={plan.plan_start_date}
           horizon={horizon}
           products={otherProducts}

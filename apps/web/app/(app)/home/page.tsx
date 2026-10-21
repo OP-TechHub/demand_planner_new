@@ -2,7 +2,7 @@ import { AlertTriangle, Activity, CalendarRange } from 'lucide-react';
 import { createClient } from '@/lib/supabase/server';
 import { monthLabel } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
-import { fetchAllByPlan, fetchAllPaged } from '@/lib/fetch-all';
+import { fetchAllByPlan } from '@/lib/fetch-all';
 import { getActivePlan } from '@/lib/plan';
 import { Card } from '@/components/ui/card';
 import { RecalculateButton } from '../recalculate-button';
@@ -142,7 +142,8 @@ export default async function HomePage() {
       // the total of the status being built, so active + pipeline = the plan.
       const { data: secDefs } = await supabase
         .from('secondary_products')
-        .select('name, basis, source_item_code, yield_pct, price_per_kg, is_archived');
+        .select('name, basis, source_item_code, yield_pct, price_per_kg, is_archived')
+        .eq('plan_id', plan.id);
       const secRows = ((secDefs ?? []) as {
         name: string; basis: string; source_item_code: string | null; yield_pct: number; price_per_kg: number; is_archived: boolean;
       }[]).filter((d) => !d.is_archived);
@@ -174,17 +175,15 @@ export default async function HomePage() {
         };
       }
 
-      // Other products: traded lines outside the harvest plan (org-scoped, like
-      // secondary products) and tied to no program, so they sit outside the
-      // status filter. Quantity is typed in per month; revenue and cost are flat
-      // per-unit rates. Same arithmetic as lib/side-products.ts, kept per
-      // product name and per month for the card breakdown and range filter.
+      // Other products: traded lines outside the harvest plan, tied to no
+      // program, so they sit outside the status filter. Quantity is typed in
+      // per month; revenue and cost are flat per-unit rates. Same arithmetic as
+      // lib/side-products.ts, kept per product name and per month for the card
+      // breakdown and range filter.
       const [{ data: otherDefs }, otherMonths] = await Promise.all([
-        supabase.from('other_products').select('id, name, unit_cost, unit_revenue').eq('is_archived', false),
-        fetchAllPaged(
-          (a: number, b: number) => supabase.from('other_product_months').select('product_id, month_index, quantity').range(a, b),
-          'other_product_months'
-        ).catch(() => [] as { product_id: string; month_index: number; quantity: number }[]),
+        supabase.from('other_products').select('id, name, unit_cost, unit_revenue').eq('plan_id', plan.id).eq('is_archived', false),
+        fetchAllByPlan(supabase, 'other_product_months', 'product_id, month_index, quantity', plan.id)
+          .catch(() => [] as { product_id: string; month_index: number; quantity: number }[]),
       ]);
       const othRev = zeros(), othCost = zeros();
       const othByName = new Map<string, number[]>();

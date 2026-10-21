@@ -33,6 +33,7 @@ const pct = (y: number) => `${(y * 100).toFixed(2).replace(/\.?0+$/, '')}%`;
 
 export function SecondaryProductsClient({
   orgId,
+  planId,
   planStartDate,
   horizon,
   definitions,
@@ -42,6 +43,8 @@ export function SecondaryProductsClient({
   canEdit,
 }: {
   orgId: string;
+  /** The plan these definitions belong to — each plan keeps its own set. */
+  planId: string;
   planStartDate: string;
   horizon: number;
   definitions: SecondaryDef[];
@@ -218,6 +221,7 @@ export function SecondaryProductsClient({
       {modal && canEdit && (
         <DefinitionModal
           orgId={orgId}
+          planId={planId}
           def={modal.def}
           sources={sources}
           defaultOrder={nextOrder}
@@ -291,6 +295,7 @@ const initial: SecondaryFormState = { error: null, ok: false };
 
 function DefinitionModal({
   orgId,
+  planId,
   def,
   sources,
   defaultOrder,
@@ -298,6 +303,7 @@ function DefinitionModal({
   onSaved,
 }: {
   orgId: string;
+  planId: string;
   def: SecondaryDef | null;
   sources: SourceOption[];
   defaultOrder: number;
@@ -311,6 +317,7 @@ function DefinitionModal({
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm" onClick={onClose}>
       <form action={formAction} className="w-full max-w-md rounded-lg bg-card p-5 text-sm shadow-xl" onClick={(e) => e.stopPropagation()}>
         <input type="hidden" name="org_id" value={orgId} />
+        <input type="hidden" name="plan_id" value={planId} />
         {def && <input type="hidden" name="id" value={def.id} />}
         <h2 className="mb-3 text-sm font-semibold">{def ? 'Edit by-product' : 'New by-product'}</h2>
 

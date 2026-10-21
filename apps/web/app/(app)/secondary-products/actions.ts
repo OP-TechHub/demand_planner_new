@@ -18,6 +18,7 @@ const TOTAL_WR = '__total_wr__';
 export async function saveSecondaryProduct(_prev: SecondaryFormState, fd: FormData): Promise<SecondaryFormState> {
   const id = String(fd.get('id') ?? '').trim();
   const orgId = String(fd.get('org_id') ?? '').trim();
+  const planId = String(fd.get('plan_id') ?? '').trim();
   const sourceItemCode = String(fd.get('source_item_code') ?? '').trim();
   const name = String(fd.get('name') ?? '').trim();
   const yieldPct = Number(String(fd.get('yield_pct') ?? '').trim());
@@ -54,9 +55,12 @@ export async function saveSecondaryProduct(_prev: SecondaryFormState, fd: FormDa
     if (error) return { error: friendly(error.message), ok: false };
   } else {
     if (!orgId) return { error: 'Missing organization.', ok: false };
+    if (!planId) return { error: 'Missing plan.', ok: false };
+    // A definition belongs to the plan it is entered on; the plan's own rules
+    // (locked, owner, grant) decide whether the insert is allowed.
     const { error } = await supabase
       .from('secondary_products')
-      .insert({ ...row, org_id: orgId, created_by: user.id });
+      .insert({ ...row, org_id: orgId, plan_id: planId, created_by: user.id });
     if (error) return { error: friendly(error.message), ok: false };
   }
 
@@ -85,7 +89,7 @@ function friendly(message: string): string {
     return 'That product already has a by-product with this name.';
   }
   if (m.includes('row-level security') || m.includes('violates row-level')) {
-    return 'You do not have access to change by-product definitions. An admin can grant it on the Users screen.';
+    return 'You do not have access to change by-product definitions on this plan — it may be locked, or you may need the grant from an admin on the Users screen.';
   }
   return message;
 }

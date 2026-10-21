@@ -18,6 +18,91 @@ const PROGRAM_COLS = [
   'storage_cost_fp', 'freight_cost_fp', 'other_costs_fp', 'locked', 'sort_order',
 ] as const;
 
+/**
+ * Copy a plan's secondary products (by-product rates and prices) and other
+ * products (traded lines with their monthly quantities) onto another plan.
+ *
+ * Shared by every way a plan is copied — scenario, new plan, snapshot — so the
+ * two travel exactly as programs, demand and harvest do. By-products are keyed
+ * by item_code, so they copy as they are; `itemCodes` narrows them to the
+ * programs the new plan actually took, with whole-fish rows (no source code)
+ * always kept. Other products get new ids, so their months are re-keyed, and
+ * `withMonths` false copies the lines without their quantities — the New plan
+ * dialog's "programs only" case. Months are re-keyed through `mapMonth`, as
+ * demand's are.
+ */
+async function copySideProducts(db: any, args: {
+  sourcePlanId: string;
+  targetPlanId: string;
+  orgId: string;
+  userId: string;
+  /** Source month -> target month, or null to leave that month out. */
+  mapMonth: (sourceMonth: number) => number | null;
+  itemCodes?: Set<string> | null;
+  /** Default true: either table can be left out of a clone. */
+  secondary?: boolean;
+  other?: boolean;
+  withMonths: boolean;
+}): Promise<string | null> {
+  const { sourcePlanId, targetPlanId, orgId, userId, mapMonth, itemCodes, withMonths } = args;
+
+  if (args.secondary ?? true) {
+    const { data: secs, error: se } = await db
+      .from('secondary_products')
+      .select('basis, source_item_code, name, yield_pct, price_per_kg, sort_order, is_archived')
+      .eq('plan_id', sourcePlanId);
+    if (se) return `copying by-products: ${se.message}`;
+    const secRows = (secs ?? [])
+      .filter((s: any) => !itemCodes || s.source_item_code == null || itemCodes.has(s.source_item_code))
+      .map((s: any) => ({ ...s, org_id: orgId, plan_id: targetPlanId, created_by: userId, updated_by: userId }));
+    if (secRows.length) {
+      const { error } = await db.from('secondary_products').insert(secRows);
+      if (error) return `copying by-products: ${error.message}`;
+    }
+  }
+  if (!(args.other ?? true)) return null;
+
+  const { data: others, error: oe } = await db
+    .from('other_products')
+    .select('id, name, unit_cost, unit_revenue, unit_label, sort_order, is_archived')
+    .eq('plan_id', sourcePlanId);
+  if (oe) return `copying other products: ${oe.message}`;
+  if (!others?.length) return null;
+  const { data: created, error: ce } = await db
+    .from('other_products')
+    .insert(others.map(({ id: _old, ...o }: any) => ({ ...o, org_id: orgId, plan_id: targetPlanId, created_by: userId, updated_by: userId })))
+    .select('id, name');
+  if (ce) return `copying other products: ${ce.message}`;
+  if (!withMonths) return null;
+
+  // Names are unique within a plan, so they map the old ids onto the new.
+  const newIdByName = new Map((created ?? []).map((p: any) => [p.name, p.id]));
+  const nameByOldId = new Map(others.map((p: any) => [p.id, p.name]));
+  const months = await fetchAllByPlan(db, 'other_product_months', 'product_id, month_index, quantity', sourcePlanId);
+  const monthRows = months
+    .map((m: any) => ({ product_id: newIdByName.get(nameByOldId.get(m.product_id)), org_id: orgId, plan_id: targetPlanId, month_index: mapMonth(m.month_index), quantity: m.quantity }))
+    .filter((m: any) => m.product_id && m.month_index);
+  for (let i = 0; i < monthRows.length; i += 800) {
+    const { error } = await db.from('other_product_months').insert(monthRows.slice(i, i + 800));
+    if (error) return `copying other product quantities: ${error.message}`;
+  }
+  return null;
+}
+
+/**
+ * How a source plan's months land in a copy: source month `from` becomes
+ * month 1, nothing past `to` or past the copy's length is kept. With from = 1
+ * and to = the source's length this is the plain "same month numbers, drop
+ * the tail" copy every clone used to make.
+ */
+function monthMapper(from: number, to: number, horizon: number): (sourceMonth: number) => number | null {
+  return (m) => {
+    if (m < from || m > to) return null;
+    const t = m - from + 1;
+    return t >= 1 && t <= horizon ? t : null;
+  };
+}
+
 function setActiveCookie(store: Awaited<ReturnType<typeof cookies>>, planId: string) {
   store.set(ACTIVE_PLAN_COOKIE, planId, { path: '/', httpOnly: true, sameSite: 'lax', maxAge: 60 * 60 * 24 * 365 });
 }
@@ -47,9 +132,36 @@ export type ScenarioResult = { error: string | null; scenarioId?: string };
 export async function createScenario(
   name: string,
   description: string,
-  opts?: { official?: boolean; sourcePlanId?: string; planStartDate?: string; horizonMonths?: number }
+  opts?: {
+    official?: boolean;
+    sourcePlanId?: string;
+    planStartDate?: string;
+    horizonMonths?: number;
+    /**
+     * Which parts of the source come along. Programs and settings always do —
+     * a plan without them is empty — and anything left out starts blank.
+     * Absent means everything, which is what every clone did before.
+     */
+    copy?: { demand?: boolean; harvest?: boolean; secondary?: boolean; other?: boolean };
+    /**
+     * The stretch of the SOURCE plan to copy, as its own month numbers (1 =
+     * its first month). Month `copyFromMonth` of the source lands in month 1
+     * of the new plan, and nothing past `copyToMonth` or past the new plan's
+     * length is copied. Absent means from the source's first month, which is
+     * the old behaviour — right when both plans start in the same month, and
+     * a silent one-year slip when they do not.
+     */
+    copyFromMonth?: number;
+    copyToMonth?: number;
+  }
 ): Promise<ScenarioResult> {
   const official = opts?.official ?? false;
+  const copy = {
+    demand: opts?.copy?.demand ?? true,
+    harvest: opts?.copy?.harvest ?? true,
+    secondary: opts?.copy?.secondary ?? true,
+    other: opts?.copy?.other ?? true,
+  };
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: 'Your session expired. Sign in again.' };
@@ -88,6 +200,18 @@ export async function createScenario(
     horizon = h;
   }
 
+  // Where in the source the copy starts and stops, in the source's own months.
+  const srcHorizon = source.horizon_months as number;
+  const copyFrom = Math.trunc(opts?.copyFromMonth ?? 1);
+  const copyTo = Math.trunc(opts?.copyToMonth ?? srcHorizon);
+  if (!Number.isFinite(copyFrom) || copyFrom < 1 || copyFrom > srcHorizon) {
+    return { error: `The months to copy must start inside the source plan (month 1 to ${srcHorizon}).` };
+  }
+  if (!Number.isFinite(copyTo) || copyTo < copyFrom || copyTo > srcHorizon) {
+    return { error: 'The months to copy must end on or after they start, inside the source plan.' };
+  }
+  const mapMonth = monthMapper(copyFrom, copyTo, horizon);
+
   const { data: scenario, error: se } = await supabase.from('plans').insert({
     org_id: master.org_id, type: 'scenario', parent_plan_id: master.id,
     name: name.trim(), description: (description ?? '').trim(), owner_user_id: user.id, is_locked: false, is_sandbox: !official,
@@ -123,73 +247,84 @@ export async function createScenario(
   const newIdByCode = new Map((newProgs ?? []).map((p: any) => [p.item_code, p.id]));
   const codeByOldId = new Map((srcProgs ?? []).map((p: any) => [p.id, p.item_code]));
 
-  // Clone demand overrides (remap program_id), dropping any months past the horizon.
-  const demand = await fetchAllByPlan(supabase, 'demand_plan', 'program_id, month_index, demand_fp', source.id);
-  const demandRows = demand
-    .filter((d: any) => d.month_index <= horizon)
-    .map((d: any) => ({ plan_id: sid, program_id: newIdByCode.get(codeByOldId.get(d.program_id)), month_index: d.month_index, demand_fp: d.demand_fp, created_by: user.id, updated_by: user.id }))
-    .filter((d) => d.program_id);
-  for (let i = 0; i < demandRows.length; i += 800) {
-    const { error } = await supabase.from('demand_plan').insert(demandRows.slice(i, i + 800));
-    if (error) return fail(`cloning demand: ${error.message}`);
+  // Every monthly table below is re-keyed through mapMonth: the chosen stretch
+  // of the source lands from month 1 of the new plan, and months outside it
+  // are left out.
+  if (copy.demand) {
+    // Clone demand overrides (remap program_id).
+    const demand = await fetchAllByPlan(supabase, 'demand_plan', 'program_id, month_index, demand_fp', source.id);
+    const demandRows = demand
+      .map((d: any) => ({ plan_id: sid, program_id: newIdByCode.get(codeByOldId.get(d.program_id)), month_index: mapMonth(d.month_index), demand_fp: d.demand_fp, created_by: user.id, updated_by: user.id }))
+      .filter((d) => d.program_id && d.month_index);
+    for (let i = 0; i < demandRows.length; i += 800) {
+      const { error } = await supabase.from('demand_plan').insert(demandRows.slice(i, i + 800));
+      if (error) return fail(`cloning demand: ${error.message}`);
+    }
+
+    // POs travel with the demand: without them the clone's demand would be right
+    // on day one but drift the moment a PO there was edited. The baseline stash
+    // comes too, so deleting a PO in the clone restores the same figure it would.
+    const poLines = await fetchAllByPlan(supabase, 'po_updates', 'program_id, month_index, quantity_fp, po_ref, received_on, notes', source.id);
+    const poRows = poLines
+      .map((r: any) => ({ plan_id: sid, program_id: newIdByCode.get(codeByOldId.get(r.program_id)), month_index: mapMonth(r.month_index), quantity_fp: r.quantity_fp, po_ref: r.po_ref, received_on: r.received_on, notes: r.notes, created_by: user.id, updated_by: user.id }))
+      .filter((r) => r.program_id && r.month_index);
+    for (let i = 0; i < poRows.length; i += 800) {
+      const { error } = await supabase.from('po_updates').insert(poRows.slice(i, i + 800));
+      if (error) return fail(`cloning POs: ${error.message}`);
+    }
+
+    const poBase = await fetchAllByPlan(supabase, 'po_demand_baseline', 'program_id, month_index, prev_demand_fp', source.id);
+    const poBaseRows = poBase
+      .map((r: any) => ({ plan_id: sid, program_id: newIdByCode.get(codeByOldId.get(r.program_id)), month_index: mapMonth(r.month_index), prev_demand_fp: r.prev_demand_fp }))
+      .filter((r) => r.program_id && r.month_index);
+    for (let i = 0; i < poBaseRows.length; i += 800) {
+      const { error } = await supabase.from('po_demand_baseline').insert(poBaseRows.slice(i, i + 800));
+      if (error) return fail(`cloning PO baselines: ${error.message}`);
+    }
   }
 
-  // Clone harvest (buckets are org-scoped — same bucket_id), dropping months past the horizon.
-  const harvest = await fetchAllByPlan(supabase, 'harvest_plan', 'bucket_id, month_index, capacity_kg_wr', source.id);
-  const harvestRows = harvest
-    .filter((h: any) => h.month_index <= horizon)
-    .map((h: any) => ({ plan_id: sid, bucket_id: h.bucket_id, month_index: h.month_index, capacity_kg_wr: h.capacity_kg_wr, created_by: user.id, updated_by: user.id }));
-  for (let i = 0; i < harvestRows.length; i += 800) {
-    const { error } = await supabase.from('harvest_plan').insert(harvestRows.slice(i, i + 800));
-    if (error) return fail(`cloning harvest: ${error.message}`);
+  if (copy.harvest) {
+    // Clone harvest (buckets are org-scoped — same bucket_id).
+    const harvest = await fetchAllByPlan(supabase, 'harvest_plan', 'bucket_id, month_index, capacity_kg_wr', source.id);
+    const harvestRows = harvest
+      .map((h: any) => ({ plan_id: sid, bucket_id: h.bucket_id, month_index: mapMonth(h.month_index), capacity_kg_wr: h.capacity_kg_wr, created_by: user.id, updated_by: user.id }))
+      .filter((h) => h.month_index);
+    for (let i = 0; i < harvestRows.length; i += 800) {
+      const { error } = await supabase.from('harvest_plan').insert(harvestRows.slice(i, i + 800));
+      if (error) return fail(`cloning harvest: ${error.message}`);
+    }
+
+    // The processing plant's request plan travels with the plan, same as capacity —
+    // bucket included, or a sized request would arrive in the clone as a sizeless one.
+    const { data: srcReq } = await supabase
+      .from('harvest_request').select('bucket_id, month_index, quantity_kg_wr').eq('plan_id', source.id);
+    const reqRows = (srcReq ?? [])
+      .map((r: any) => ({ plan_id: sid, bucket_id: r.bucket_id, month_index: mapMonth(r.month_index), quantity_kg_wr: r.quantity_kg_wr, created_by: user.id, updated_by: user.id }))
+      .filter((r) => r.month_index);
+    if (reqRows.length) {
+      const { error } = await supabase.from('harvest_request').insert(reqRows);
+      if (error) return fail(`cloning request plan: ${error.message}`);
+    }
+
+    // What was actually landed travels too: a scenario built off this plan should
+    // show the same history behind it.
+    const { data: srcAct } = await supabase
+      .from('harvest_actual').select('bucket_id, month_index, quantity_kg_wr').eq('plan_id', source.id);
+    const actRows = (srcAct ?? [])
+      .map((r: any) => ({ plan_id: sid, bucket_id: r.bucket_id, month_index: mapMonth(r.month_index), quantity_kg_wr: r.quantity_kg_wr, created_by: user.id, updated_by: user.id }))
+      .filter((r) => r.month_index);
+    if (actRows.length) {
+      const { error } = await supabase.from('harvest_actual').insert(actRows);
+      if (error) return fail(`cloning actual harvest: ${error.message}`);
+    }
   }
 
-  // The processing plant's request plan travels with the plan, same as capacity —
-  // bucket included, or a sized request would arrive in the clone as a sizeless one.
-  const { data: srcReq } = await supabase
-    .from('harvest_request').select('bucket_id, month_index, quantity_kg_wr').eq('plan_id', source.id);
-  const reqRows = (srcReq ?? [])
-    .filter((r: any) => r.month_index <= horizon)
-    .map((r: any) => ({ plan_id: sid, bucket_id: r.bucket_id, month_index: r.month_index, quantity_kg_wr: r.quantity_kg_wr, created_by: user.id, updated_by: user.id }));
-  if (reqRows.length) {
-    const { error } = await supabase.from('harvest_request').insert(reqRows);
-    if (error) return fail(`cloning request plan: ${error.message}`);
-  }
-
-  // What was actually landed travels too: a scenario built off this plan should
-  // show the same history behind it.
-  const { data: srcAct } = await supabase
-    .from('harvest_actual').select('bucket_id, month_index, quantity_kg_wr').eq('plan_id', source.id);
-  const actRows = (srcAct ?? [])
-    .filter((r: any) => r.month_index <= horizon)
-    .map((r: any) => ({ plan_id: sid, bucket_id: r.bucket_id, month_index: r.month_index, quantity_kg_wr: r.quantity_kg_wr, created_by: user.id, updated_by: user.id }));
-  if (actRows.length) {
-    const { error } = await supabase.from('harvest_actual').insert(actRows);
-    if (error) return fail(`cloning actual harvest: ${error.message}`);
-  }
-
-  // POs travel with the plan: without them the clone's demand would be right on
-  // day one but drift the moment a PO there was edited. The baseline stash comes
-  // too, so deleting a PO in the clone restores the same figure it would have.
-  const poLines = await fetchAllByPlan(supabase, 'po_updates', 'program_id, month_index, quantity_fp, po_ref, received_on, notes', source.id);
-  const poRows = poLines
-    .filter((r: any) => r.month_index <= horizon)
-    .map((r: any) => ({ plan_id: sid, program_id: newIdByCode.get(codeByOldId.get(r.program_id)), month_index: r.month_index, quantity_fp: r.quantity_fp, po_ref: r.po_ref, received_on: r.received_on, notes: r.notes, created_by: user.id, updated_by: user.id }))
-    .filter((r) => r.program_id);
-  for (let i = 0; i < poRows.length; i += 800) {
-    const { error } = await supabase.from('po_updates').insert(poRows.slice(i, i + 800));
-    if (error) return fail(`cloning POs: ${error.message}`);
-  }
-
-  const poBase = await fetchAllByPlan(supabase, 'po_demand_baseline', 'program_id, month_index, prev_demand_fp', source.id);
-  const poBaseRows = poBase
-    .filter((r: any) => r.month_index <= horizon)
-    .map((r: any) => ({ plan_id: sid, program_id: newIdByCode.get(codeByOldId.get(r.program_id)), month_index: r.month_index, prev_demand_fp: r.prev_demand_fp }))
-    .filter((r) => r.program_id);
-  for (let i = 0; i < poBaseRows.length; i += 800) {
-    const { error } = await supabase.from('po_demand_baseline').insert(poBaseRows.slice(i, i + 800));
-    if (error) return fail(`cloning PO baselines: ${error.message}`);
-  }
+  // By-products and other products are part of the plan too.
+  const sideError = await copySideProducts(supabase, {
+    sourcePlanId: source.id, targetPlanId: sid, orgId: master.org_id, userId: user.id,
+    mapMonth, secondary: copy.secondary, other: copy.other, withMonths: true,
+  });
+  if (sideError) return fail(sideError);
 
   setActiveCookie(await cookies(), sid);
   revalidatePath('/', 'layout');
@@ -360,8 +495,18 @@ export async function createPlan(input: {
       const { error } = await supabase.from('po_demand_baseline').insert(poBaseRows.slice(i, i + 800));
       if (error) return fail(`copying PO baselines: ${error.message}`);
     }
-
   }
+
+  // By-product rates and other-product lines are setup, like the programs, so
+  // they come for the programs taken; the monthly quantities are data, and
+  // follow the same switch as demand and harvest.
+  const sideError = await copySideProducts(supabase, {
+    sourcePlanId: source.id, targetPlanId: pid, orgId: master.org_id, userId: user.id,
+    mapMonth: monthMapper(1, source.horizon_months as number, horizon),
+    itemCodes: new Set(selected.map((p: any) => p.item_code as string)),
+    withMonths: input.copyData,
+  });
+  if (sideError) return fail(sideError);
 
   setActiveCookie(await cookies(), pid);
   revalidatePath('/', 'layout');
@@ -376,7 +521,7 @@ function monthsBetweenYM(a: string, b: string): number {
   return (Number(m2[1]) - Number(m1[1])) * 12 + (Number(m2[2]) - Number(m1[2]));
 }
 
-/** Copy a plan (programs + demand + harvest) into a locked, read-only snapshot. */
+/** Copy a plan (programs + demand + harvest + side products) into a locked, read-only snapshot. */
 async function snapshotPlan(svc: any, plan: any, userId: string, name: string, description: string): Promise<string> {
   const { data: archive, error: ae } = await svc.from('plans').insert({
     org_id: plan.org_id,
@@ -453,6 +598,13 @@ async function snapshotPlan(svc: any, plan: any, userId: string, name: string, d
     const { error } = await svc.from('harvest_actual').insert(actRows);
     if (error) throw new Error(`snapshot actual harvest: ${error.message}`);
   }
+
+  // And the by-products and other products, so a restore brings them back.
+  const sideError = await copySideProducts(svc, {
+    sourcePlanId: plan.id, targetPlanId: aid, orgId: plan.org_id, userId,
+    mapMonth: monthMapper(1, plan.horizon_months, plan.horizon_months), withMonths: true,
+  });
+  if (sideError) throw new Error(`snapshot ${sideError}`);
 
   return aid;
 }
