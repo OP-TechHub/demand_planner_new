@@ -1,9 +1,11 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Lock } from 'lucide-react';
+import { FileSpreadsheet, Loader2, Lock } from 'lucide-react';
 import { monthLabel } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { downloadTableXlsx, type TableCell } from '@/lib/table-export';
 import { ProgramLabel } from '@/components/program-label';
 import { useResizableColumn } from '@/components/resizable-column';
 
@@ -108,16 +110,19 @@ const dash = (v: number | null, f: (v: number) => string) => (v == null ? '—' 
 export function RankingClient({
   rows,
   metric,
+  planName,
   planStartDate,
   horizon,
 }: {
   rows: RankRow[];
   metric: string;
+  planName: string;
   planStartDate: string;
   horizon: number;
 }) {
   const [basis, setBasis] = useState<Basis>(METRIC_BASIS[metric] ?? 'marginFp');
   const [status, setStatus] = useState<(typeof STATUSES)[number]>('all');
+  const [exporting, setExporting] = useState(false);
   const nameCol = useResizableColumn('ranking-program', 288);
 
   // Date range, as on the dashboard: picking a start month proposes the twelve
@@ -150,6 +155,88 @@ export function RankingClient({
   const totalMargin = ranked.reduce((s, r) => s + (r.margin ?? 0), 0);
   const unranked = ranked.filter((r) => r.pos == null).length;
 
+  // The table as shown — same rows, same order, same date range — as a sheet.
+  // Percentages go out as fractions so Excel formats them, and "—" stays blank.
+  const exportXlsx = async () => {
+    setExporting(true);
+    try {
+      const basisLabel = BASES.find((b) => b.key === basis)?.label ?? basis;
+      const statusLabel = status === 'all' ? 'All programs' : status[0].toUpperCase() + status.slice(1);
+      const ratio = (a: number | null, b: number | null) => (a != null && b ? a / b : null);
+      const columns = [
+        { header: 'Rank', fmt: 'int', width: 7 },
+        { header: 'Customer', fmt: 'text' },
+        { header: 'Product', fmt: 'text' },
+        { header: 'Status', fmt: 'text', width: 10 },
+        { header: 'Bucket', fmt: 'text', width: 12 },
+        { header: 'Price ($/kg FP)', fmt: 'usd2' },
+        { header: 'Cost ($/kg FP)', fmt: 'usd2' },
+        { header: 'Margin ($/kg FP)', fmt: 'usd2' },
+        { header: 'Margin %', fmt: 'pct' },
+        { header: 'Margin ($/kg WR)', fmt: 'usd2' },
+        { header: 'Demand (kg FP)', fmt: 'int' },
+        { header: 'Contribution ($)', fmt: 'usd0' },
+        { header: 'Fulfilled (%)', fmt: 'pct' },
+        { header: 'Plan revenue ($)', fmt: 'usd0' },
+        { header: 'Plan margin ($)', fmt: 'usd0' },
+        { header: 'GP %', fmt: 'pct' },
+        { header: 'Priority', fmt: 'int', width: 9 },
+        { header: 'Locked', fmt: 'text', width: 8 },
+      ] as const;
+      const highlight: Partial<Record<Basis, number>> = {
+        price: 5, marginFp: 7, marginPct: 8, marginWr: 9, contribution: 11, revenue: 13, margin: 14, gpPct: 15, engine: 16,
+      };
+      const data: TableCell[][] = ranked.map((r) => [
+        r.pos,
+        r.customer,
+        r.item,
+        r.status,
+        r.bucket,
+        r.price,
+        r.costFp,
+        r.marginFp,
+        ratio(r.marginFp, r.price),
+        r.marginWr,
+        Math.round(r.demand),
+        r.marginFp * r.demand,
+        r.fulfilled == null ? null : ratio(r.fulfilled, r.demand),
+        r.revenue,
+        r.margin,
+        r.revenue ? ratio(r.margin ?? 0, r.revenue) : null,
+        r.engineRank,
+        r.locked ? 'Yes' : '',
+      ]);
+      const totalDemand = ranked.reduce((s, r) => s + r.demand, 0);
+      const totalContribution = ranked.reduce((s, r) => s + r.marginFp * r.demand, 0);
+      const totalFulfilled = ranked.reduce((s, r) => s + (r.fulfilled ?? 0), 0);
+      const totals: TableCell[] = [
+        'TOTAL', '', '', '', '', null, null, null, null, null,
+        Math.round(totalDemand), totalContribution,
+        totalDemand > 0 ? totalFulfilled / totalDemand : null,
+        totalRevenue, totalMargin,
+        totalRevenue > 0 ? totalMargin / totalRevenue : null,
+        null, '',
+      ];
+      await downloadTableXlsx({
+        filename: `program-ranking-${basis}-${monthLabel(planStartDate, from)}-${monthLabel(planStartDate, to)}`.replace(/s+/g, '').toLowerCase(),
+        title: 'Program Ranking',
+        subtitle: [
+          `Plan: ${planName}`,
+          `Ranked by ${basisLabel}`,
+          statusLabel,
+          full ? `All ${horizon} months` : `${rangeText} · ${span} of ${horizon} months`,
+          `Exported ${new Date().toLocaleDateString()}`,
+        ].join(' · '),
+        columns: [...columns],
+        rows: data,
+        totals,
+        highlightCol: highlight[basis],
+      });
+    } finally {
+      setExporting(false);
+    }
+  };
+
   // Shade the column the list is currently ranked on.
   const on = (b: Basis) => (b === basis ? 'bg-primary/10 font-semibold' : undefined);
   const num = (b: Basis, extra?: string) => cn('px-2 py-1.5 text-right tabular-nums', on(b), extra);
@@ -158,7 +245,13 @@ export function RankingClient({
 
   return (
     <div className="space-y-5">
-      <h1 className="text-2xl font-semibold tracking-tight">Program Ranking</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-semibold tracking-tight">Program Ranking</h1>
+        <Button variant="outline" size="sm" onClick={() => void exportXlsx()} disabled={exporting || ranked.length === 0}>
+          {exporting ? <Loader2 className="animate-spin" /> : <FileSpreadsheet />}
+          Export Excel
+        </Button>
+      </div>
 
       <div className="flex flex-wrap items-center gap-3 text-sm">
         <label className="flex items-center gap-2">
