@@ -97,7 +97,7 @@ export default async function RankingPage() {
   return (
     <div className="space-y-4">
       <StalePlanNotice planId={plan.id} lastComputedAt={plan.last_computed_at} />
-      <RankingClient rows={rows} metric={plan.settings_margin_metric} planStartDate={plan.plan_start_date} horizon={months} />
+      <RankingClient rows={rows} metric={plan.settings_margin_metric} planName={plan.name} planStartDate={plan.plan_start_date} horizon={months} />
     </div>
   );
 }
