@@ -18,6 +18,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const user = await getCurrentUser();
   if (!user) redirect('/login');
 
+  // Start the plan queries now so they overlap the profile query instead of
+  // waiting behind it. Supabase queries resolve with { error } rather than
+  // rejecting, so an early return below leaves nothing unhandled.
+  const plansPromise = Promise.all([getActivePlan(), getSelectablePlans()]);
+
   // Request-cached: shared with every page under this layout on the same render.
   const { profile, error: profileError } = await getProfileResult();
 
@@ -82,7 +87,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     );
   }
 
-  const [activePlan, plans] = await Promise.all([getActivePlan(), getSelectablePlans()]);
+  const [activePlan, plans] = await plansPromise;
   const master = plans.find((p) => p.type === 'master') ?? null;
 
   // `type = 'scenario'` covers BOTH a user's private sandbox and an admin-created

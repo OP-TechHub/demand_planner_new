@@ -41,6 +41,7 @@ const FIELD_LABEL: Record<string, string> = {
   processing_cost_fp: 'Processing cost', storage_cost_fp: 'Storage cost',
   freight_cost_fp: 'Freight cost', other_costs_fp: 'Other costs', locked: 'Locked',
   plan_start_date: 'Plan start month', is_locked: 'Plan locked', is_live: 'Live plan',
+  request_mode: 'Daily request mode', harvest_days: 'Harvest days',
 };
 
 function labelFor(k: string): string {
@@ -52,6 +53,13 @@ function prettyVal(v: unknown): string {
   if (v === null || v === undefined || v === '') return '—';
   if (typeof v === 'number') return v.toLocaleString('en-US', { maximumFractionDigits: 4 });
   return String(v);
+}
+
+/** "2026-04-14" → "Tue 14 Apr 2026". */
+function prettyDay(v: string): string {
+  const d = new Date(v + 'T00:00:00Z');
+  if (Number.isNaN(d.getTime())) return v;
+  return d.toLocaleString('en-US', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
 }
 
 /** "2026-03" → "Mar 2026". */
@@ -94,8 +102,10 @@ function describeChanges(entityType: string, changes: any, ctx: Ctx): Described 
     const unit = UNIT[entityType] ?? '';
     for (const x of c.edits) {
       const bucket = x.b ? ctx.bucketName(x.b) ?? 'Unknown bucket' : null;
+      // Daily request edits carry a harvest date rather than a month index.
+      const when = x.d ? prettyDay(x.d) : `${ctx.month(x.m)} (M${x.m})`;
       out.changes.push({
-        field: `${bucket ? bucket + ' · ' : ''}${ctx.month(x.m)} (M${x.m})`,
+        field: `${bucket ? bucket + ' · ' : ''}${when}`,
         before: prettyVal(x.old),
         after: prettyVal(x.new),
         unit,

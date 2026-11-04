@@ -6,14 +6,19 @@ import type { Plan } from '@oceanpick/shared';
 export const ACTIVE_PLAN_COOKIE = 'op_active_plan';
 
 /**
- * Request-cached auth user. `getUser()` is a network call to Supabase Auth, and
- * it was being made in the middleware, the layout, and several pages on every
- * navigation — cache() collapses all the render-tree calls into one.
+ * Request-cached auth user. The middleware has already verified the session
+ * with Supabase Auth on this request, so here we only need the identity:
+ * `getClaims()` verifies the JWT locally (asymmetric signing keys, cached JWKS)
+ * instead of making another network round trip to Auth. On a project still on
+ * the legacy shared secret it falls back to getUser() itself, so it is never
+ * less safe than before. cache() collapses all render-tree calls into one.
  */
-export const getCurrentUser = cache(async () => {
+export const getCurrentUser = cache(async (): Promise<{ id: string; email?: string } | null> => {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  return user;
+  const { data } = await supabase.auth.getClaims();
+  const claims = data?.claims;
+  if (!claims?.sub) return null;
+  return { id: claims.sub, email: typeof claims.email === 'string' ? claims.email : undefined };
 });
 
 export type Profile = {
@@ -115,11 +120,15 @@ export const getActivePlan = cache(async (): Promise<Plan | null> => {
  * an admin can point everything at a "Live plan" while the master stays frozen.
  */
 export const getDefaultPlan = cache(async (): Promise<Plan | null> => {
+  // One round trip for both candidates, then prefer the live one.
   const supabase = await createClient();
-  const { data: live } = await supabase.from('plans').select('*').eq('is_live', true).is('deleted_at', null).maybeSingle();
-  if (live) return live as Plan;
-  const { data: master } = await supabase.from('plans').select('*').eq('type', 'master').is('deleted_at', null).maybeSingle();
-  return (master as Plan) ?? null;
+  const { data } = await supabase
+    .from('plans')
+    .select('*')
+    .or('is_live.eq.true,type.eq.master')
+    .is('deleted_at', null);
+  const rows = (data ?? []) as Plan[];
+  return rows.find((p) => p.is_live) ?? rows.find((p) => p.type === 'master') ?? null;
 });
 
 /** The org master plus the caller's own scenarios, for the plan selector. */

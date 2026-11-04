@@ -8,6 +8,9 @@ import {
   type HarvestCell,
   type HarvestRequestCell,
   type HarvestActualCell,
+  type HarvestRequestDailyCell,
+  type HarvestRequestSettings,
+  DEFAULT_HARVEST_REQUEST_SETTINGS,
   type UserRole,
 } from '@oceanpick/shared';
 import { fetchAllByPlan } from '@/lib/fetch-all';
@@ -28,7 +31,7 @@ export default async function HarvestPlanPage() {
 
   const supabase = await createClient();
   // harvest_plan can exceed PostgREST's 1000-row cap (buckets × 60), so page it.
-  const [{ data: buckets }, rows, { data: requestRows }, { data: actualRows }, profile, grants, { data: progs }, demand, poLines] = await Promise.all([
+  const [{ data: buckets }, rows, { data: requestRows }, { data: actualRows }, profile, grants, { data: progs }, demand, poLines, dailyRows, { data: settingsRow }] = await Promise.all([
     supabase.from('buckets').select('*').eq('is_archived', false).order('sort_order'),
     fetchAllByPlan(supabase, 'harvest_plan', '*', plan.id),
     // buckets x 60 stays well under PostgREST's 1000-row cap, unlike capacity,
@@ -50,6 +53,14 @@ export default async function HarvestPlanPage() {
       .eq('plan_id', plan.id).is('deleted_at', null),
     fetchAllByPlan(supabase, 'demand_plan', 'program_id, month_index, demand_fp', plan.id),
     fetchAllByPlan(supabase, 'po_updates', 'program_id, month_index', plan.id),
+    // Two harvest days a week across the horizon can pass the 1000-row cap once
+    // stated by size, so page it like capacity.
+    fetchAllByPlan(supabase, 'harvest_request_daily', 'plan_id, harvest_date, bucket_id, quantity_kg_wr', plan.id),
+    supabase
+      .from('harvest_request_settings')
+      .select('mode, harvest_weekdays')
+      .eq('plan_id', plan.id)
+      .maybeSingle(),
   ]);
 
   // Required harvest: the whole round the demand book needs, demand_fp /
@@ -106,6 +117,14 @@ export default async function HarvestPlanPage() {
     ...r,
     quantity_kg_wr: Number(r.quantity_kg_wr),
   }));
+  const requestDaily = (dailyRows as HarvestRequestDailyCell[]).map((r) => ({
+    ...r,
+    quantity_kg_wr: Number(r.quantity_kg_wr),
+  }));
+  // No row yet means the plan has never been set up: the defaults stand.
+  const requestSettings: HarvestRequestSettings = settingsRow
+    ? { mode: settingsRow.mode, harvest_weekdays: settingsRow.harvest_weekdays }
+    : DEFAULT_HARVEST_REQUEST_SETTINGS;
   const actual = ((actualRows ?? []) as HarvestActualCell[]).map((r) => ({
     ...r,
     quantity_kg_wr: Number(r.quantity_kg_wr),
@@ -121,6 +140,8 @@ export default async function HarvestPlanPage() {
       canEdit={canEdit}
       canExport={canExportData(me.role, profile?.edit_sections)}
       request={request}
+      requestDaily={requestDaily}
+      requestSettings={requestSettings}
       canEditRequest={canEditRequest}
       actual={actual}
       canEditActual={canEditActual}

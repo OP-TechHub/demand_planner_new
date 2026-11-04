@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { logAudit } from '@/lib/audit';
 import type { WideRow, WideImportResult } from '@/components/wide-grid-import';
+import { monthIndexOfDate, type HarvestRequestMode } from '@oceanpick/shared';
 
 export type SaveResult = { error: string | null };
 
@@ -189,8 +190,24 @@ export async function saveHarvestRequest(
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: 'Your session expired. Sign in again.' };
 
+  // A month with daily figures reads as their sum, so its monthly figure is not
+  // the plant's to edit any more — those entries are left out, never written.
+  const { data: dailyRows } = await supabase
+    .from('harvest_request_daily').select('harvest_date').eq('plan_id', planId).gt('quantity_kg_wr', 0);
+  const { data: planRow } = await supabase
+    .from('plans').select('plan_start_date, horizon_months').eq('id', planId).maybeSingle();
+  const dailyMonths = new Set<number>();
+  if (planRow) {
+    for (const d of (dailyRows ?? []) as { harvest_date: string }[]) {
+      const mo = monthIndexOfDate(planRow.plan_start_date, d.harvest_date, planRow.horizon_months);
+      if (mo !== null) dailyMonths.add(mo);
+    }
+  }
+
   // Whole kg WR, matching how harvest capacity is kept.
-  const rounded = entries.map((e) => ({ ...e, quantity_kg_wr: Math.round(e.quantity_kg_wr) }));
+  const rounded = entries
+    .filter((e) => !dailyMonths.has(e.month_index))
+    .map((e) => ({ ...e, quantity_kg_wr: Math.round(e.quantity_kg_wr) }));
   // A sizeless row is legacy data: it may be cleared, never created.
   const upserts = rounded.filter((e) => e.quantity_kg_wr > 0 && e.bucket_id);
   const clears = rounded.filter((e) => e.quantity_kg_wr === 0);
@@ -251,6 +268,139 @@ export async function saveHarvestRequest(
       more: Math.max(0, edits.length - CAP),
     },
   });
+  revalidatePath('/harvest-plan');
+  return { error: null };
+}
+
+/**
+ * How the plant states its daily request, and which weekdays the farm harvests
+ * on. Held under the same 'harvest_request' grant as the request itself.
+ */
+export async function saveHarvestRequestSettings(
+  planId: string,
+  settings: { mode: HarvestRequestMode; harvest_weekdays: number[] }
+): Promise<SaveResult> {
+  if (!planId) return { error: 'Missing plan.' };
+  if (settings.mode !== 'by_date' && settings.mode !== 'by_date_size') return { error: 'Unknown request mode.' };
+  const weekdays = [...new Set(settings.harvest_weekdays)].sort((a, b) => a - b);
+  if (!weekdays.length) return { error: 'Pick at least one harvest day.' };
+  if (weekdays.some((d) => !Number.isInteger(d) || d < 1 || d > 7)) return { error: 'Invalid harvest day.' };
+
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: 'Your session expired. Sign in again.' };
+
+  const { data: before } = await supabase
+    .from('harvest_request_settings').select('mode, harvest_weekdays').eq('plan_id', planId).maybeSingle();
+  const { error } = await supabase.from('harvest_request_settings').upsert(
+    { plan_id: planId, mode: settings.mode, harvest_weekdays: weekdays, created_by: user.id, updated_by: user.id },
+    { onConflict: 'plan_id' }
+  );
+  if (error) return { error: requestPermError(error.message) };
+
+  const MODE_LABEL: Record<string, string> = { by_date: 'By date', by_date_size: 'By date & size' };
+  const DAY = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const days = (list: number[] | null | undefined) => (list ? list.map((d) => DAY[d]).join(', ') : null);
+  const changes: Record<string, { old: string | null; new: string | null }> = {};
+  if (before?.mode !== settings.mode) {
+    changes.request_mode = { old: before ? MODE_LABEL[before.mode] : null, new: MODE_LABEL[settings.mode] };
+  }
+  if (days(before?.harvest_weekdays) !== days(weekdays)) {
+    changes.harvest_days = { old: days(before?.harvest_weekdays), new: days(weekdays) };
+  }
+  if (Object.keys(changes).length) {
+    await logAudit(supabase, { planId, entityType: 'harvest_request', entityId: planId, action: 'update', changes });
+  }
+  revalidatePath('/harvest-plan');
+  return { error: null };
+}
+
+/**
+ * Save the plant's request for the harvest days on screen.
+ *
+ * The same sparse contract as the monthly request: every cell shown is sent, a
+ * positive figure is upserted in whole kg WR, and a zero or cleared one deletes
+ * the row — so a cleared day is gone rather than left at its old value. A null
+ * bucket is the day's total with no size stated.
+ */
+export async function saveHarvestRequestDaily(
+  planId: string,
+  entries: { harvest_date: string; bucket_id: string | null; quantity_kg_wr: number }[]
+): Promise<SaveResult> {
+  if (!planId) return { error: 'Missing plan.' };
+  for (const e of entries) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(e.harvest_date)) return { error: `Invalid date ${e.harvest_date}.` };
+    if (!Number.isFinite(e.quantity_kg_wr) || e.quantity_kg_wr < 0) {
+      return { error: `Quantity for ${e.harvest_date} must be zero or greater.` };
+    }
+  }
+  if (!entries.length) return { error: null };
+
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: 'Your session expired. Sign in again.' };
+
+  const dates = [...new Set(entries.map((e) => e.harvest_date))].sort();
+  const key = (bucketId: string | null, date: string) => `${bucketId ?? ''}:${date}`;
+  const { data: existingRows } = await supabase
+    .from('harvest_request_daily')
+    .select('bucket_id, harvest_date, quantity_kg_wr')
+    .eq('plan_id', planId)
+    .gte('harvest_date', dates[0])
+    .lte('harvest_date', dates[dates.length - 1]);
+  const existing = new Map<string, number>(
+    (existingRows ?? []).map((r: { bucket_id: string | null; harvest_date: string; quantity_kg_wr: number }) => [
+      key(r.bucket_id, r.harvest_date),
+      Number(r.quantity_kg_wr),
+    ])
+  );
+
+  const rounded = entries.map((e) => ({ ...e, quantity_kg_wr: Math.round(e.quantity_kg_wr) }));
+  const upserts = rounded.filter(
+    (e) => e.quantity_kg_wr > 0 && existing.get(key(e.bucket_id, e.harvest_date)) !== e.quantity_kg_wr
+  );
+  if (upserts.length) {
+    const { error } = await supabase.from('harvest_request_daily').upsert(
+      upserts.map((e) => ({
+        plan_id: planId, harvest_date: e.harvest_date, bucket_id: e.bucket_id,
+        quantity_kg_wr: e.quantity_kg_wr, created_by: user.id, updated_by: user.id,
+      })),
+      { onConflict: 'plan_id,harvest_date,bucket_id' }
+    );
+    if (error) return { error: requestPermError(error.message) };
+  }
+
+  // One delete per bucket, so clearing a day for one size leaves the others.
+  const byBucket = new Map<string | null, string[]>();
+  for (const e of rounded) {
+    if (e.quantity_kg_wr !== 0 || !existing.has(key(e.bucket_id, e.harvest_date))) continue;
+    byBucket.set(e.bucket_id, [...(byBucket.get(e.bucket_id) ?? []), e.harvest_date]);
+  }
+  for (const [bucketId, dateList] of byBucket) {
+    const q = supabase.from('harvest_request_daily').delete().eq('plan_id', planId).in('harvest_date', dateList);
+    const { error } = await (bucketId === null ? q.is('bucket_id', null) : q.eq('bucket_id', bucketId));
+    if (error) return { error: requestPermError(error.message) };
+  }
+
+  const edits: { b: string | null; d: string; old: number; new: number }[] = [];
+  for (const e of rounded) {
+    const old = existing.get(key(e.bucket_id, e.harvest_date)) ?? 0;
+    if (old !== e.quantity_kg_wr) edits.push({ b: e.bucket_id, d: e.harvest_date, old, new: e.quantity_kg_wr });
+  }
+  if (edits.length) {
+    edits.sort((a, b) => a.d.localeCompare(b.d));
+    const CAP = 40;
+    await logAudit(supabase, {
+      planId, entityType: 'harvest_request', entityId: planId, action: 'update',
+      changes: {
+        daily: true,
+        set: upserts.length,
+        cleared: [...byBucket.values()].reduce((n, l) => n + l.length, 0),
+        edits: edits.slice(0, CAP),
+        more: Math.max(0, edits.length - CAP),
+      },
+    });
+  }
   revalidatePath('/harvest-plan');
   return { error: null };
 }

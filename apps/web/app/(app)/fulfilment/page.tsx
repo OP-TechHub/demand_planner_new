@@ -11,8 +11,10 @@ export default async function FulfilmentPage() {
   if (!plan) return <h1 className="text-2xl font-semibold">Program Fulfilment</h1>;
   const supabase = await createClient();
 
-  const order = await programOrder(supabase, plan.id);
-  const rr = await fetchAllByPlan(supabase, 'rolling_results', 'program_id, month_index, fulfilment_pct', plan.id);
+  const [order, rr] = await Promise.all([
+    programOrder(supabase, plan.id),
+    fetchAllByPlan(supabase, 'rolling_results', 'program_id, month_index, fulfilment_pct', plan.id),
+  ]);
   const byPM = new Map<string, number | null>();
   for (const r of rr) byPM.set(`${r.program_id}:${r.month_index}`, r.fulfilment_pct);
   const months = Array.from({ length: plan.horizon_months }, (_, i) => i + 1);
