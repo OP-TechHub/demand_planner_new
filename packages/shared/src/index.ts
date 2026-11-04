@@ -149,6 +149,33 @@ export interface HarvestRequestCell {
 }
 
 /**
+ * The plant's request for one harvest day — what it tells the farm before each
+ * harvest. `bucket_id` null is the day's total with no size stated, which is
+ * how a plan in 'by_date' mode records it.
+ */
+export interface HarvestRequestDailyCell {
+  plan_id: string;
+  harvest_date: string; // 'YYYY-MM-DD'
+  bucket_id: string | null;
+  quantity_kg_wr: number;
+}
+
+/** 'by_date': one total per harvest day. 'by_date_size': one figure per bucket per day. */
+export type HarvestRequestMode = 'by_date' | 'by_date_size';
+
+/** How a plan's daily request is stated, and which weekdays the farm harvests on. */
+export interface HarvestRequestSettings {
+  mode: HarvestRequestMode;
+  /** ISO weekdays, 1 = Monday … 7 = Sunday. */
+  harvest_weekdays: number[];
+}
+
+export const DEFAULT_HARVEST_REQUEST_SETTINGS: HarvestRequestSettings = {
+  mode: 'by_date_size',
+  harvest_weekdays: [2, 5],
+};
+
+/**
  * What was actually landed, per month and size bucket (kg WR). Always sized —
  * unlike the request plan, this table starts empty and so has no pre-breakdown
  * history to carry. Reference only: the engine never reads it.
@@ -394,6 +421,64 @@ export function monthIndexOfDate(
     (d.getUTCFullYear() - start.getUTCFullYear()) * 12 +
     (d.getUTCMonth() - start.getUTCMonth()) + 1;
   return index >= 1 && index <= horizon ? index : null;
+}
+
+/** ISO weekday (1 = Monday … 7 = Sunday) of a 'YYYY-MM-DD' date. */
+export function isoWeekday(date: string): number {
+  const d = new Date(date + 'T00:00:00Z').getUTCDay();
+  return d === 0 ? 7 : d;
+}
+
+/**
+ * Every date in a plan month that falls on one of the harvest weekdays, in
+ * order — the columns of the daily request for that month.
+ */
+export function harvestDatesInMonth(planStartDate: string, monthIndex: number, weekdays: number[]): string[] {
+  const start = new Date(planStartDate + 'T00:00:00Z');
+  const y = start.getUTCFullYear();
+  const m = start.getUTCMonth() + (monthIndex - 1);
+  const days = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+  const wanted = new Set(weekdays);
+  const out: string[] = [];
+  for (let day = 1; day <= days; day++) {
+    const iso = new Date(Date.UTC(y, m, day)).toISOString().slice(0, 10);
+    if (wanted.has(isoWeekday(iso))) out.push(iso);
+  }
+  return out;
+}
+
+/** "Tue 14" — a harvest day's column heading. */
+export function harvestDayLabel(date: string): string {
+  const d = new Date(date + 'T00:00:00Z');
+  return `${d.toLocaleString('en-US', { weekday: 'short', timeZone: 'UTC' })} ${d.getUTCDate()}`;
+}
+
+/**
+ * The plant's request per bucket and month as it should be read: a month with
+ * any daily figures is their sum (the monthly figure for it is superseded), and
+ * any other month is its monthly figure. Keyed `${bucketId ?? ''}:${month}`.
+ * The page and the assistant both read the request through this, so they agree.
+ */
+export function effectiveMonthlyRequest(
+  monthly: { bucket_id: string | null; month_index: number; quantity_kg_wr: number }[],
+  daily: { bucket_id: string | null; harvest_date: string; quantity_kg_wr: number }[],
+  planStartDate: string,
+  horizon: number
+): { values: Map<string, number>; dailyMonths: Set<number> } {
+  const values = new Map<string, number>();
+  const dailyMonths = new Set<number>();
+  for (const d of daily) {
+    const mo = monthIndexOfDate(planStartDate, d.harvest_date, horizon);
+    if (mo === null || !(Number(d.quantity_kg_wr) > 0)) continue;
+    dailyMonths.add(mo);
+    const k = `${d.bucket_id ?? ''}:${mo}`;
+    values.set(k, (values.get(k) ?? 0) + Number(d.quantity_kg_wr));
+  }
+  for (const r of monthly) {
+    if (dailyMonths.has(r.month_index)) continue;
+    values.set(`${r.bucket_id ?? ''}:${r.month_index}`, Number(r.quantity_kg_wr));
+  }
+  return { values, dailyMonths };
 }
 
 const MONTH_ABBR = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];

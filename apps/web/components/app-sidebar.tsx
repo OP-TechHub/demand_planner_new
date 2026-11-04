@@ -131,8 +131,14 @@ export function AppSidebar({ role }: { role: UserRole }) {
                 const Icon = item.icon;
                 return (
                   <li key={item.href}>
+                    {/* No viewport prefetch: each prefetch re-renders the (app)
+                        layout down to loading.tsx — an Auth check plus the
+                        profile and plan queries — so ~30 visible links meant
+                        ~30 such renders competing with the real page load.
+                        Clicking still streams loading.tsx immediately. */}
                     <Link
                       href={item.href}
+                      prefetch={false}
                       aria-current={active ? 'page' : undefined}
                       className={cn(
                         'group relative flex items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] transition-colors',

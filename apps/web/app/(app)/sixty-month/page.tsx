@@ -10,8 +10,10 @@ export default async function SixtyMonthPage() {
   const plan = await getActivePlan();
   if (!plan) return <h1 className="text-2xl font-semibold">60-Month Summary</h1>;
   const supabase = await createClient();
-  const order = await programOrder(supabase, plan.id);
-  const rr = await fetchAllByPlan(supabase, 'rolling_results', 'program_id, month_index, rolling_fp, rolling_wr, rolling_margin', plan.id);
+  const [order, rr] = await Promise.all([
+    programOrder(supabase, plan.id),
+    fetchAllByPlan(supabase, 'rolling_results', 'program_id, month_index, rolling_fp, rolling_wr, rolling_margin', plan.id),
+  ]);
   const m = plan.horizon_months;
 
   // Full figures, not the abbreviated `kg`/`usd` scales — this grid is read

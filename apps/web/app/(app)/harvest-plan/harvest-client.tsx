@@ -5,7 +5,17 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Download, Upload, Boxes, Save, Factory, ClipboardCheck, Plus } from 'lucide-react';
 import { toast } from '@/components/ui/toast';
-import { monthLabel, type Bucket, type HarvestCell, type HarvestRequestCell, type HarvestActualCell } from '@oceanpick/shared';
+import {
+  monthLabel,
+  monthIndexOfDate,
+  effectiveMonthlyRequest,
+  type Bucket,
+  type HarvestCell,
+  type HarvestRequestCell,
+  type HarvestRequestDailyCell,
+  type HarvestRequestSettings,
+  type HarvestActualCell,
+} from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 import { toCsv, downloadCsv } from '@/lib/csv';
 import { Button } from '@/components/ui/button';
@@ -16,6 +26,7 @@ import { usePasteGrid, useInputGridSelection, pasteCellCls, PendingPasteBar } fr
 import { HarvestEditor } from './harvest-editor';
 import { BucketModal } from '../buckets/buckets-client';
 import { importHarvest, saveHarvestCells, saveHarvestRequest, saveHarvestActual } from './actions';
+import { DailyRequestSection, todayIso } from './daily-request';
 
 export function HarvestClient({
   planId,
@@ -26,6 +37,8 @@ export function HarvestClient({
   canEdit,
   canExport,
   request,
+  requestDaily,
+  requestSettings,
   canEditRequest,
   actual,
   canEditActual,
@@ -43,6 +56,9 @@ export function HarvestClient({
   canExport: boolean;
   /** Processing plant's requested kg WR, one row per month and size. */
   request: HarvestRequestCell[];
+  /** The same request stated per harvest day; a month with any of these reads as their sum. */
+  requestDaily: HarvestRequestDailyCell[];
+  requestSettings: HarvestRequestSettings;
   canEditRequest: boolean;
   /** What was actually landed, one row per month and size. */
   actual: HarvestActualCell[];
@@ -91,14 +107,24 @@ export function HarvestClient({
     for (const k of keys) if ((initialReq[k] ?? '') !== (req[k] ?? '')) return true;
     return false;
   }, [initialReq, req]);
-  const reqValue = (bucketId: string | null, mo: number) => Number(req[reqKey(bucketId, mo)] ?? '') || 0;
+  // A month the plant has stated by harvest day reads as the sum of its days,
+  // and its monthly boxes give way to that figure — see effectiveMonthlyRequest.
+  const daily = useMemo(
+    () => effectiveMonthlyRequest([], requestDaily, planStartDate, horizon),
+    [requestDaily, planStartDate, horizon]
+  );
+  const isDailyMonth = (mo: number) => daily.dailyMonths.has(mo);
+  const reqValue = (bucketId: string | null, mo: number) =>
+    isDailyMonth(mo)
+      ? Math.round(daily.values.get(reqKey(bucketId, mo)) ?? 0)
+      : Number(req[reqKey(bucketId, mo)] ?? '') || 0;
 
   // The sizeless line only exists while there is something on it. Once the
   // plant restates those months by bucket and clears it, the row goes for good
   // — which is why it is driven by the live edits, not by what was loaded.
   const hasSizeless = useMemo(
     () => months.some((mo) => reqValue(null, mo) > 0),
-    [months, req] // eslint-disable-line react-hooks/exhaustive-deps
+    [months, req, daily] // eslint-disable-line react-hooks/exhaustive-deps
   );
 
   const reqRows = [
@@ -107,8 +133,10 @@ export function HarvestClient({
     // a bucket, and it must not read as one more size.
     ...(hasSizeless ? [{ id: null, name: 'No size stated' }] : []),
   ];
-  const setReqCell = (row: number, col: number, v: string) =>
+  const setReqCell = (row: number, col: number, v: string) => {
+    if (isDailyMonth(visibleMonths[col])) return; // a roll-up, not an input
     setReq((prev) => ({ ...prev, [reqKey(reqRows[row].id, visibleMonths[col])]: v }));
+  };
   // Drag or Shift+click across the boxes, then Delete clears them all; a paste lands at the top-left.
   const reqSel = useInputGridSelection({
     rows: reqRows.length,
@@ -126,7 +154,8 @@ export function HarvestClient({
   function saveRequest() {
     // Every bucket in every month, so a cleared cell is deleted rather than left
     // behind at its old value. The sizeless row goes too, so it can be emptied.
-    const entries = months.flatMap((mo) => [
+    // Months stated by day are left out: their monthly figure is not edited here.
+    const entries = months.filter((mo) => !isDailyMonth(mo)).flatMap((mo) => [
       ...buckets.map((b) => ({ bucket_id: b.id, month_index: mo, quantity_kg_wr: reqValue(b.id, mo) })),
       { bucket_id: null, month_index: mo, quantity_kg_wr: reqValue(null, mo) },
     ]);
@@ -329,7 +358,8 @@ export function HarvestClient({
             <p className="text-xs text-muted-foreground">
               Whole round the <b>processing plant</b> is requesting each month, by size bucket (kg WR). Same rows and
               months as the capacity grid above, so the two compare line for line. Maintained by the plant on its own
-              permission, and not used by the calc engine.
+              permission, and not used by the calc engine. A <span className="rounded bg-primary/10 px-1">shaded</span> month
+              is the sum of its <b>daily request</b> below.
             </p>
           </div>
           {canEditRequest && (
@@ -367,15 +397,23 @@ export function HarvestClient({
                     )}
                     title={
                       row.id === null
-                        ? 'Requested before the plan carried sizes. Restate these months by bucket, then clear this row.'
+                        ? 'Requested with no size — a daily request made By date, or a month entered before the plan carried sizes.'
                         : undefined
                     }
                   >
                     {row.name}
                   </td>
                   {visibleMonths.map((mo, ci) => (
-                    <td key={mo} className={cn('px-1 py-1 text-right tabular-nums', yearStart(mo) && 'border-l border-border/60')}>
-                      {canEditRequest ? (
+                    <td
+                      key={mo}
+                      className={cn(
+                        'px-1 py-1 text-right tabular-nums',
+                        yearStart(mo) && 'border-l border-border/60',
+                        isDailyMonth(mo) && 'bg-primary/5'
+                      )}
+                      title={isDailyMonth(mo) ? 'Sum of the daily request for this month — edit it in Daily request below.' : undefined}
+                    >
+                      {canEditRequest && !isDailyMonth(mo) ? (
                         <input
                           type="number"
                           min={0}
@@ -390,7 +428,7 @@ export function HarvestClient({
                           className={cn(inputCellCls, reqSel.isSelected(ri, ci) && pasteCellCls.selected)}
                         />
                       ) : (
-                        <span className={cn(reqValue(row.id, mo) === 0 && 'text-muted-foreground/40')}>
+                        <span className={cn('px-1.5', reqValue(row.id, mo) === 0 && 'text-muted-foreground/40')}>
                           {reqValue(row.id, mo).toLocaleString()}
                         </span>
                       )}
@@ -421,6 +459,18 @@ export function HarvestClient({
             Read-only — editing this needs the <b>Harvest Request Plan</b> permission on this plan (Admin → Plans → Access).
           </p>
         )}
+
+        <DailyRequestSection
+          planId={planId}
+          planStartDate={planStartDate}
+          horizon={horizon}
+          initialMonth={monthIndexOfDate(planStartDate, todayIso(), horizon) ?? 1}
+          buckets={buckets}
+          daily={requestDaily}
+          settings={requestSettings}
+          canEdit={canEditRequest}
+          stickyCol={stickyCol}
+        />
       </section>
 
       {buckets.length > 0 && (

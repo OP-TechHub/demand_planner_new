@@ -7,6 +7,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { fetchAllByPlan } from '@/lib/fetch-all';
 import { logAudit } from '@/lib/audit';
 import { ACTIVE_PLAN_COOKIE } from '@/lib/plan';
+import { monthIndexOfDate } from '@oceanpick/shared';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -101,6 +102,81 @@ function monthMapper(from: number, to: number, horizon: number): (sourceMonth: n
     const t = m - from + 1;
     return t >= 1 && t <= horizon ? t : null;
   };
+}
+
+/**
+ * Copy the plant's daily request and its settings (mode, harvest weekdays)
+ * onto another plan.
+ *
+ * Days are calendar dates, not month numbers, so a month that keeps its
+ * calendar month in the copy brings its days across as they are. A month the
+ * copy moves (a clone that re-bases the window) cannot: its days would land on
+ * the wrong weekdays. Those come back instead as `folded` — the month's total
+ * per bucket, keyed `${bucketId ?? ''}:${targetMonth}` — for the caller to
+ * write as that month's monthly request, which is what the page would have
+ * shown for it anyway.
+ */
+async function copyRequestDaily(db: any, args: {
+  sourcePlan: { id: string; plan_start_date: string; horizon_months: number };
+  targetPlanId: string;
+  targetStartDate: string;
+  mapMonth: (sourceMonth: number) => number | null;
+  userId: string;
+}): Promise<{ error: string | null; folded: Map<string, number> }> {
+  const { sourcePlan, targetPlanId, targetStartDate, mapMonth, userId } = args;
+  const folded = new Map<string, number>();
+
+  const { data: settings } = await db
+    .from('harvest_request_settings').select('mode, harvest_weekdays').eq('plan_id', sourcePlan.id).maybeSingle();
+  if (settings) {
+    const { error } = await db.from('harvest_request_settings').insert({
+      plan_id: targetPlanId, mode: settings.mode, harvest_weekdays: settings.harvest_weekdays,
+      created_by: userId, updated_by: userId,
+    });
+    if (error) return { error: `copying request settings: ${error.message}`, folded };
+  }
+
+  const days = await fetchAllByPlan(db, 'harvest_request_daily', 'harvest_date, bucket_id, quantity_kg_wr', sourcePlan.id);
+  const calMonth = (start: string, mo: number) =>
+    Number(start.slice(0, 4)) * 12 + Number(start.slice(5, 7)) - 1 + (mo - 1);
+  const rows: any[] = [];
+  for (const d of days) {
+    const srcMonth = monthIndexOfDate(sourcePlan.plan_start_date, d.harvest_date, sourcePlan.horizon_months);
+    const tgtMonth = srcMonth === null ? null : mapMonth(srcMonth);
+    if (srcMonth === null || tgtMonth === null) continue;
+    if (calMonth(sourcePlan.plan_start_date, srcMonth) === calMonth(targetStartDate, tgtMonth)) {
+      rows.push({
+        plan_id: targetPlanId, harvest_date: d.harvest_date, bucket_id: d.bucket_id,
+        quantity_kg_wr: d.quantity_kg_wr, created_by: userId, updated_by: userId,
+      });
+    } else {
+      const k = `${d.bucket_id ?? ''}:${tgtMonth}`;
+      folded.set(k, (folded.get(k) ?? 0) + Number(d.quantity_kg_wr));
+    }
+  }
+  for (let i = 0; i < rows.length; i += 800) {
+    const { error } = await db.from('harvest_request_daily').insert(rows.slice(i, i + 800));
+    if (error) return { error: `copying daily request: ${error.message}`, folded };
+  }
+  return { error: null, folded };
+}
+
+/**
+ * Merge `folded` daily totals into monthly request rows: a folded month
+ * replaces whatever monthly figures that month had, as it did on screen.
+ */
+function withFolded(reqRows: any[], folded: Map<string, number>, base: { plan_id: string; userId: string }): any[] {
+  if (!folded.size) return reqRows;
+  const months = new Set([...folded.keys()].map((k) => Number(k.slice(k.indexOf(':') + 1))));
+  const out = reqRows.filter((r) => !months.has(r.month_index));
+  for (const [k, kg] of folded) {
+    const i = k.indexOf(':');
+    out.push({
+      plan_id: base.plan_id, bucket_id: k.slice(0, i) || null, month_index: Number(k.slice(i + 1)),
+      quantity_kg_wr: Math.round(kg), created_by: base.userId, updated_by: base.userId,
+    });
+  }
+  return out;
 }
 
 function setActiveCookie(store: Awaited<ReturnType<typeof cookies>>, planId: string) {
@@ -296,11 +372,21 @@ export async function createScenario(
 
     // The processing plant's request plan travels with the plan, same as capacity —
     // bucket included, or a sized request would arrive in the clone as a sizeless one.
+    // The daily request comes too, with its settings; days whose month moves fold
+    // into that month's monthly figure (see copyRequestDaily).
+    const dailyCopy = await copyRequestDaily(supabase, {
+      sourcePlan: source, targetPlanId: sid, targetStartDate: startDate, mapMonth, userId: user.id,
+    });
+    if (dailyCopy.error) return fail(dailyCopy.error);
     const { data: srcReq } = await supabase
       .from('harvest_request').select('bucket_id, month_index, quantity_kg_wr').eq('plan_id', source.id);
-    const reqRows = (srcReq ?? [])
-      .map((r: any) => ({ plan_id: sid, bucket_id: r.bucket_id, month_index: mapMonth(r.month_index), quantity_kg_wr: r.quantity_kg_wr, created_by: user.id, updated_by: user.id }))
-      .filter((r) => r.month_index);
+    const reqRows = withFolded(
+      (srcReq ?? [])
+        .map((r: any) => ({ plan_id: sid, bucket_id: r.bucket_id, month_index: mapMonth(r.month_index), quantity_kg_wr: r.quantity_kg_wr, created_by: user.id, updated_by: user.id }))
+        .filter((r) => r.month_index),
+      dailyCopy.folded,
+      { plan_id: sid, userId: user.id }
+    );
     if (reqRows.length) {
       const { error } = await supabase.from('harvest_request').insert(reqRows);
       if (error) return fail(`cloning request plan: ${error.message}`);
@@ -452,11 +538,20 @@ export async function createPlan(input: {
 
     // The processing plant's request plan travels with the plan, same as capacity —
     // bucket included, or a sized request would arrive as a sizeless one.
+    const dailyCopy = await copyRequestDaily(supabase, {
+      sourcePlan: source, targetPlanId: pid, targetStartDate: input.planStartDate,
+      mapMonth: monthMapper(1, source.horizon_months as number, horizon), userId: user.id,
+    });
+    if (dailyCopy.error) return fail(dailyCopy.error);
     const { data: srcReq } = await supabase
       .from('harvest_request').select('bucket_id, month_index, quantity_kg_wr').eq('plan_id', source.id);
-    const reqRows = (srcReq ?? [])
-      .filter((r: any) => r.month_index <= horizon)
-      .map((r: any) => ({ plan_id: pid, bucket_id: r.bucket_id, month_index: r.month_index, quantity_kg_wr: r.quantity_kg_wr, created_by: user.id, updated_by: user.id }));
+    const reqRows = withFolded(
+      (srcReq ?? [])
+        .filter((r: any) => r.month_index <= horizon)
+        .map((r: any) => ({ plan_id: pid, bucket_id: r.bucket_id, month_index: r.month_index, quantity_kg_wr: r.quantity_kg_wr, created_by: user.id, updated_by: user.id })),
+      dailyCopy.folded,
+      { plan_id: pid, userId: user.id }
+    );
     if (reqRows.length) {
       const { error } = await supabase.from('harvest_request').insert(reqRows);
       if (error) return fail(`copying request plan: ${error.message}`);
@@ -587,6 +682,12 @@ async function snapshotPlan(svc: any, plan: any, userId: string, name: string, d
     const { error } = await svc.from('harvest_request').insert(reqRows);
     if (error) throw new Error(`snapshot request plan: ${error.message}`);
   }
+  // Same window, so every day comes across as it is — nothing folds.
+  const dailyCopy = await copyRequestDaily(svc, {
+    sourcePlan: plan, targetPlanId: aid, targetStartDate: plan.plan_start_date,
+    mapMonth: monthMapper(1, plan.horizon_months, plan.horizon_months), userId,
+  });
+  if (dailyCopy.error) throw new Error(`snapshot ${dailyCopy.error}`);
 
   // So is the record of what was actually landed.
   const { data: srcAct } = await svc
@@ -662,6 +763,13 @@ export async function rollPlanForward(
     return { error: error.message };
   }
 
+  // The daily request is keyed by date, so the roll leaves it where it is; only
+  // the days now before the window go, as the rolled-off months did. The
+  // snapshot above still holds them.
+  const { error: de } = await svc
+    .from('harvest_request_daily').delete().eq('plan_id', planId).lt('harvest_date', `${newStartMonth}-01`);
+  if (de) return { error: `Rolled forward, but clearing old daily requests failed: ${de.message}`, months, archiveId };
+
   await logAudit(supabase, {
     planId, entityType: 'plans', entityId: planId, action: 'update',
     changes: { plan_start_date: { old: plan.plan_start_date.slice(0, 7), new: newStartMonth }, rolled_forward_months: months },
@@ -722,6 +830,19 @@ export async function restorePlanFromSnapshot(
     await svc.from('plans').delete().eq('id', archiveId);
     return { error: error.message };
   }
+
+  // The SQL routine restores the month-keyed tables; the daily request and its
+  // settings are replaced here. Same start and length as the snapshot now, so
+  // every day comes back as it was.
+  for (const t of ['harvest_request_daily', 'harvest_request_settings']) {
+    const { error: de } = await svc.from(t).delete().eq('plan_id', targetPlanId);
+    if (de) return { error: `Restored, but replacing the daily request failed: ${de.message}`, archiveId };
+  }
+  const dailyCopy = await copyRequestDaily(svc, {
+    sourcePlan: snapshot, targetPlanId, targetStartDate: snapshot.plan_start_date,
+    mapMonth: monthMapper(1, snapshot.horizon_months, snapshot.horizon_months), userId: user.id,
+  });
+  if (dailyCopy.error) return { error: `Restored, but ${dailyCopy.error}`, archiveId };
 
   await logAudit(supabase, {
     planId: targetPlanId, entityType: 'plans', entityId: targetPlanId, action: 'update',

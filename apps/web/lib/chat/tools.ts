@@ -11,7 +11,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type Anthropic from '@anthropic-ai/sdk';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { Plan } from '@oceanpick/shared';
+import { effectiveMonthlyRequest, type Plan } from '@oceanpick/shared';
 import { fetchAllPaged } from '@/lib/fetch-all';
 import { getPlanFreshness } from '@/lib/plan-freshness';
 import { loadCostingContext } from '@/lib/costing';
@@ -305,13 +305,25 @@ async function harvest(ctx: ToolContext, args: Args) {
       table
     );
 
-  const [{ data: buckets }, capacity, requested, actual, unallocated] = await Promise.all([
+  const [{ data: buckets }, capacity, requestedMonthly, requestedDaily, actual, unallocated] = await Promise.all([
     ctx.db.from('buckets').select('id, name, sort_order').order('sort_order'),
     inWindow('harvest_plan', 'bucket_id, month_index, capacity_kg_wr'),
     inWindow('harvest_request', 'bucket_id, month_index, quantity_kg_wr'),
+    fetchAllPaged(
+      (f, t) => ctx.db.from('harvest_request_daily').select('bucket_id, harvest_date, quantity_kg_wr')
+        .eq('plan_id', plan.id).range(f, t),
+      'harvest_request_daily'
+    ),
     inWindow('harvest_actual', 'bucket_id, month_index, quantity_kg_wr'),
     inWindow('unallocated_wr', 'bucket_id, month_index, unallocated_wr'),
   ]);
+  // A month stated by harvest day is the sum of its days, as on the Harvest Plan page.
+  const requested = [...effectiveMonthlyRequest(requestedMonthly, requestedDaily, plan.plan_start_date, plan.horizon_months).values]
+    .map(([k, quantity_kg_wr]) => {
+      const i = k.indexOf(':');
+      return { bucket_id: k.slice(0, i) || null, month_index: Number(k.slice(i + 1)), quantity_kg_wr };
+    })
+    .filter((r) => r.month_index >= win.from && r.month_index <= win.to);
 
   type Cell = { capacity_wr: number; requested_wr: number; actual_wr: number; unallocated_wr: number };
   const blank = (): Cell => ({ capacity_wr: 0, requested_wr: 0, actual_wr: 0, unallocated_wr: 0 });

@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import { AlertTriangle, Activity, CalendarRange } from 'lucide-react';
 import { createClient } from '@/lib/supabase/server';
 import { monthLabel } from '@oceanpick/shared';
@@ -14,13 +15,49 @@ export default async function HomePage() {
 
   // The plan selected in the top bar, defaulting to the org's live plan.
   const plan = await getActivePlan();
-  const [{ count: bucketCount }, { count: userCount }, { data: summary }] = await Promise.all([
+  const planId = plan?.id;
+
+  // Every query below depends only on the plan id, so they all go out in one
+  // round trip instead of the chain of awaits this page used to make. An
+  // uncomputed plan has no rolling_results rows, so fetching it regardless of
+  // `summary` costs next to nothing.
+  const none = Promise.resolve({ data: null });
+  const noRows = Promise.resolve([] as any[]); // eslint-disable-line @typescript-eslint/no-explicit-any
+  const [
+    { count: bucketCount }, { count: userCount }, { data: summary },
+    { data: progs }, { data: bks }, rr, { data: secDefs }, { data: otherDefs }, otherMonths, harv,
+  ] = await Promise.all([
     // Live buckets only — archived ones aren't part of the plan's supply.
     supabase.from('buckets').select('*', { count: 'exact', head: true }).eq('is_archived', false),
     supabase.from('users').select('*', { count: 'exact', head: true }),
-    plan
-      ? supabase.from('plan_summary').select('*').eq('plan_id', plan.id).eq('period', 'total_60mo').maybeSingle()
-      : Promise.resolve({ data: null }),
+    planId
+      ? supabase.from('plan_summary').select('*').eq('plan_id', planId).eq('period', 'total_60mo').maybeSingle()
+      : none,
+    // Program status + customer, for the active/pipeline split and the
+    // shortfall-by-customer chart.
+    planId
+      ? supabase
+          .from('programs')
+          .select('id, item_code, status, customer, primary_yield, secondary_yield, tertiary_yield, primary_bucket_id, secondary_bucket_id, tertiary_bucket_id, max_monthly_demand_fp')
+          .eq('plan_id', planId).is('deleted_at', null)
+      : none,
+    planId ? supabase.from('buckets').select('id, name').eq('is_archived', false) : none,
+    planId
+      ? fetchAllByPlan(supabase, 'rolling_results', 'program_id, month_index, demand_fp, rolling_fp, rolling_wr, own_fp, own_wr, revenue, cost, ' +
+          'borrow_m1_prim_wr, borrow_m1_alt_wr, borrow_m1_tert_wr, borrow_m2_prim_wr, borrow_m2_alt_wr, borrow_m2_tert_wr, ' +
+          'borrow_m3_prim_wr, borrow_m3_alt_wr, borrow_m3_tert_wr, borrow_m4_prim_wr, borrow_m4_alt_wr, borrow_m4_tert_wr', planId)
+      : noRows,
+    planId
+      ? supabase.from('secondary_products').select('name, basis, source_item_code, yield_pct, price_per_kg, is_archived').eq('plan_id', planId)
+      : none,
+    planId
+      ? supabase.from('other_products').select('id, name, unit_cost, unit_revenue').eq('plan_id', planId).eq('is_archived', false)
+      : none,
+    planId
+      ? fetchAllByPlan(supabase, 'other_product_months', 'product_id, month_index, quantity', planId)
+          .catch(() => [] as { product_id: string; month_index: number; quantity: number }[])
+      : noRows,
+    planId ? fetchAllByPlan(supabase, 'harvest_plan', 'bucket_id, capacity_kg_wr', planId) : noRows,
   ]);
 
   const lastComputed = plan?.last_computed_at ? new Date(plan.last_computed_at).toLocaleString() : null;
@@ -32,7 +69,6 @@ export default async function HomePage() {
   const byStatus: Record<StatusKey, StatusData> = { active: emptyStatus(), pipeline: emptyStatus() };
   let other: OtherData = { monthly: [], products: [] };
   const alerts: { level: 'warn' | 'info'; text: string }[] = [];
-  let recent: { who: string; text: string; when: string }[] = [];
 
   if (plan) {
     const months = plan.horizon_months;
@@ -40,15 +76,6 @@ export default async function HomePage() {
     else if (Date.now() - new Date(plan.last_computed_at).getTime() > 24 * 3600 * 1000)
       alerts.push({ level: 'warn', text: 'Computed results are over 24 hours old — Recalculate to refresh.' });
 
-    // Program status + customer, for the active/pipeline split and the
-    // shortfall-by-customer chart.
-    const [{ data: progs }, { data: bks }] = await Promise.all([
-      supabase
-        .from('programs')
-        .select('id, item_code, status, customer, primary_yield, secondary_yield, tertiary_yield, primary_bucket_id, secondary_bucket_id, tertiary_bucket_id, max_monthly_demand_fp')
-        .eq('plan_id', plan.id).is('deleted_at', null),
-      supabase.from('buckets').select('id, name').eq('is_archived', false),
-    ]);
     type Prog = {
       id: string; item_code: string; status: string; customer: string;
       primary_yield: number; secondary_yield: number | null; tertiary_yield: number | null;
@@ -60,9 +87,6 @@ export default async function HomePage() {
     const bucketName = new Map((bks ?? []).map((b) => [b.id, b.name as string]));
 
     if (summary) {
-      const rr = await fetchAllByPlan(supabase, 'rolling_results', 'program_id, month_index, demand_fp, rolling_fp, rolling_wr, own_fp, own_wr, revenue, cost, ' +
-        'borrow_m1_prim_wr, borrow_m1_alt_wr, borrow_m1_tert_wr, borrow_m2_prim_wr, borrow_m2_alt_wr, borrow_m2_tert_wr, ' +
-        'borrow_m3_prim_wr, borrow_m3_alt_wr, borrow_m3_tert_wr, borrow_m4_prim_wr, borrow_m4_alt_wr, borrow_m4_tert_wr', plan.id);
       const zeros = () => new Array<number>(months).fill(0);
 
       // Per-status accumulators. The engine only writes rows for in-scope
@@ -140,10 +164,6 @@ export default async function HomePage() {
       // page: quantity = feedstock WR × yield, value = quantity × price. Group 1
       // reads one product's whole round; group 2 reads the plan's total — here
       // the total of the status being built, so active + pipeline = the plan.
-      const { data: secDefs } = await supabase
-        .from('secondary_products')
-        .select('name, basis, source_item_code, yield_pct, price_per_kg, is_archived')
-        .eq('plan_id', plan.id);
       const secRows = ((secDefs ?? []) as {
         name: string; basis: string; source_item_code: string | null; yield_pct: number; price_per_kg: number; is_archived: boolean;
       }[]).filter((d) => !d.is_archived);
@@ -180,11 +200,6 @@ export default async function HomePage() {
       // per month; revenue and cost are flat per-unit rates. Same arithmetic as
       // lib/side-products.ts, kept per product name and per month for the card
       // breakdown and range filter.
-      const [{ data: otherDefs }, otherMonths] = await Promise.all([
-        supabase.from('other_products').select('id, name, unit_cost, unit_revenue').eq('plan_id', plan.id).eq('is_archived', false),
-        fetchAllByPlan(supabase, 'other_product_months', 'product_id, month_index, quantity', plan.id)
-          .catch(() => [] as { product_id: string; month_index: number; quantity: number }[]),
-      ]);
       const othRev = zeros(), othCost = zeros();
       const othByName = new Map<string, number[]>();
       const otherById = new Map(
@@ -212,7 +227,6 @@ export default async function HomePage() {
       if (under) alerts.push({ level: 'warn', text: `${under} program${under > 1 ? 's' : ''} under 50% fulfilled over 60 months.` });
     }
 
-    const harv = await fetchAllByPlan(supabase, 'harvest_plan', 'bucket_id, capacity_kg_wr', plan.id);
     const noYield = progList.filter((p) => (p.max_monthly_demand_fp ?? 0) > 0 && (!p.primary_yield || p.primary_yield <= 0)).length;
     if (noYield) alerts.push({ level: 'warn', text: `${noYield} program${noYield > 1 ? 's have' : ' has'} demand but no primary yield.` });
     const cap = new Map<string, number>();
@@ -221,13 +235,6 @@ export default async function HomePage() {
     if (zero.length) alerts.push({ level: 'info', text: `${zero.length} bucket${zero.length > 1 ? 's have' : ' has'} zero 60-month capacity (${zero.map((b) => b.name).slice(0, 3).join(', ')}${zero.length > 3 ? '…' : ''}).` });
 
     if (!alerts.some((a) => a.level === 'warn')) alerts.push({ level: 'info', text: 'No warnings — plan looks healthy.' });
-
-    const [{ data: entries }, { data: users }] = await Promise.all([
-      supabase.from('audit_log').select('user_id, action, entity_type, at').order('at', { ascending: false }).limit(8),
-      supabase.from('users').select('id, full_name, email'),
-    ]);
-    const nameById = new Map((users ?? []).map((u) => [u.id, u.full_name || u.email]));
-    recent = (entries ?? []).map((e) => ({ who: nameById.get(e.user_id) ?? '—', text: `${e.action} ${e.entity_type}`, when: new Date(e.at).toLocaleString() }));
   }
 
   return (
@@ -244,7 +251,12 @@ export default async function HomePage() {
         {plan && <RecalculateButton planId={plan.id} />}
       </div>
 
-      {plan && <StalePlanNotice planId={plan.id} lastComputedAt={plan.last_computed_at} />}
+      {/* Streamed: the freshness probe shouldn't hold back the rest of the page. */}
+      {plan && (
+        <Suspense fallback={null}>
+          <StalePlanNotice planId={plan.id} lastComputedAt={plan.last_computed_at} />
+        </Suspense>
+      )}
 
       {summary && plan ? (
         <DashboardOverview active={byStatus.active} pipeline={byStatus.pipeline} other={other} planStartDate={plan.plan_start_date} horizon={plan.horizon_months} />
@@ -262,19 +274,9 @@ export default async function HomePage() {
               <Activity className="h-4 w-4 text-muted-foreground" />
               <h2 className="text-sm font-semibold">Recent activity</h2>
             </div>
-            {recent.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No recent activity recorded.</p>
-            ) : (
-              <ul className="space-y-2 text-sm">
-                {recent.map((r, i) => (
-                  <li key={i} className="flex items-center justify-between gap-2">
-                    <span className="truncate"><span className="font-medium">{r.who}</span>{' '}
-                      <span className="text-muted-foreground">{r.text}</span></span>
-                    <span className="shrink-0 text-xs text-muted-foreground">{r.when}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
+            <Suspense fallback={<p className="text-sm text-muted-foreground">Loading…</p>}>
+              <RecentActivity />
+            </Suspense>
           </Card>
           <Card className="p-5">
             <div className="mb-3 flex items-center gap-2">
@@ -319,6 +321,30 @@ export default async function HomePage() {
         </Card>
       )}
     </div>
+  );
+}
+
+/** Streamed separately so the audit-log query doesn't hold back the dashboard. */
+async function RecentActivity() {
+  const supabase = await createClient();
+  const [{ data: entries }, { data: users }] = await Promise.all([
+    supabase.from('audit_log').select('user_id, action, entity_type, at').order('at', { ascending: false }).limit(8),
+    supabase.from('users').select('id, full_name, email'),
+  ]);
+  const nameById = new Map((users ?? []).map((u) => [u.id, u.full_name || u.email]));
+  const recent = (entries ?? []).map((e) => ({ who: nameById.get(e.user_id) ?? '—', text: `${e.action} ${e.entity_type}`, when: new Date(e.at).toLocaleString() }));
+
+  if (recent.length === 0) return <p className="text-sm text-muted-foreground">No recent activity recorded.</p>;
+  return (
+    <ul className="space-y-2 text-sm">
+      {recent.map((r, i) => (
+        <li key={i} className="flex items-center justify-between gap-2">
+          <span className="truncate"><span className="font-medium">{r.who}</span>{' '}
+            <span className="text-muted-foreground">{r.text}</span></span>
+          <span className="shrink-0 text-xs text-muted-foreground">{r.when}</span>
+        </li>
+      ))}
+    </ul>
   );
 }
 
