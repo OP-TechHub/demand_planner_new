@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logAudit } from '@/lib/audit';
+import { ALLOC_PATHS, PATH_COLUMNS, PATH_SELECT, programPaths, type AllocPath } from '@oceanpick/shared';
 
 /** Map an RLS rejection to a message that names the real cause. */
 function permError(message: string): string {
@@ -14,7 +15,7 @@ function permError(message: string): string {
 
 /** One of a program's sourcing paths. Spare WR lives in the plan-wide `spare` map. */
 export type InquiryPath = {
-  path: 'primary' | 'secondary' | 'tertiary';
+  path: AllocPath;
   bucket_id: string;
   bucket_name: string;
   yield: number;
@@ -120,9 +121,7 @@ export async function getInquiryContext(
   const { data: progData } = await supabase
     .from('programs')
     .select(
-      'id, item_code, item_description, customer, status, price_per_fp, max_monthly_demand_fp, ' +
-        'primary_bucket_id, secondary_bucket_id, tertiary_bucket_id, ' +
-        'primary_yield, secondary_yield, tertiary_yield'
+      'id, item_code, item_description, customer, status, price_per_fp, max_monthly_demand_fp, ' + PATH_SELECT
     )
     .eq('id', programId)
     .is('deleted_at', null)
@@ -132,20 +131,10 @@ export async function getInquiryContext(
   const prog = progData as unknown as {
     id: string; item_code: string; item_description: string; customer: string; status: string;
     price_per_fp: number; max_monthly_demand_fp: number;
-    primary_bucket_id: string; secondary_bucket_id: string | null; tertiary_bucket_id: string | null;
-    primary_yield: number; secondary_yield: number | null; tertiary_yield: number | null;
-  };
+  } & Parameters<typeof programPaths>[0];
   const baseline = Number(prog.max_monthly_demand_fp);
 
-  const rawPaths = [
-    { path: 'primary' as const, bucket_id: prog.primary_bucket_id, yield: Number(prog.primary_yield) },
-    prog.secondary_bucket_id
-      ? { path: 'secondary' as const, bucket_id: prog.secondary_bucket_id, yield: Number(prog.secondary_yield) }
-      : null,
-    prog.tertiary_bucket_id
-      ? { path: 'tertiary' as const, bucket_id: prog.tertiary_bucket_id, yield: Number(prog.tertiary_yield) }
-      : null,
-  ].filter((p): p is { path: 'primary' | 'secondary' | 'tertiary'; bucket_id: string; yield: number } => p !== null);
+  const rawPaths = programPaths(prog);
 
   const bucketIds = [...new Set(rawPaths.map((p) => p.bucket_id))];
   const srcMonths = sourceMonthsFor(monthsSel);
@@ -595,8 +584,7 @@ export async function saveInquiryToPipeline(
   const { data: srcData } = await supabase
     .from('programs')
     .select(
-      'id, item_code, item_description, customer, status, price_per_fp, ' +
-        'primary_bucket_id, secondary_bucket_id, tertiary_bucket_id, primary_yield, secondary_yield, tertiary_yield'
+      'id, item_code, item_description, customer, status, price_per_fp, ' + PATH_SELECT
     )
     .eq('id', sourceProgramId)
     .is('deleted_at', null)
@@ -604,9 +592,11 @@ export async function saveInquiryToPipeline(
   if (!srcData) return { ok: false, error: 'Program not found.' };
   const source = srcData as unknown as {
     id: string; item_code: string; item_description: string; customer: string; status: string; price_per_fp: number;
-    primary_bucket_id: string; secondary_bucket_id: string | null; tertiary_bucket_id: string | null;
-    primary_yield: number; secondary_yield: number | null; tertiary_yield: number | null;
-  };
+  } & Record<string, string | number | null>;
+  // Every path column, copied as-is onto a twin.
+  const sourcePathCols = Object.fromEntries(
+    ALLOC_PATHS.flatMap((p) => [PATH_COLUMNS[p].bucket, PATH_COLUMNS[p].yield]).map((c) => [c, source[c] ?? null])
+  );
 
   // Pipeline source: add straight onto it.
   if (source.status === 'pipeline') {
@@ -652,9 +642,7 @@ export async function saveInquiryToPipeline(
       .insert({
         plan_id: planId, status: 'pipeline', item_code: twinCode, item_description: source.item_description, customer: source.customer,
         max_monthly_demand_fp: 0,
-        primary_bucket_id: source.primary_bucket_id, primary_yield: source.primary_yield,
-        secondary_bucket_id: source.secondary_bucket_id, secondary_yield: source.secondary_yield,
-        tertiary_bucket_id: source.tertiary_bucket_id, tertiary_yield: source.tertiary_yield,
+        ...sourcePathCols,
         price_per_fp: create.price, sort_order: sortOrder, created_by: userId, updated_by: userId,
       })
       .select('id')
@@ -714,6 +702,14 @@ export async function saveNewInquiry(input: SaveNewInquiryInput): Promise<SaveRe
 
   const paths = input.paths.filter((p) => p.bucket_id && p.yield > 0 && p.yield <= 1);
   if (paths.length === 0) return { ok: false, error: 'Add at least one bucket with a yield between 0 and 1.' };
+  if (paths.length > ALLOC_PATHS.length) return { ok: false, error: `A product can have at most ${ALLOC_PATHS.length} buckets.` };
+  // paths[0] → primary, paths[1] → secondary, … ; the rest cleared.
+  const pathCols = Object.fromEntries(
+    ALLOC_PATHS.flatMap((p, i) => [
+      [PATH_COLUMNS[p].bucket, paths[i]?.bucket_id ?? null],
+      [PATH_COLUMNS[p].yield, paths[i]?.yield ?? null],
+    ])
+  );
 
   const rows0 = cleanEntries(input.entries).filter((e) => e.demand_fp > 0);
   if (rows0.length === 0) return { ok: false, error: 'Enter a quantity for at least one month.' };
@@ -740,12 +736,7 @@ export async function saveNewInquiry(input: SaveNewInquiryInput): Promise<SaveRe
       item_description: itemDescription || itemCode,
       customer,
       max_monthly_demand_fp: 0,
-      primary_bucket_id: paths[0].bucket_id,
-      primary_yield: paths[0].yield,
-      secondary_bucket_id: paths[1]?.bucket_id ?? null,
-      secondary_yield: paths[1]?.yield ?? null,
-      tertiary_bucket_id: paths[2]?.bucket_id ?? null,
-      tertiary_yield: paths[2]?.yield ?? null,
+      ...pathCols,
       price_per_fp: input.pricePerFp,
       sort_order: sortOrder,
       created_by: userId,

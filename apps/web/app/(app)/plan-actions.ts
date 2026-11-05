@@ -13,8 +13,8 @@ import { monthIndexOfDate } from '@oceanpick/shared';
 
 const PROGRAM_COLS = [
   'status', 'item_code', 'export_code', 'item_description', 'customer', 'max_monthly_demand_fp',
-  'primary_bucket_id', 'secondary_bucket_id', 'tertiary_bucket_id',
-  'primary_yield', 'secondary_yield', 'tertiary_yield',
+  'primary_bucket_id', 'secondary_bucket_id', 'tertiary_bucket_id', 'quaternary_bucket_id', 'quinary_bucket_id',
+  'primary_yield', 'secondary_yield', 'tertiary_yield', 'quaternary_yield', 'quinary_yield',
   'price_per_fp', 'barra_cost_wr', 'packing_cost_fp', 'processing_cost_fp',
   'storage_cost_fp', 'freight_cost_fp', 'other_costs_fp', 'locked', 'sort_order',
 ] as const;

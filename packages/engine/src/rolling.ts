@@ -1,7 +1,7 @@
 // Spec §5 — Rolling Calc forward-borrowing engine.
 //
 // For each target month M (ascending), each in-scope program (rank order),
-// attempt the borrow channels in cascade: M-1 prim/alt/tert, then M-2, M-3, M-4
+// attempt the borrow channels in cascade: M-1 on every path, then M-2, M-3, M-4
 // — offset-major, so nearer harvest is always exhausted before reaching further
 // back. Each channel draws from a prior month's LEFTOVER capacity = plan capacity
 // − own-month consumption − borrowings already committed to that (bucket, month).
@@ -9,13 +9,14 @@
 // `drawn` accumulator (earlier target months + higher-rank same-month + earlier
 // channels have all run first), which keeps the whole thing acyclic (§5.4).
 //
-// Rank order is what makes the priority work across the deeper reach: active
-// programs, then pipeline, each in rank order, every one of them taking its fill
+// Rank order is what makes the priority work across the deeper reach: programs
+// in global rank order (locked, bucket priority, margin — see rank.ts; active vs
+// pipeline status only decides scope, not order), every one of them taking its fill
 // from all four source months before the next is considered. So an unmet pipeline
 // order claims M-3/M-4 capacity ahead of anything ranked below it, and whatever
 // survives the whole pass is the spare an inquiry is then offered.
-import type { EngineInput, PathKey } from './types';
-import { pathCostMargin, pathOf } from './derived';
+import { PATH_KEYS, type EngineInput, type PathKey } from './types';
+import { pathCostMargin, pathOf, rawPath } from './derived';
 import type { RankedProgram } from './rank';
 import type { OwnMonthResult } from './allocate';
 
@@ -27,9 +28,12 @@ import type { OwnMonthResult } from './allocate';
 export const MAX_LOOKBACK = 4;
 
 type Offset = 1 | 2 | 3 | 4;
-type PathSuffix = 'prim' | 'alt' | 'tert';
+type PathSuffix = 'prim' | 'alt' | 'tert' | 'quat' | 'quin';
 
-/** One WR figure per (source offset × sourcing path) — 3 × MAX_LOOKBACK in all. */
+/**
+ * One WR figure per (source offset × sourcing path) — 5 × MAX_LOOKBACK in all.
+ * Each persists to `rolling_results.borrow_${field}_wr`.
+ */
 export type BorrowChannels = Record<`m${Offset}_${PathSuffix}`, number>;
 
 export interface RollingCell {
@@ -52,14 +56,21 @@ export interface RollingResult {
 
 const EPS = 1e-9;
 
+/** A value per sourcing path. */
+function perPath<T>(make: (path: PathKey) => T): Record<PathKey, T> {
+  return Object.fromEntries(PATH_KEYS.map((k) => [k, make(k)])) as Record<PathKey, T>;
+}
+
 const PATH_SUFFIX: { path: PathKey; suffix: PathSuffix }[] = [
   { path: 'primary', suffix: 'prim' },
   { path: 'secondary', suffix: 'alt' },
   { path: 'tertiary', suffix: 'tert' },
+  { path: 'quaternary', suffix: 'quat' },
+  { path: 'quinary', suffix: 'quin' },
 ];
 
 /**
- * The cascade, offset-major: all three paths at M-1, then all three at M-2, and
+ * The cascade, offset-major: all five paths at M-1, then all five at M-2, and
  * so on out to MAX_LOOKBACK. Exported so the aggregations and the persistence
  * layer attribute each channel to the same (path bucket, month − offset) source.
  */
@@ -94,7 +105,7 @@ export function rollingCalc(input: EngineInput, ranked: RankedProgram[], own: Ow
 
   // Per-path own-month WR (for the rolling_margin per-path decomposition, §5.5).
   const ownPathWr: Record<string, Record<PathKey, number[]>> = {};
-  for (const p of order) ownPathWr[p.id] = { primary: zero(), secondary: zero(), tertiary: zero() };
+  for (const p of order) ownPathWr[p.id] = perPath(zero);
   for (const a of own.allocations) {
     const rec = ownPathWr[a.programId];
     if (!rec) continue;
@@ -136,12 +147,8 @@ export function rollingCalc(input: EngineInput, ranked: RankedProgram[], own: Ow
   // --- post-process: rolling_fp / rolling_wr / rolling_margin (§5.5) ---
   const cells: RollingCell[] = [];
   for (const p of order) {
-    const yields: Record<PathKey, number> = { primary: p.primaryYield, secondary: p.secondaryYield ?? 0, tertiary: p.tertiaryYield ?? 0 };
-    const marginFp: Record<PathKey, number> = {
-      primary: pathCostMargin(p, 'primary')?.margin_fp ?? 0,
-      secondary: pathCostMargin(p, 'secondary')?.margin_fp ?? 0,
-      tertiary: pathCostMargin(p, 'tertiary')?.margin_fp ?? 0,
-    };
+    const yields = perPath((path) => rawPath(p, path).yield ?? 0);
+    const marginFp = perPath((path) => pathCostMargin(p, path)?.margin_fp ?? 0);
     const opw = ownPathWr[p.id]!;
     for (let M = 0; M < months; M++) {
       const b = borrow[p.id]![M]!;
@@ -149,21 +156,18 @@ export function rollingCalc(input: EngineInput, ranked: RankedProgram[], own: Ow
       const ownWr = own.ownWr[p.id]?.[M] ?? 0;
       // Borrowed WR collapsed per path — every offset for a path shares its yield
       // and margin, so the decomposition (§5.5) only cares which path it came via.
-      const borrowedWr: Record<PathKey, number> = { primary: 0, secondary: 0, tertiary: 0 };
+      const borrowedWr = perPath(() => 0);
       for (const ch of CHANNELS) borrowedWr[ch.path] += b[ch.field];
-      const primWr = (opw.primary[M] ?? 0) + borrowedWr.primary;
-      const altWr = (opw.secondary[M] ?? 0) + borrowedWr.secondary;
-      const tertWr = (opw.tertiary[M] ?? 0) + borrowedWr.tertiary;
-      const rollingWr = ownWr + borrowedWr.primary + borrowedWr.secondary + borrowedWr.tertiary;
-      const rollingFp =
-        ownFp +
-        borrowedWr.primary * yields.primary +
-        borrowedWr.secondary * yields.secondary +
-        borrowedWr.tertiary * yields.tertiary;
-      const rollingMargin =
-        primWr * yields.primary * marginFp.primary +
-        altWr * yields.secondary * marginFp.secondary +
-        tertWr * yields.tertiary * marginFp.tertiary;
+      // Summed in path order, left to right — the same association as the
+      // original three-path expressions, so 3-path plans stay bit-identical.
+      let rollingWr = ownWr;
+      let rollingFp = ownFp;
+      let rollingMargin = 0;
+      for (const path of PATH_KEYS) {
+        rollingWr += borrowedWr[path];
+        rollingFp += borrowedWr[path] * yields[path];
+        rollingMargin += ((opw[path][M] ?? 0) + borrowedWr[path]) * yields[path] * marginFp[path];
+      }
       cells.push({ programId: p.id, month: M, demandFp: p.demand[M] ?? 0, ownFp, ownWr, borrow: { ...b }, rollingFp, rollingWr, rollingMargin });
     }
   }

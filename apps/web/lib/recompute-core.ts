@@ -1,5 +1,5 @@
 import { createServiceClient } from '@/lib/supabase/service';
-import { runEngine, type EngineInput, type EngineProgram } from '@oceanpick/engine';
+import { runEngine, CHANNELS, type EngineInput, type EngineProgram } from '@oceanpick/engine';
 
 /**
  * The actual recompute work: load inputs, run the pure engine, persist the
@@ -61,6 +61,10 @@ export async function runRecompute(planId: string): Promise<{ ms: number; comput
     secondaryYield: p.secondary_yield,
     tertiaryBucket: p.tertiary_bucket_id,
     tertiaryYield: p.tertiary_yield,
+    quaternaryBucket: p.quaternary_bucket_id,
+    quaternaryYield: p.quaternary_yield,
+    quinaryBucket: p.quinary_bucket_id,
+    quinaryYield: p.quinary_yield,
     price: p.price_per_fp,
     barraCostWr: p.barra_cost_wr,
     packing: p.packing_cost_fp,
@@ -109,10 +113,8 @@ export async function runRecompute(planId: string): Promise<{ ms: number; comput
     return {
       plan_id: planId, program_id: c.programId, month_index: c.month + 1,
       demand_fp: c.demandFp, own_fp: c.ownFp, own_wr: c.ownWr,
-      borrow_m1_prim_wr: c.borrow.m1_prim, borrow_m1_alt_wr: c.borrow.m1_alt, borrow_m1_tert_wr: c.borrow.m1_tert,
-      borrow_m2_prim_wr: c.borrow.m2_prim, borrow_m2_alt_wr: c.borrow.m2_alt, borrow_m2_tert_wr: c.borrow.m2_tert,
-      borrow_m3_prim_wr: c.borrow.m3_prim, borrow_m3_alt_wr: c.borrow.m3_alt, borrow_m3_tert_wr: c.borrow.m3_tert,
-      borrow_m4_prim_wr: c.borrow.m4_prim, borrow_m4_alt_wr: c.borrow.m4_alt, borrow_m4_tert_wr: c.borrow.m4_tert,
+      // One column per channel: borrow_m{offset}_{prim|alt|tert|quat|quin}_wr.
+      ...Object.fromEntries(CHANNELS.map((ch) => [`borrow_${ch.field}_wr`, c.borrow[ch.field]])),
       rolling_fp: c.rollingFp, rolling_wr: c.rollingWr,
       // `rolling_margin` stays revenue − cost at the primary-path rate, which is
       // what Excel does and what the ±$1 parity test pins. The engine's per-path

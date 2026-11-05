@@ -6,7 +6,7 @@
 // flat price/cost (time-varying deferred) so they can differ for the handful of
 // programs that carry time-varying overrides.
 import type { EngineInput, EngineProgram, PathKey } from './types';
-import { pathCostMargin } from './derived';
+import { pathCostMargin, rawPath } from './derived';
 import type { RankedProgram } from './rank';
 import type { OwnMonthResult } from './allocate';
 import { CHANNELS } from './rolling';
@@ -174,11 +174,10 @@ export function aggregate(
   //     SOURCE (bucket, month). Own-month consumption sources at the same month;
   //     each borrow channel sources at (path bucket, target month - offset). ---
   const isPipeline = (id: string) => programs.get(id)?.status === 'pipeline';
-  const pathBucket = (p: EngineProgram, path: PathKey) =>
-    path === 'primary' ? p.primaryBucket : path === 'secondary' ? p.secondaryBucket : p.tertiaryBucket;
+  const pathBucket = (p: EngineProgram, path: PathKey) => rawPath(p, path).bucket;
   const pipeByBM: Record<string, number[]> = {};
   for (const b of buckets) pipeByBM[b.id] = new Array<number>(months).fill(0);
-  const addPipe = (bucket: string | null, month: number, wr: number) => {
+  const addPipe = (bucket: string | null | undefined, month: number, wr: number) => {
     if (!bucket || month < 0 || month >= months) return;
     const arr = pipeByBM[bucket] ?? (pipeByBM[bucket] = new Array<number>(months).fill(0));
     arr[month] = (arr[month] ?? 0) + wr;

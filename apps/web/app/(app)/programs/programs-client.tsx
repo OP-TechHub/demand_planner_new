@@ -91,6 +91,8 @@ export function ProgramsClient({
       name(p.primary_bucket_id), p.primary_yield,
       name(p.secondary_bucket_id), p.secondary_yield ?? '',
       name(p.tertiary_bucket_id), p.tertiary_yield ?? '',
+      name(p.quaternary_bucket_id), p.quaternary_yield ?? '',
+      name(p.quinary_bucket_id), p.quinary_yield ?? '',
       p.price_per_fp, p.barra_cost_wr, p.packing_cost_fp, p.processing_cost_fp,
       p.storage_cost_fp, p.freight_cost_fp, p.other_costs_fp, p.locked,
     ]);

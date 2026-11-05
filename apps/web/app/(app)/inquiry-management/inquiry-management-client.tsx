@@ -2,14 +2,14 @@
 
 import { useCallback, useMemo, useState } from 'react';
 import { Info, Printer } from 'lucide-react';
-import { monthLabel } from '@oceanpick/shared';
+import { ALLOC_PATH_LABEL, monthLabel, type AllocPath } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { MetricGrid, type Metric } from '@/components/metric-grid';
 import type { GridRow } from '@/lib/grid-csv';
 import { OfferSheet, type OfferBasis } from './offer-sheet';
 
-export type OtbPath = { path: 'primary' | 'secondary' | 'tertiary'; bucket_id: string; yield: number };
+export type OtbPath = { path: AllocPath; bucket_id: string; yield: number };
 export type OtbProgram = {
   id: string;
   customer: string;
@@ -76,7 +76,7 @@ export function InquiryManagementClient({
     sources.map((s) => ({
       key: s.bucket_id,
       label: bucketName.get(s.bucket_id) ?? 'Bucket',
-      sublabel: `${s.path} · yield ${(s.yield * 100).toFixed(1)}%`,
+      sublabel: `${ALLOC_PATH_LABEL[s.path].toLowerCase()} · yield ${(s.yield * 100).toFixed(1)}%`,
       values: months.map((m) => pick(s.bucket_id, m) * s.yield),
     }));
 

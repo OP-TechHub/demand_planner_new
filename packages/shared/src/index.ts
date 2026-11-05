@@ -28,7 +28,53 @@ export type ProgramStatus = 'active' | 'pipeline' | 'inactive';
 export type MarginMetric = 'margin_fp' | 'margin_wr' | 'total_contribution';
 export type AllocationMode = 'fill_what_you_can' | 'all_or_nothing';
 export type PlanScope = 'active' | 'active_pipeline';
-export type AllocPath = 'primary' | 'secondary' | 'tertiary';
+/**
+ * A program's sourcing paths in cascade order, each a (size bucket, yield).
+ * Primary is required; up to four more are optional. Five is the cap — each path
+ * has its own programs columns, alloc_path enum value and borrow columns.
+ */
+export const ALLOC_PATHS = ['primary', 'secondary', 'tertiary', 'quaternary', 'quinary'] as const;
+export type AllocPath = (typeof ALLOC_PATHS)[number];
+/** Short UI label per path. */
+export const ALLOC_PATH_LABEL: Record<AllocPath, string> = {
+  primary: 'Primary',
+  secondary: 'Secondary',
+  tertiary: 'Tertiary',
+  quaternary: '4th',
+  quinary: '5th',
+};
+/** The programs columns that hold each path. */
+export const PATH_COLUMNS: Record<AllocPath, { bucket: `${AllocPath}_bucket_id`; yield: `${AllocPath}_yield` }> = {
+  primary: { bucket: 'primary_bucket_id', yield: 'primary_yield' },
+  secondary: { bucket: 'secondary_bucket_id', yield: 'secondary_yield' },
+  tertiary: { bucket: 'tertiary_bucket_id', yield: 'tertiary_yield' },
+  quaternary: { bucket: 'quaternary_bucket_id', yield: 'quaternary_yield' },
+  quinary: { bucket: 'quinary_bucket_id', yield: 'quinary_yield' },
+};
+/** Every path column, comma-joined — for a Supabase select. */
+export const PATH_SELECT = ALLOC_PATHS.map((p) => `${PATH_COLUMNS[p].bucket}, ${PATH_COLUMNS[p].yield}`).join(', ');
+
+type PathCols = { [K in AllocPath as `${K}_bucket_id`]?: string | null } & { [K in AllocPath as `${K}_yield`]?: number | string | null };
+
+/**
+ * The (bucket, yield) a program row stores for one path — unvalidated, so it
+ * can be null. Accepts any row carrying the path columns.
+ */
+export function programPath(p: PathCols, path: AllocPath): { bucket_id: string | null; yield: number | null } {
+  const c = PATH_COLUMNS[path];
+  const y = p[c.yield];
+  return { bucket_id: p[c.bucket] ?? null, yield: y == null ? null : Number(y) };
+}
+
+/** The paths a program actually has (bucket set, yield > 0), in cascade order. */
+export function programPaths(p: PathCols): { path: AllocPath; bucket_id: string; yield: number }[] {
+  const out: { path: AllocPath; bucket_id: string; yield: number }[] = [];
+  for (const path of ALLOC_PATHS) {
+    const { bucket_id, yield: y } = programPath(p, path);
+    if (bucket_id && y != null && y > 0) out.push({ path, bucket_id, yield: y });
+  }
+  return out;
+}
 
 export interface Organization {
   id: string;
@@ -98,9 +144,13 @@ export interface Program {
   primary_bucket_id: string;
   secondary_bucket_id: string | null;
   tertiary_bucket_id: string | null;
+  quaternary_bucket_id: string | null;
+  quinary_bucket_id: string | null;
   primary_yield: number;
   secondary_yield: number | null;
   tertiary_yield: number | null;
+  quaternary_yield: number | null;
+  quinary_yield: number | null;
   price_per_fp: number;
   barra_cost_wr: number;
   packing_cost_fp: number;

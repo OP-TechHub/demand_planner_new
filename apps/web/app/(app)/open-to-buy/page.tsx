@@ -7,28 +7,21 @@ import { PrintableGrid } from "@/components/printable-grid";
 import { MonthRangeProvider } from "@/components/month-range";
 import { ScrollSyncProvider } from "@/components/ui/scroll-x";
 import { fetchAllByPlan } from "@/lib/fetch-all";
-import { MAX_LOOKBACK } from "@oceanpick/engine";
+import { CHANNELS } from "@oceanpick/engine";
+import { ALLOC_PATHS, PATH_SELECT, programPath, type AllocPath } from "@oceanpick/shared";
 
 /**
  * The engine's borrow channels as `rolling_results` columns, paired with the
  * source they draw from: offset months back, in the bucket at `pathIdx`.
- * Generated from MAX_LOOKBACK so a deeper lookback never silently drops channels
- * out of this attribution.
+ * Taken from the engine's own channel list so a deeper lookback or another path
+ * never silently drops channels out of this attribution.
  */
-const BORROW_CHANNELS: { col: string; offset: number; pathIdx: 0 | 1 | 2 }[] =
-  Array.from({ length: MAX_LOOKBACK }, (_, i) => i + 1).flatMap((offset) =>
-    (
-      [
-        ["prim", 0],
-        ["alt", 1],
-        ["tert", 2],
-      ] as const
-    ).map(([suffix, pathIdx]) => ({
-      col: `borrow_m${offset}_${suffix}_wr`,
-      offset,
-      pathIdx,
-    })),
-  );
+const BORROW_CHANNELS: { col: string; offset: number; pathIdx: number }[] =
+  CHANNELS.map((ch) => ({
+    col: `borrow_${ch.field}_wr`,
+    offset: ch.offset,
+    pathIdx: ALLOC_PATHS.indexOf(ch.path as AllocPath),
+  }));
 const BORROW_COLS = BORROW_CHANNELS.map((c) => c.col);
 
 /** What the inquiry-fulfilment shading means, for its exports. */
@@ -70,7 +63,7 @@ export default async function OpenToBuyPage() {
       supabase
         .from("programs")
         .select(
-          "id, item_code, item_description, customer, primary_bucket_id, secondary_bucket_id, tertiary_bucket_id",
+          "id, item_code, item_description, customer, " + PATH_SELECT,
         )
         .eq("plan_id", plan.id)
         .eq("status", "pipeline")
@@ -94,23 +87,16 @@ export default async function OpenToBuyPage() {
   // Reconstruct pipeline_wr's per-program breakdown per (bucket, month), exactly as
   // the engine attributes it: own-month allocations + every borrow channel (each
   // sourcing from its path's bucket at month−offset).
-  type Prog = { label: string; buckets: (string | null)[] }; // [primary, secondary, tertiary]
+  type Prog = { label: string; buckets: (string | null)[] }; // indexed in ALLOC_PATHS order
   const pipe = new Map<string, Prog>();
-  for (const p of (pipePrograms ?? []) as {
+  for (const p of (pipePrograms ?? []) as unknown as ({
     id: string;
     item_code: string;
     item_description: string;
-    primary_bucket_id: string;
-    secondary_bucket_id: string | null;
-    tertiary_bucket_id: string | null;
-  }[]) {
+  } & Parameters<typeof programPath>[0])[]) {
     pipe.set(p.id, {
       label: `${p.item_code} — ${p.item_description}`,
-      buckets: [
-        p.primary_bucket_id,
-        p.secondary_bucket_id,
-        p.tertiary_bucket_id,
-      ],
+      buckets: ALLOC_PATHS.map((path) => programPath(p, path).bucket_id),
     });
   }
   const contrib = new Map<string, Map<string, number>>(); // `${bucket}:${month}` -> programId -> wr
@@ -129,17 +115,16 @@ export default async function OpenToBuyPage() {
     }
     inner.set(progId, (inner.get(progId) ?? 0) + wr);
   };
-  const PATH_IDX = { primary: 0, secondary: 1, tertiary: 2 } as const;
   for (const a of allocs as {
     program_id: string;
     month_index: number;
-    path: keyof typeof PATH_IDX;
+    path: AllocPath;
     allocated_wr: number;
   }[]) {
     const p = pipe.get(a.program_id);
     if (p)
       add(
-        p.buckets[PATH_IDX[a.path]],
+        p.buckets[ALLOC_PATHS.indexOf(a.path)],
         a.month_index,
         a.program_id,
         Number(a.allocated_wr),
@@ -235,7 +220,8 @@ export default async function OpenToBuyPage() {
 
   // Inquiry fulfilment: each pipeline program's demand vs what the plan can fulfil,
   // per month — coloured green (fulfilled) to red (short), proportionally.
-  const pipeRows = (pipePrograms ?? []) as {
+  // The concatenated select defeats Supabase's row-type inference, so name the shape.
+  const pipeRows = (pipePrograms ?? []) as unknown as {
     id: string;
     item_code: string;
     item_description: string;

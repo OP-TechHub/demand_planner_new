@@ -63,6 +63,18 @@ describe('§5 Rolling Calc — behavioral', () => {
     expect(c.borrow.m2_prim).toBeCloseTo(400, 6); // then M-2
   });
 
+  it('borrows through the 5th path, and counts it in rolling FP/WR', () => {
+    const buckets: EngineBucket[] = [{ id: 'P', sortOrder: 10 }, { id: 'Q5', sortOrder: 20 }];
+    const r = run(
+      [prog('a', [0, 1000], { primaryBucket: 'P', primaryYield: 0.5, quinaryBucket: 'Q5', quinaryYield: 0.4 })],
+      buckets, { P: [0, 0], Q5: [5000, 0] }
+    );
+    const c = cell(r, 'a', 1);
+    expect(c.borrow.m1_quin).toBeCloseTo(2500, 6); // 1000 FP / 0.4
+    expect(c.rollingFp).toBeCloseTo(1000, 6);
+    expect(c.rollingWr).toBeCloseTo(2500, 6);
+  });
+
   it('rank order governs competition for prior capacity', () => {
     const r = run([
       prog('low', [0, 0, 1000], { price: 10 }),

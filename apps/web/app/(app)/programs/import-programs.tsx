@@ -12,10 +12,14 @@ import { importPrograms, type ImportProgramRow } from './actions';
 export const PROGRAM_CSV_HEADER = [
   'status', 'item_code', 'export_code', 'item_description', 'customer', 'max_monthly_demand_fp',
   'primary_bucket', 'primary_yield', 'secondary_bucket', 'secondary_yield',
-  'tertiary_bucket', 'tertiary_yield', 'price_per_fp', 'barra_cost_wr',
+  'tertiary_bucket', 'tertiary_yield', 'quaternary_bucket', 'quaternary_yield',
+  'quinary_bucket', 'quinary_yield', 'price_per_fp', 'barra_cost_wr',
   'packing_cost_fp', 'processing_cost_fp', 'storage_cost_fp', 'freight_cost_fp',
   'other_costs_fp', 'locked',
 ] as const;
+
+/** Columns older files may not have: export_code and the 4th/5th paths came later. */
+const OPTIONAL_COLUMNS: readonly string[] = ['export_code', 'quaternary_bucket', 'quaternary_yield', 'quinary_bucket', 'quinary_yield'];
 
 type Parsed = {
   valid: ImportProgramRow[];
@@ -56,8 +60,13 @@ export function ImportPrograms({
     }
     const header = rows[0].map((h) => h.trim().toLowerCase());
     const col = (name: string) => header.indexOf(name);
-    // export_code is exempt: it was added later, and older exports don't carry it.
-    const missing = PROGRAM_CSV_HEADER.filter((h) => h !== 'export_code' && col(h) === -1);
+    const missing: string[] = PROGRAM_CSV_HEADER.filter((h) => !OPTIONAL_COLUMNS.includes(h) && col(h) === -1);
+    // A path's bucket and yield travel together — half a pair is a broken file.
+    for (const p of ['quaternary', 'quinary']) {
+      const b = `${p}_bucket`, y = `${p}_yield`;
+      if (col(b) === -1 && col(y) !== -1) missing.push(b);
+      if (col(y) === -1 && col(b) !== -1) missing.push(y);
+    }
     if (missing.length) {
       return { valid, errors: [{ line: 1, msg: `Missing columns: ${missing.join(', ')}` }], newCount: 0, updateCount: 0 };
     }
@@ -111,6 +120,17 @@ export function ImportPrograms({
       const tertiary_bucket_id = resolveBucket('tertiary_bucket');
       const tertiary_yield = yieldIn('tertiary_yield');
       if (tertiary_bucket_id && tertiary_yield == null) rowErr('tertiary_yield required when tertiary_bucket is set');
+      // 4th/5th: undefined when the file has no such columns, so an upsert
+      // leaves the program's existing paths alone.
+      const optPath = (p: 'quaternary' | 'quinary') => {
+        if (col(`${p}_bucket`) === -1) return { bucket: undefined, yield: undefined };
+        const bucket = resolveBucket(`${p}_bucket`);
+        const y = yieldIn(`${p}_yield`);
+        if (bucket && y == null) rowErr(`${p}_yield required when ${p}_bucket is set`);
+        return { bucket, yield: bucket ? y : null };
+      };
+      const quaternary = optPath('quaternary');
+      const quinary = optPath('quinary');
 
       const price_per_fp = Number(g('price_per_fp'));
       if (!(price_per_fp > 0)) rowErr('price_per_fp must be greater than 0');
@@ -124,6 +144,8 @@ export function ImportPrograms({
           primary_bucket_id: primary_bucket_id as string, primary_yield: primary_yield as number,
           secondary_bucket_id, secondary_yield: secondary_bucket_id ? secondary_yield : null,
           tertiary_bucket_id, tertiary_yield: tertiary_bucket_id ? tertiary_yield : null,
+          quaternary_bucket_id: quaternary.bucket, quaternary_yield: quaternary.yield,
+          quinary_bucket_id: quinary.bucket, quinary_yield: quinary.yield,
           price_per_fp,
           barra_cost_wr: numAtLeast0('barra_cost_wr'),
           packing_cost_fp: numAtLeast0('packing_cost_fp'),
@@ -148,7 +170,7 @@ export function ImportPrograms({
 
   function downloadTemplate() {
     // One value per PROGRAM_CSV_HEADER column, in the same order — keep the two in step.
-    const example = ['active', '7372', 'EXPORT006', 'Frozen Barra Portions', 'Woolworths', '15000', '800-1100g', '0.498', '', '', '', '', '7.95', '2.30', '0.40', '0.90', '0.02', '0.26', '0', 'false'];
+    const example = ['active', '7372', 'EXPORT006', 'Frozen Barra Portions', 'Woolworths', '15000', '800-1100g', '0.498', '', '', '', '', '', '', '', '', '7.95', '2.30', '0.40', '0.90', '0.02', '0.26', '0', 'false'];
     downloadCsv('programs-template.csv', toCsv([[...PROGRAM_CSV_HEADER], example]));
   }
 
