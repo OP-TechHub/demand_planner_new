@@ -3,6 +3,7 @@ import { getActivePlan } from '@/lib/plan';
 import { NotComputed } from '@/components/output-grid';
 import { StalePlanNotice } from '../stale-banner';
 import { fetchAllByPlan } from '@/lib/fetch-all';
+import { PATH_SELECT, programPaths } from '@oceanpick/shared';
 import { InquiryManagementClient, type OtbProgram } from './inquiry-management-client';
 
 /**
@@ -23,9 +24,7 @@ export default async function InquiryManagementPage() {
     supabase
       .from('programs')
       .select(
-        'id, customer, item_code, item_description, status, ' +
-          'primary_bucket_id, secondary_bucket_id, tertiary_bucket_id, ' +
-          'primary_yield, secondary_yield, tertiary_yield'
+        'id, customer, item_code, item_description, status, ' + PATH_SELECT
       )
       .eq('plan_id', plan.id)
       .is('deleted_at', null)
@@ -35,30 +34,18 @@ export default async function InquiryManagementPage() {
   ]);
 
   // The concatenated select defeats Supabase's row-type inference, so name the shape.
-  const progRows = (progs ?? []) as unknown as {
+  const progRows = (progs ?? []) as unknown as ({
     id: string; customer: string; item_code: string; item_description: string; status: string;
-    primary_bucket_id: string; secondary_bucket_id: string | null; tertiary_bucket_id: string | null;
-    primary_yield: number; secondary_yield: number | null; tertiary_yield: number | null;
-  }[];
+  } & Parameters<typeof programPaths>[0])[];
 
-  // Paths in cascade order (primary → secondary → tertiary), nulls dropped.
+  // Paths in cascade order (primary → … → quinary), unset ones dropped.
   const programs: OtbProgram[] = progRows.map((p) => ({
     id: p.id,
     customer: p.customer,
     item_code: p.item_code,
     item_description: p.item_description,
     status: p.status,
-    paths: [
-      { path: 'primary' as const, bucket_id: p.primary_bucket_id, yield: Number(p.primary_yield) },
-      p.secondary_bucket_id
-        ? { path: 'secondary' as const, bucket_id: p.secondary_bucket_id, yield: Number(p.secondary_yield) }
-        : null,
-      p.tertiary_bucket_id
-        ? { path: 'tertiary' as const, bucket_id: p.tertiary_bucket_id, yield: Number(p.tertiary_yield) }
-        : null,
-    ].filter((x): x is { path: 'primary' | 'secondary' | 'tertiary'; bucket_id: string; yield: number } =>
-      x !== null && !!x.bucket_id && x.yield > 0
-    ),
+    paths: programPaths(p),
   }));
 
   const unallocated: Record<string, number> = {};

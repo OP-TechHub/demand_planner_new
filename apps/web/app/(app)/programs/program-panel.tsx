@@ -2,12 +2,21 @@
 
 import { useActionState, useEffect, useState } from 'react';
 import { X } from 'lucide-react';
-import type { Bucket, Program } from '@oceanpick/shared';
+import {
+  ALLOC_PATHS,
+  ALLOC_PATH_LABEL,
+  PATH_COLUMNS,
+  programPath,
+  type AllocPath,
+  type Bucket,
+  type Program,
+} from '@oceanpick/shared';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/components/ui/toast';
 import { saveProgram, type ProgramFormState } from './actions';
 
 const initial: ProgramFormState = { error: null, ok: false };
+const OPTIONAL_PATHS = ALLOC_PATHS.filter((p) => p !== 'primary');
 
 export function ProgramPanel({
   planId,
@@ -23,8 +32,12 @@ export function ProgramPanel({
   onSaved: () => void;
 }) {
   const [state, formAction, pending] = useActionState(saveProgram, initial);
-  const [secondary, setSecondary] = useState<string>(program?.secondary_bucket_id ?? '');
-  const [tertiary, setTertiary] = useState<string>(program?.tertiary_bucket_id ?? '');
+  // Selected bucket per optional path ('' = none) — drives the yield enable.
+  const [paths, setPaths] = useState<Record<AllocPath, string>>(() => {
+    const out = {} as Record<AllocPath, string>;
+    for (const p of ALLOC_PATHS) out[p] = (program && programPath(program, p).bucket_id) || '';
+    return out;
+  });
 
   /**
    * Archiving a bucket takes it out of the selection lists — but a program that
@@ -121,28 +134,42 @@ export function ProgramPanel({
                 <input name="primary_yield" type="number" step="any" defaultValue={program?.primary_yield ?? ''} className={inputCls} />
               </Field>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Secondary bucket">
-                <select name="secondary_bucket_id" value={secondary} onChange={(e) => setSecondary(e.target.value)} className={inputCls}>
-                  <option value="">— None —</option>
-                  {bucketOptions(secondary)}
-                </select>
-              </Field>
-              <Field label="Secondary yield">
-                <input name="secondary_yield" type="number" step="any" disabled={!secondary} defaultValue={program?.secondary_yield ?? ''} className={inputCls} />
-              </Field>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Tertiary bucket">
-                <select name="tertiary_bucket_id" value={tertiary} onChange={(e) => setTertiary(e.target.value)} className={inputCls}>
-                  <option value="">— None —</option>
-                  {bucketOptions(tertiary)}
-                </select>
-              </Field>
-              <Field label="Tertiary yield">
-                <input name="tertiary_yield" type="number" step="any" disabled={!tertiary} defaultValue={program?.tertiary_yield ?? ''} className={inputCls} />
-              </Field>
-            </div>
+            {OPTIONAL_PATHS.map((path, i) => {
+              // Secondary and tertiary always show; the 4th and 5th appear once
+              // the path before them is set (or they already hold a value).
+              const prev = i === 0 ? 'primary' : OPTIONAL_PATHS[i - 1]!;
+              if (i >= 2 && !paths[path] && !paths[prev as AllocPath]) return null;
+              const c = PATH_COLUMNS[path];
+              const label = ALLOC_PATH_LABEL[path];
+              return (
+                <div key={path} className="grid grid-cols-2 gap-3">
+                  <Field label={`${label} bucket`}>
+                    <select
+                      name={c.bucket}
+                      value={paths[path]}
+                      onChange={(e) => setPaths((s) => ({ ...s, [path]: e.target.value }))}
+                      className={inputCls}
+                    >
+                      <option value="">— None —</option>
+                      {bucketOptions(paths[path])}
+                    </select>
+                  </Field>
+                  <Field label={`${label} yield`}>
+                    <input
+                      name={c.yield}
+                      type="number"
+                      step="any"
+                      disabled={!paths[path]}
+                      defaultValue={program ? programPath(program, path).yield ?? '' : ''}
+                      className={inputCls}
+                    />
+                  </Field>
+                </div>
+              );
+            })}
+            <p className="text-xs text-muted-foreground">
+              Up to five paths, tried in order — each takes what it can before the next.
+            </p>
 
             <Divider>Pricing &amp; cost</Divider>
             <div className="grid grid-cols-2 gap-3">

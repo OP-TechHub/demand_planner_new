@@ -4,7 +4,15 @@ import { useMemo, useState, useTransition, type CSSProperties } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Download, Upload, LineChart } from 'lucide-react';
-import { monthLabel, type DemandCell, type Program } from '@oceanpick/shared';
+import {
+  ALLOC_PATHS,
+  ALLOC_PATH_LABEL,
+  monthLabel,
+  programPath,
+  type AllocPath,
+  type DemandCell,
+  type Program,
+} from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 import { toCsv, downloadCsv } from '@/lib/csv';
 import { Button } from '@/components/ui/button';
@@ -18,7 +26,6 @@ import { DemandEditor } from './demand-editor';
 import { importDemand, saveDemandCells } from './actions';
 
 export type FulfilCell = { program_id: string; month_index: number; demand_fp: number; rolling_fp: number };
-export type AllocPath = 'primary' | 'secondary' | 'tertiary';
 /** Whole round a program-month drew on one sourcing path — offset 0 = its own month, n = borrowed from n months back. */
 export type AllocLine = { program_id: string; month_index: number; path: AllocPath; offset: number; wr: number };
 
@@ -110,8 +117,8 @@ export function DemandClient({
       const arr = m.get(k);
       if (arr) arr.push(l); else m.set(k, [l]);
     }
-    const rank: Record<AllocPath, number> = { primary: 0, secondary: 1, tertiary: 2 };
-    for (const arr of m.values()) arr.sort((a, b) => a.offset - b.offset || rank[a.path] - rank[b.path]);
+    const rank = (p: AllocPath) => ALLOC_PATHS.indexOf(p);
+    for (const arr of m.values()) arr.sort((a, b) => a.offset - b.offset || rank(a.path) - rank(b.path));
     return m;
   }, [wrLines]);
 
@@ -120,20 +127,15 @@ export function DemandClient({
   const wrBreakdown = (p: Program, mo: number): string => {
     const lines = wrByCell.get(`${p.id}:${mo}`) ?? [];
     if (lines.length === 0) return 'No whole round allocated';
-    const pathInfo: Record<AllocPath, { bucket: string | null; yield: number | null }> = {
-      primary: { bucket: p.primary_bucket_id, yield: p.primary_yield },
-      secondary: { bucket: p.secondary_bucket_id, yield: p.secondary_yield },
-      tertiary: { bucket: p.tertiary_bucket_id, yield: p.tertiary_yield },
-    };
     const kg = (n: number) => Math.round(n).toLocaleString();
     const total = lines.reduce((s, l) => s + l.wr, 0);
     const out = [`Whole round used: ${kg(total)} kg WR`];
     for (const l of lines) {
-      const info = pathInfo[l.path];
-      const name = (info.bucket && bucketNames[info.bucket]) || 'Unknown bucket';
+      const info = programPath(p, l.path);
+      const name = (info.bucket_id && bucketNames[info.bucket_id]) || 'Unknown bucket';
       const y = Number(info.yield ?? 0);
       const src = l.offset === 0 ? 'same month' : `borrowed from ${monthLabel(planStartDate, mo - l.offset)}`;
-      out.push(`• ${name} (${l.path}, yield ${(y * 100).toFixed(1)}%): ${kg(l.wr)} kg WR → ${kg(l.wr * y)} kg FP · ${src}`);
+      out.push(`• ${name} (${ALLOC_PATH_LABEL[l.path].toLowerCase()}, yield ${(y * 100).toFixed(1)}%): ${kg(l.wr)} kg WR → ${kg(l.wr * y)} kg FP · ${src}`);
     }
     return out.join('\n');
   };

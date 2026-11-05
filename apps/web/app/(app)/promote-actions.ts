@@ -134,7 +134,7 @@ export async function promoteInquiry(
     // rest into a new pipeline twin.
     const { data: p } = await svc
       .from('programs')
-      .select('item_description, customer, primary_bucket_id, primary_yield, secondary_bucket_id, secondary_yield, tertiary_bucket_id, tertiary_yield, price_per_fp, barra_cost_wr, packing_cost_fp, processing_cost_fp, storage_cost_fp, freight_cost_fp, other_costs_fp')
+      .select('item_description, customer, primary_bucket_id, primary_yield, secondary_bucket_id, secondary_yield, tertiary_bucket_id, tertiary_yield, quaternary_bucket_id, quaternary_yield, quinary_bucket_id, quinary_yield, price_per_fp, barra_cost_wr, packing_cost_fp, processing_cost_fp, storage_cost_fp, freight_cost_fp, other_costs_fp')
       .eq('id', pipelineProgramId).maybeSingle();
     if (!p) return { ok: false, error: 'Program not found.' };
 
@@ -154,6 +154,8 @@ export async function promoteInquiry(
       primary_bucket_id: p.primary_bucket_id, primary_yield: p.primary_yield,
       secondary_bucket_id: p.secondary_bucket_id, secondary_yield: p.secondary_yield,
       tertiary_bucket_id: p.tertiary_bucket_id, tertiary_yield: p.tertiary_yield,
+      quaternary_bucket_id: p.quaternary_bucket_id, quaternary_yield: p.quaternary_yield,
+      quinary_bucket_id: p.quinary_bucket_id, quinary_yield: p.quinary_yield,
       price_per_fp: p.price_per_fp, barra_cost_wr: p.barra_cost_wr, packing_cost_fp: p.packing_cost_fp,
       processing_cost_fp: p.processing_cost_fp, storage_cost_fp: p.storage_cost_fp, freight_cost_fp: p.freight_cost_fp, other_costs_fp: p.other_costs_fp,
       sort_order: sortOrder, created_by: userId, updated_by: userId,

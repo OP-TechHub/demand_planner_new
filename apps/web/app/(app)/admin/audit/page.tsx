@@ -37,6 +37,7 @@ const FIELD_LABEL: Record<string, string> = {
   item_code: 'Item code', export_code: 'Export code', item_description: 'Description', customer: 'Customer',
   max_monthly_demand_fp: 'Max monthly demand (kg FP)',
   primary_yield: 'Primary yield', secondary_yield: 'Secondary yield', tertiary_yield: 'Tertiary yield',
+  quaternary_yield: '4th yield', quinary_yield: '5th yield',
   price_per_fp: 'Price / kg FP', barra_cost_wr: 'Barra cost / kg WR', packing_cost_fp: 'Packing cost',
   processing_cost_fp: 'Processing cost', storage_cost_fp: 'Storage cost',
   freight_cost_fp: 'Freight cost', other_costs_fp: 'Other costs', locked: 'Locked',

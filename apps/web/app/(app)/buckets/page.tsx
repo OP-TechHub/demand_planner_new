@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { getActivePlan, getProfile } from '@/lib/plan';
-import { canEditSection, type Bucket, type Program, type HarvestCell, type UserRole } from '@oceanpick/shared';
+import { ALLOC_PATHS, PATH_SELECT, programPath, canEditSection, type Bucket, type Program, type HarvestCell, type UserRole } from '@oceanpick/shared';
 import { fetchAllByPlan } from '@/lib/fetch-all';
 import { BucketsClient, type BucketRow } from './buckets-client';
 
@@ -20,18 +20,17 @@ export default async function BucketsPage() {
   const supabase = await createClient();
   const [{ data: buckets }, { data: programs }, harvest, profile] = await Promise.all([
     supabase.from('buckets').select('*').order('sort_order'),
-    supabase.from('programs').select('primary_bucket_id, secondary_bucket_id, tertiary_bucket_id').eq('plan_id', plan.id).is('deleted_at', null),
+    supabase.from('programs').select(PATH_SELECT).eq('plan_id', plan.id).is('deleted_at', null),
     // harvest_plan can exceed the 1000-row cap (buckets × 60), so page it.
     fetchAllByPlan(supabase, 'harvest_plan', 'bucket_id, month_index, capacity_kg_wr', plan.id),
     getProfile(),
   ]);
 
-  // Programs using a bucket in any of its three paths.
+  // Programs using a bucket in any of its paths (counted once per program).
   const usage = new Map<string, number>();
-  for (const p of (programs ?? []) as Pick<Program, 'primary_bucket_id' | 'secondary_bucket_id' | 'tertiary_bucket_id'>[]) {
-    for (const id of [p.primary_bucket_id, p.secondary_bucket_id, p.tertiary_bucket_id]) {
-      if (id) usage.set(id, (usage.get(id) ?? 0) + 1);
-    }
+  for (const p of (programs ?? []) as unknown as Partial<Program>[]) {
+    const ids = new Set(ALLOC_PATHS.map((path) => programPath(p, path).bucket_id).filter(Boolean));
+    for (const id of ids) usage.set(id!, (usage.get(id!) ?? 0) + 1);
   }
   // Harvest capacity per bucket, kept PER MONTH so the client's range filter can
   // re-total it without another round trip. Each cell is rounded before summing,

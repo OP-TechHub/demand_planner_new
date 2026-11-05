@@ -2,18 +2,12 @@ import { createClient } from '@/lib/supabase/server';
 import { getActivePlan, getProfile, getMyPlanGrants } from '@/lib/plan';
 import { canEditPlanSection, canExportData, type DemandCell, type Program, type UserRole } from '@oceanpick/shared';
 import { fetchAllByPlan } from '@/lib/fetch-all';
-import { MAX_LOOKBACK } from '@oceanpick/engine';
-import { DemandClient, type AllocLine, type AllocPath } from './demand-client';
+import { CHANNELS } from '@oceanpick/engine';
+import type { AllocPath } from '@oceanpick/shared';
+import { DemandClient, type AllocLine } from './demand-client';
 
 /** rolling_results borrow columns → (months back, sourcing path). */
-const BORROW_CHANNELS: { col: string; offset: number; path: AllocPath }[] =
-  Array.from({ length: MAX_LOOKBACK }, (_, i) => i + 1).flatMap((offset) =>
-    ([['prim', 'primary'], ['alt', 'secondary'], ['tert', 'tertiary']] as const).map(([suffix, path]) => ({
-      col: `borrow_m${offset}_${suffix}_wr`,
-      offset,
-      path,
-    }))
-  );
+const BORROW_CHANNELS = CHANNELS.map((ch) => ({ col: `borrow_${ch.field}_wr`, offset: ch.offset, path: ch.path as AllocPath }));
 const BORROW_COLS = BORROW_CHANNELS.map((c) => c.col);
 
 export default async function DemandPlanPage() {

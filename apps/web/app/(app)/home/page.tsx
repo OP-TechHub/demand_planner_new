@@ -1,7 +1,8 @@
 import { Suspense } from 'react';
 import { AlertTriangle, Activity, CalendarRange } from 'lucide-react';
 import { createClient } from '@/lib/supabase/server';
-import { monthLabel } from '@oceanpick/shared';
+import { monthLabel, PATH_SELECT, programPath, type AllocPath, type Program } from '@oceanpick/shared';
+import { CHANNELS as ENGINE_CHANNELS } from '@oceanpick/engine';
 import { cn } from '@/lib/utils';
 import { fetchAllByPlan } from '@/lib/fetch-all';
 import { getActivePlan } from '@/lib/plan';
@@ -38,14 +39,13 @@ export default async function HomePage() {
     planId
       ? supabase
           .from('programs')
-          .select('id, item_code, status, customer, primary_yield, secondary_yield, tertiary_yield, primary_bucket_id, secondary_bucket_id, tertiary_bucket_id, max_monthly_demand_fp')
+          .select('id, item_code, status, customer, max_monthly_demand_fp, ' + PATH_SELECT)
           .eq('plan_id', planId).is('deleted_at', null)
       : none,
     planId ? supabase.from('buckets').select('id, name').eq('is_archived', false) : none,
     planId
       ? fetchAllByPlan(supabase, 'rolling_results', 'program_id, month_index, demand_fp, rolling_fp, rolling_wr, own_fp, own_wr, revenue, cost, ' +
-          'borrow_m1_prim_wr, borrow_m1_alt_wr, borrow_m1_tert_wr, borrow_m2_prim_wr, borrow_m2_alt_wr, borrow_m2_tert_wr, ' +
-          'borrow_m3_prim_wr, borrow_m3_alt_wr, borrow_m3_tert_wr, borrow_m4_prim_wr, borrow_m4_alt_wr, borrow_m4_tert_wr', planId)
+          ENGINE_CHANNELS.map((ch) => `borrow_${ch.field}_wr`).join(', '), planId)
       : noRows,
     planId
       ? supabase.from('secondary_products').select('name, basis, source_item_code, yield_pct, price_per_kg, is_archived').eq('plan_id', planId)
@@ -76,13 +76,9 @@ export default async function HomePage() {
     else if (Date.now() - new Date(plan.last_computed_at).getTime() > 24 * 3600 * 1000)
       alerts.push({ level: 'warn', text: 'Computed results are over 24 hours old — Recalculate to refresh.' });
 
-    type Prog = {
-      id: string; item_code: string; status: string; customer: string;
-      primary_yield: number; secondary_yield: number | null; tertiary_yield: number | null;
-      primary_bucket_id: string; secondary_bucket_id: string | null; tertiary_bucket_id: string | null;
-      max_monthly_demand_fp: number;
-    };
-    const progList = (progs ?? []) as Prog[];
+    type Prog = Pick<Program, 'id' | 'item_code' | 'status' | 'customer' | 'max_monthly_demand_fp'> &
+      Pick<Program, `${AllocPath}_bucket_id` | `${AllocPath}_yield`>;
+    const progList = (progs ?? []) as unknown as Prog[];
     const progById = new Map(progList.map((p) => [p.id, p]));
     const bucketName = new Map((bks ?? []).map((b) => [b.id, b.name as string]));
 
@@ -118,7 +114,7 @@ export default async function HomePage() {
         shortByCust: new Map(), feedByCode: new Map(),
       });
       const acc: Record<StatusKey, Acc> = { active: newAcc(), pipeline: newAcc() };
-      const CHANNELS = [1, 2, 3, 4].flatMap((offset) => (['prim', 'alt', 'tert'] as const).map((path) => ({ offset, path, col: `borrow_m${offset}_${path}_wr` as const })));
+      const CHANNELS = ENGINE_CHANNELS.map((ch) => ({ offset: ch.offset, path: ch.path, col: `borrow_${ch.field}_wr` }));
       const pd = new Map<string, number>(), pf = new Map<string, number>();
 
       for (const r of rr) {
@@ -136,8 +132,7 @@ export default async function HomePage() {
             if (!(bwr > 0)) continue;
             const src = i - ch.offset;
             if (src < 0) continue;
-            const bucketId = ch.path === 'prim' ? prog.primary_bucket_id : ch.path === 'alt' ? prog.secondary_bucket_id : prog.tertiary_bucket_id;
-            const py = ch.path === 'prim' ? prog.primary_yield : ch.path === 'alt' ? prog.secondary_yield : prog.tertiary_yield;
+            const { bucket_id: bucketId, yield: py } = programPath(prog, ch.path);
             if (!bucketId) continue;
             const key = `${src}:${bucketId}`;
             const m = a.borrowByMonth[i]!;

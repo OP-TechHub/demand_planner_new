@@ -3,6 +3,10 @@
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { logAudit } from '@/lib/audit';
+import { ALLOC_PATHS, ALLOC_PATH_LABEL, PATH_COLUMNS } from '@oceanpick/shared';
+
+/** Every path after primary — each optional. */
+const OPTIONAL_PATHS = ALLOC_PATHS.filter((p) => p !== 'primary');
 
 export type ProgramFormState = { error: string | null; ok: boolean };
 
@@ -53,13 +57,17 @@ export async function saveProgram(
     return { error: 'Primary yield must be between 0 and 1.', ok: false };
   }
 
-  const secondary = optionalPath(fd, 'secondary_bucket_id', 'secondary_yield');
-  if (secondary.bucketId && !(Number(secondary.yield) > 0 && Number(secondary.yield) <= 1)) {
-    return { error: 'Secondary yield must be between 0 and 1 when a secondary bucket is set.', ok: false };
-  }
-  const tertiary = optionalPath(fd, 'tertiary_bucket_id', 'tertiary_yield');
-  if (tertiary.bucketId && !(Number(tertiary.yield) > 0 && Number(tertiary.yield) <= 1)) {
-    return { error: 'Tertiary yield must be between 0 and 1 when a tertiary bucket is set.', ok: false };
+  // Paths 2–5 are optional: a bucket needs a yield; no bucket clears the yield.
+  const optionalCols: Record<string, string | number | null> = {};
+  for (const path of OPTIONAL_PATHS) {
+    const c = PATH_COLUMNS[path];
+    const p = optionalPath(fd, c.bucket, c.yield);
+    if (p.bucketId && !(Number(p.yield) > 0 && Number(p.yield) <= 1)) {
+      const name = ALLOC_PATH_LABEL[path];
+      return { error: `${name} yield must be between 0 and 1 when a ${name.toLowerCase()} bucket is set.`, ok: false };
+    }
+    optionalCols[c.bucket] = p.bucketId;
+    optionalCols[c.yield] = p.bucketId ? p.yield : null;
   }
 
   const price = num(fd, 'price_per_fp');
@@ -92,10 +100,7 @@ export async function saveProgram(
     max_monthly_demand_fp: maxDemand,
     primary_bucket_id: primaryBucket,
     primary_yield: primaryYield,
-    secondary_bucket_id: secondary.bucketId,
-    secondary_yield: secondary.bucketId ? secondary.yield : null,
-    tertiary_bucket_id: tertiary.bucketId,
-    tertiary_yield: tertiary.bucketId ? tertiary.yield : null,
+    ...optionalCols,
     price_per_fp: price,
     locked: fd.get('locked') === 'on',
     ...costs,
@@ -169,6 +174,14 @@ export type ImportProgramRow = {
   secondary_yield: number | null;
   tertiary_bucket_id: string | null;
   tertiary_yield: number | null;
+  /**
+   * 4th/5th paths. `undefined` when the CSV has no such columns (older
+   * exports), so an upsert leaves whatever the program already has untouched.
+   */
+  quaternary_bucket_id?: string | null;
+  quaternary_yield?: number | null;
+  quinary_bucket_id?: string | null;
+  quinary_yield?: number | null;
   price_per_fp: number;
   barra_cost_wr: number;
   packing_cost_fp: number;
@@ -260,6 +273,9 @@ function fieldsOf(r: ImportProgramRow) {
     secondary_yield: r.secondary_yield,
     tertiary_bucket_id: r.tertiary_bucket_id,
     tertiary_yield: r.tertiary_yield,
+    // Only sent when the file carried the columns — see ImportProgramRow.
+    ...(r.quaternary_bucket_id !== undefined && { quaternary_bucket_id: r.quaternary_bucket_id, quaternary_yield: r.quaternary_yield ?? null }),
+    ...(r.quinary_bucket_id !== undefined && { quinary_bucket_id: r.quinary_bucket_id, quinary_yield: r.quinary_yield ?? null }),
     price_per_fp: r.price_per_fp,
     barra_cost_wr: r.barra_cost_wr,
     packing_cost_fp: r.packing_cost_fp,
@@ -274,7 +290,7 @@ function fieldsOf(r: ImportProgramRow) {
 // Fields worth showing in the audit log as old → new (skips bucket-id UUIDs).
 const DIFF_FIELDS = [
   'status', 'item_code', 'export_code', 'item_description', 'customer', 'max_monthly_demand_fp',
-  'primary_yield', 'secondary_yield', 'tertiary_yield', 'price_per_fp',
+  'primary_yield', 'secondary_yield', 'tertiary_yield', 'quaternary_yield', 'quinary_yield', 'price_per_fp',
   'barra_cost_wr', 'packing_cost_fp', 'processing_cost_fp', 'storage_cost_fp',
   'freight_cost_fp', 'other_costs_fp', 'locked',
 ] as const;

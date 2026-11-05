@@ -7,10 +7,20 @@ export interface PathCostMargin {
   margin_wr: number;
 }
 
+/** The program's stored (bucket, yield) for a path, unvalidated. */
+export function rawPath(p: EngineProgram, path: PathKey): { bucket: string | null | undefined; yield: number | null | undefined } {
+  switch (path) {
+    case 'primary': return { bucket: p.primaryBucket, yield: p.primaryYield };
+    case 'secondary': return { bucket: p.secondaryBucket, yield: p.secondaryYield };
+    case 'tertiary': return { bucket: p.tertiaryBucket, yield: p.tertiaryYield };
+    case 'quaternary': return { bucket: p.quaternaryBucket, yield: p.quaternaryYield };
+    case 'quinary': return { bucket: p.quinaryBucket, yield: p.quinaryYield };
+  }
+}
+
 /** The (bucket, yield) for a path, or null if the program doesn't have it. */
 export function pathOf(p: EngineProgram, path: PathKey): { bucket: string; yield: number } | null {
-  const bucket = path === 'primary' ? p.primaryBucket : path === 'secondary' ? p.secondaryBucket : p.tertiaryBucket;
-  const y = path === 'primary' ? p.primaryYield : path === 'secondary' ? p.secondaryYield : p.tertiaryYield;
+  const { bucket, yield: y } = rawPath(p, path);
   if (!bucket || y == null || y <= 0) return null;
   return { bucket, yield: y };
 }

@@ -1,7 +1,7 @@
 // Spec §4 — own-month allocation. For each month, walk in-scope programs in
-// global-rank order, cascading each through primary → secondary → tertiary,
+// global-rank order, cascading each through its paths (primary → … → quinary),
 // drawing from that month's bucket capacity. Months are independent.
-import type { EngineInput, PathKey } from './types';
+import { PATH_KEYS, type EngineInput, type PathKey } from './types';
 import { pathOf } from './derived';
 import type { RankedProgram } from './rank';
 
@@ -22,7 +22,7 @@ export interface OwnMonthResult {
   ownConsumption: Record<string, number[]>;
 }
 
-const PATHS: readonly PathKey[] = ['primary', 'secondary', 'tertiary'];
+const PATHS: readonly PathKey[] = PATH_KEYS;
 const EPS = 1e-9;
 
 export function ownMonthAllocation(input: EngineInput, ranked: RankedProgram[]): OwnMonthResult {

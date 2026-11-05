@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, useTransition, type Dispatch, typ
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ClipboardCheck, CheckCircle2, AlertTriangle, Info, ChevronRight, Plus, X, Save } from 'lucide-react';
-import { monthLabel } from '@oceanpick/shared';
+import { ALLOC_PATHS, ALLOC_PATH_LABEL, monthLabel } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -75,7 +75,7 @@ type MonthPlan = {
 /**
  * Plan a multi-month inquiry against spare whole-round capacity, mirroring the
  * engine (§5.4): every month first takes its OWN month's spare across the paths
- * (primary → secondary → tertiary), then each month borrows backwards from M-1
+ * (primary → … → quinary), then each month borrows backwards from M-1
  * and then M-2 — so a January order can be met from November and December
  * harvest, exactly as the rolling calc does it.
  *
@@ -536,7 +536,7 @@ function NewInquiry({
   const validPaths = useMemo(
     () =>
       paths
-        .map((p, i) => ({ path: (['primary', 'secondary', 'tertiary'] as const)[i], bucketId: p.bucketId, yield: Number(p.yield) }))
+        .map((p, i) => ({ path: ALLOC_PATHS[i]!, bucketId: p.bucketId, yield: Number(p.yield) }))
         .filter((p) => p.bucketId && p.yield > 0 && p.yield <= 1),
     [paths]
   );
@@ -642,7 +642,7 @@ function NewInquiry({
           <div className="space-y-2">
             {paths.map((p, i) => (
               <div key={i} className="flex items-center gap-2">
-                <span className="w-16 shrink-0 text-xs capitalize text-muted-foreground">{(['primary', 'secondary', 'tertiary'] as const)[i]}</span>
+                <span className="w-16 shrink-0 text-xs text-muted-foreground">{ALLOC_PATH_LABEL[ALLOC_PATHS[i]!]}</span>
                 <select value={p.bucketId} onChange={(e) => setPath(i, { bucketId: e.target.value })} className={cn(selectCls, 'flex-1')}>
                   <option value="">Select bucket…</option>
                   {buckets.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
@@ -667,13 +667,13 @@ function NewInquiry({
               </div>
             ))}
           </div>
-          {paths.length < 3 && (
+          {paths.length < ALLOC_PATHS.length && (
             <button type="button" onClick={addPath} className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">
               <Plus className="h-3.5 w-3.5" /> Add another bucket
             </button>
           )}
           <p className="mt-1 text-[11px] text-muted-foreground">
-            Yield is finished product per whole round (e.g. 0.498). Paths fill in order — primary first, then secondary, then tertiary.
+            Yield is finished product per whole round (e.g. 0.498). Up to five buckets, filled in order — primary first, then each one below it.
           </p>
         </div>
 

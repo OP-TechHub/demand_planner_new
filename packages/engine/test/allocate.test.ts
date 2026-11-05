@@ -65,6 +65,25 @@ describe('§4 own-month allocation — behavioral', () => {
     expect(r.allocations.some((x) => x.path === 'primary')).toBe(false);
   });
 
+  it('five paths: cascades through 4th and 5th once the first three run dry', () => {
+    const buckets: EngineBucket[] = ['P', 'S', 'T', 'Q4', 'Q5'].map((id, i) => ({ id, sortOrder: (i + 1) * 10 }));
+    const r = run(
+      [prog('a', 1000, {
+        primaryBucket: 'P', primaryYield: 0.5,
+        secondaryBucket: 'S', secondaryYield: 0.5,
+        tertiaryBucket: 'T', tertiaryYield: 0.5,
+        quaternaryBucket: 'Q4', quaternaryYield: 0.5,
+        quinaryBucket: 'Q5', quinaryYield: 0.4,
+      })],
+      buckets, { P: [200], S: [200], T: [200], Q4: [400], Q5: [5000] }
+    );
+    // P/S/T/Q4 give 1000 WR → 500 FP; Q5 covers the other 500 FP at 0.4 → 1250 WR.
+    const by = (path: string) => r.allocations.find((x) => x.programId === 'a' && x.path === path)?.allocatedWr ?? 0;
+    expect(by('quaternary')).toBeCloseTo(400, 6);
+    expect(by('quinary')).toBeCloseTo(1250, 6);
+    expect(fp(r, 'a')).toBeCloseTo(1000, 6);
+  });
+
   it('zero demand: no allocation', () => {
     const r = run([prog('a', 0)], B, { B: [5000] });
     expect(r.allocations).toHaveLength(0);
