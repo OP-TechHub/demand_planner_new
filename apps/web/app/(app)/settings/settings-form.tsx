@@ -67,6 +67,7 @@ export function SettingsForm({ plan, canEdit }: { plan: Plan; canEdit: boolean }
             <label className="block">
               <span className="text-xs font-medium text-muted-foreground">Lookback months (borrowing)</span>
               <select name="settings_lookback_months" defaultValue={String(plan.settings_lookback_months)} className={inputCls}>
+                <option value="0">0 — no borrowing</option>
                 <option value="1">1</option>
                 <option value="2">2</option>
                 <option value="3">3</option>
