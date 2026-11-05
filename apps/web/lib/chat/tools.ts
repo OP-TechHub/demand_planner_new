@@ -305,7 +305,7 @@ async function harvest(ctx: ToolContext, args: Args) {
       table
     );
 
-  const [{ data: buckets }, capacity, requestedMonthly, requestedDaily, actual, unallocated] = await Promise.all([
+  const [{ data: buckets }, capacity, requestedMonthly, requestedDaily, actual, unallocated, { data: actualBuckets }] = await Promise.all([
     ctx.db.from('buckets').select('id, name, sort_order').order('sort_order'),
     inWindow('harvest_plan', 'bucket_id, month_index, capacity_kg_wr'),
     inWindow('harvest_request', 'bucket_id, month_index, quantity_kg_wr'),
@@ -316,6 +316,7 @@ async function harvest(ctx: ToolContext, args: Args) {
     ),
     inWindow('harvest_actual', 'bucket_id, month_index, quantity_kg_wr'),
     inWindow('unallocated_wr', 'bucket_id, month_index, unallocated_wr'),
+    ctx.db.from('harvest_actual_buckets').select('id, name, sort_order').order('sort_order'),
   ]);
   // A month stated by harvest day is the sum of its days, as on the Harvest Plan page.
   const requested = [...effectiveMonthlyRequest(requestedMonthly, requestedDaily, plan.plan_start_date, plan.horizon_months).values]
@@ -325,8 +326,8 @@ async function harvest(ctx: ToolContext, args: Args) {
     })
     .filter((r) => r.month_index >= win.from && r.month_index <= win.to);
 
-  type Cell = { capacity_wr: number; requested_wr: number; actual_wr: number; unallocated_wr: number };
-  const blank = (): Cell => ({ capacity_wr: 0, requested_wr: 0, actual_wr: 0, unallocated_wr: 0 });
+  type Cell = { capacity_wr: number; requested_wr: number; unallocated_wr: number };
+  const blank = (): Cell => ({ capacity_wr: 0, requested_wr: 0, unallocated_wr: 0 });
   const grid = new Map<string, Map<number, Cell>>(); // bucket -> month -> cell
   let unsizedRequest = 0;
   const add = (rows: any[], key: keyof Cell, col: string) => {
@@ -342,8 +343,37 @@ async function harvest(ctx: ToolContext, args: Args) {
   };
   add(capacity, 'capacity_wr', 'capacity_kg_wr');
   add(requested, 'requested_wr', 'quantity_kg_wr');
-  add(actual, 'actual_wr', 'quantity_kg_wr');
   add(unallocated, 'unallocated_wr', 'unallocated_wr');
+
+  // Actual harvest is graded on the farm's own size list, not the planning
+  // buckets, so it is reported on its own; only month totals compare to plan.
+  const actualNames = new Map(((actualBuckets ?? []) as { id: string; name: string }[]).map((b) => [b.id, b.name]));
+  const actualBySize = new Map<string, Map<number, number>>();
+  const actualByMonth = new Map<number, number>();
+  for (const r of actual as { bucket_id: string | null; month_index: number; quantity_kg_wr: number }[]) {
+    const size = r.bucket_id ? actualNames.get(r.bucket_id) ?? 'Unknown size' : 'No size stated';
+    const m = actualBySize.get(size) ?? new Map<number, number>();
+    m.set(r.month_index, (m.get(r.month_index) ?? 0) + Number(r.quantity_kg_wr));
+    actualBySize.set(size, m);
+    actualByMonth.set(r.month_index, (actualByMonth.get(r.month_index) ?? 0) + Number(r.quantity_kg_wr));
+  }
+  const capacityByMonth = new Map<number, number>();
+  for (const r of capacity as { month_index: number; capacity_kg_wr: number }[]) {
+    capacityByMonth.set(r.month_index, (capacityByMonth.get(r.month_index) ?? 0) + Number(r.capacity_kg_wr));
+  }
+  const actualHarvest = {
+    by_size: [...actualBySize.entries()].map(([size, m]) => ({
+      size,
+      total_wr: round([...m.values()].reduce((s, v) => s + v, 0)),
+      months: [...m.entries()].sort((x, y) => x[0] - y[0]).map(([mo, v]) => ({ month: monthOf(plan, mo).month, actual_wr: round(v) })),
+    })),
+    vs_plan: [...actualByMonth.entries()].sort((x, y) => x[0] - y[0]).map(([mo, v]) => ({
+      month: monthOf(plan, mo).month,
+      actual_wr: round(v),
+      capacity_wr: round(capacityByMonth.get(mo) ?? 0),
+      variance_wr: round(v - (capacityByMonth.get(mo) ?? 0)),
+    })),
+  };
 
   const cells = [...grid.values()].reduce((n, m) => n + m.size, 0);
   const detail = cells <= MAX_CELLS;
@@ -365,7 +395,6 @@ async function harvest(ctx: ToolContext, args: Args) {
                 month: monthOf(plan, m).month,
                 capacity_wr: round(c.capacity_wr),
                 requested_wr: round(c.requested_wr),
-                actual_wr: round(c.actual_wr),
                 unallocated_wr: round(c.unallocated_wr),
               })),
             }
@@ -377,11 +406,12 @@ async function harvest(ctx: ToolContext, args: Args) {
     ...planHeader(plan, win),
     unit: 'kg WR',
     note: [
-      'unallocated_wr comes from the last recalculation; actual_wr is recorded separately and never feeds the engine.',
+      'unallocated_wr comes from the last recalculation. actual_harvest is recorded on the farm’s own size list (not these buckets), so it compares to plan by month total only, and never feeds the engine.',
       unsizedRequest ? `A further ${round(unsizedRequest)} kg WR was requested without a size bucket.` : '',
       detail ? '' : tooMuchDetail(cells),
     ].filter(Boolean).join(' '),
     buckets: out,
+    actual_harvest: actualHarvest,
   };
 }
 

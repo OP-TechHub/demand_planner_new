@@ -2,12 +2,12 @@ import { createClient } from '@/lib/supabase/server';
 import { getActivePlan, getProfile, getMyPlanGrants } from '@/lib/plan';
 import {
   canEditPlanSection,
-  canEditSection,
   canExportData,
   type Bucket,
   type HarvestCell,
   type HarvestRequestCell,
   type HarvestActualCell,
+  type HarvestActualBucket,
   type HarvestRequestDailyCell,
   type HarvestRequestSettings,
   DEFAULT_HARVEST_REQUEST_SETTINGS,
@@ -31,7 +31,7 @@ export default async function HarvestPlanPage() {
 
   const supabase = await createClient();
   // harvest_plan can exceed PostgREST's 1000-row cap (buckets × 60), so page it.
-  const [{ data: buckets }, rows, { data: requestRows }, { data: actualRows }, profile, grants, { data: progs }, demand, poLines, dailyRows, { data: settingsRow }] = await Promise.all([
+  const [{ data: buckets }, rows, { data: requestRows }, { data: actualRows }, profile, grants, { data: progs }, demand, poLines, dailyRows, { data: settingsRow }, { data: actualBucketRows }] = await Promise.all([
     supabase.from('buckets').select('*').eq('is_archived', false).order('sort_order'),
     fetchAllByPlan(supabase, 'harvest_plan', '*', plan.id),
     // buckets x 60 stays well under PostgREST's 1000-row cap, unlike capacity,
@@ -61,6 +61,9 @@ export default async function HarvestPlanPage() {
       .select('mode, harvest_weekdays')
       .eq('plan_id', plan.id)
       .maybeSingle(),
+    // Actual Harvest's own sizes — archived ones too, so one that still holds
+    // figures on this plan keeps its row.
+    supabase.from('harvest_actual_buckets').select('*').order('sort_order'),
   ]);
 
   // Required harvest: the whole round the demand book needs, demand_fp /
@@ -105,10 +108,10 @@ export default async function HarvestPlanPage() {
   // Recording what was landed is the farm's job — its own grant again, so holding
   // neither capacity nor the request confers it.
   const canEditActual = canEditPlanSection(plan, me, grants.has('harvest_actual'));
-  // Buckets are org-wide, not per plan, so adding one from the Actual Harvest
-  // section is the Buckets permission (Admin → Users), not the actuals grant —
-  // the same rule the Buckets page and its RLS policy apply.
-  const canAddBucket = canEditSection(me.role, profile?.edit_sections, 'buckets');
+  // Actual Harvest keeps its own size list, and only whoever records actuals
+  // (or an admin) may change it. The Buckets permission does not confer it —
+  // that is the planning list. Same rule as its RLS policy.
+  const canEditActualBuckets = me.role === 'admin' || grants.has('harvest_actual');
 
   // Passed as rows rather than a keyed object: the grid needs the size too, and
   // a null bucket has to survive the trip intact rather than collapsing into a
@@ -129,6 +132,10 @@ export default async function HarvestPlanPage() {
     ...r,
     quantity_kg_wr: Number(r.quantity_kg_wr),
   }));
+  const usedActualBuckets = new Set(actual.map((r) => r.bucket_id));
+  const actualBuckets = ((actualBucketRows ?? []) as HarvestActualBucket[]).filter(
+    (b) => !b.is_archived || usedActualBuckets.has(b.id)
+  );
 
   return (
     <HarvestClient
@@ -146,7 +153,8 @@ export default async function HarvestPlanPage() {
       actual={actual}
       canEditActual={canEditActual}
       orgId={plan.org_id}
-      canAddBucket={canAddBucket}
+      actualBuckets={actualBuckets}
+      canEditActualBuckets={canEditActualBuckets}
       required={required}
     />
   );

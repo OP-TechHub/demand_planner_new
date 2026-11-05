@@ -413,17 +413,17 @@ export async function saveHarvestRequestDaily(
  * and RLS enforces the separate 'harvest_actual' grant. Never an engine input,
  * so saving here never marks the plan stale.
  *
- * Unlike the request, there is no sizeless row to tolerate — this table has
- * always been per bucket, so an entry without one is a bug, not history.
+ * Buckets are the actual-harvest list (harvest_actual_buckets), not the
+ * planning one. A null `bucket_id` is the "No size stated" line: a month's
+ * landed total the farm did not break down by size, entered like any other.
  */
 export async function saveHarvestActual(
   planId: string,
-  entries: { bucket_id: string; month_index: number; quantity_kg_wr: number }[]
+  entries: { bucket_id: string | null; month_index: number; quantity_kg_wr: number }[]
 ): Promise<SaveResult> {
   if (!planId) return { error: 'Missing plan.' };
 
   for (const e of entries) {
-    if (!e.bucket_id) return { error: 'Missing bucket.' };
     if (!Number.isInteger(e.month_index) || e.month_index < 1 || e.month_index > 60) {
       return { error: `Invalid month ${e.month_index}.` };
     }
@@ -445,9 +445,9 @@ export async function saveHarvestActual(
     .from('harvest_actual')
     .select('bucket_id, month_index, quantity_kg_wr')
     .eq('plan_id', planId);
-  const key = (bucketId: string, month: number) => `${bucketId}:${month}`;
+  const key = (bucketId: string | null, month: number) => `${bucketId ?? ''}:${month}`;
   const existing = new Map<string, number>(
-    (existingRows ?? []).map((r: { bucket_id: string; month_index: number; quantity_kg_wr: number }) => [
+    (existingRows ?? []).map((r: { bucket_id: string | null; month_index: number; quantity_kg_wr: number }) => [
       key(r.bucket_id, r.month_index),
       Number(r.quantity_kg_wr),
     ])
@@ -466,7 +466,7 @@ export async function saveHarvestActual(
 
   // One delete per bucket: a single `in` over months would take out every
   // bucket in those months, including ones this save is not touching.
-  const byBucket = new Map<string, number[]>();
+  const byBucket = new Map<string | null, number[]>();
   for (const c of clears) {
     // Only delete what is actually there, so an empty grid doesn't send
     // thousands of pointless deletes on every save.
@@ -476,13 +476,12 @@ export async function saveHarvestActual(
     byBucket.set(c.bucket_id, list);
   }
   for (const [bucketId, monthList] of byBucket) {
-    const { error } = await supabase
-      .from('harvest_actual').delete()
-      .eq('plan_id', planId).eq('bucket_id', bucketId).in('month_index', monthList);
+    const q = supabase.from('harvest_actual').delete().eq('plan_id', planId).in('month_index', monthList);
+    const { error } = await (bucketId === null ? q.is('bucket_id', null) : q.eq('bucket_id', bucketId));
     if (error) return { error: actualPermError(error.message) };
   }
 
-  const edits: { b: string; m: number; old: number; new: number }[] = [];
+  const edits: { b: string | null; m: number; old: number; new: number }[] = [];
   for (const e of rounded) {
     const old = existing.get(key(e.bucket_id, e.month_index)) ?? 0;
     if (old !== e.quantity_kg_wr) edits.push({ b: e.bucket_id, m: e.month_index, old, new: e.quantity_kg_wr });
@@ -500,6 +499,66 @@ export async function saveHarvestActual(
   });
   revalidatePath('/harvest-plan');
   return { error: null };
+}
+
+/**
+ * Add or rename a size on the Actual Harvest list. Its own list: nothing here
+ * touches the planning buckets, the capacity grid or the request plan. RLS lets
+ * it through only for whoever records actuals (or an admin) — not for Buckets.
+ */
+export async function saveActualBucket(input: {
+  id?: string | null;
+  orgId: string;
+  name: string;
+  sortOrder: number;
+}): Promise<SaveResult> {
+  const name = (input.name ?? '').trim();
+  if (!name) return { error: 'Name is required.' };
+  if (!Number.isInteger(input.sortOrder)) return { error: 'Order must be a whole number.' };
+
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: 'Your session expired. Sign in again.' };
+
+  const { error } = input.id
+    ? await supabase.from('harvest_actual_buckets')
+        .update({ name, sort_order: input.sortOrder, updated_by: user.id }).eq('id', input.id)
+    : await supabase.from('harvest_actual_buckets')
+        .insert({ org_id: input.orgId, name, sort_order: input.sortOrder, created_by: user.id, updated_by: user.id });
+  if (error) return { error: actualBucketError(error.message) };
+  revalidatePath('/harvest-plan');
+  return { error: null };
+}
+
+/**
+ * Remove a size from the Actual Harvest list. One that still holds figures in
+ * any plan (snapshots included) is archived instead — hidden from the grid,
+ * its history kept — since deleting it would orphan them.
+ */
+export async function removeActualBucket(id: string): Promise<SaveResult & { archived?: boolean }> {
+  if (!id) return { error: 'Missing bucket.' };
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: 'Your session expired. Sign in again.' };
+
+  const { error } = await supabase.from('harvest_actual_buckets').delete().eq('id', id);
+  if (!error) { revalidatePath('/harvest-plan'); return { error: null }; }
+  if (!/foreign key|violates/i.test(error.message)) return { error: actualBucketError(error.message) };
+
+  const { error: ae } = await supabase.from('harvest_actual_buckets')
+    .update({ is_archived: true, updated_by: user.id }).eq('id', id);
+  if (ae) return { error: actualBucketError(ae.message) };
+  revalidatePath('/harvest-plan');
+  return { error: null, archived: true };
+}
+
+function actualBucketError(message: string): string {
+  const m = message.toLowerCase();
+  if (m.includes('duplicate') || m.includes('unique')) return 'There is already an actual-harvest bucket with that name.';
+  if (/row-level security|violates row-level/.test(m)) {
+    return 'Can’t change the actual-harvest buckets — it needs the Actual Harvest permission.';
+  }
+  return message;
 }
 
 function actualPermError(message: string): string {

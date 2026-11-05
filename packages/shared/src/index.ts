@@ -176,16 +176,23 @@ export const DEFAULT_HARVEST_REQUEST_SETTINGS: HarvestRequestSettings = {
 };
 
 /**
- * What was actually landed, per month and size bucket (kg WR). Always sized —
- * unlike the request plan, this table starts empty and so has no pre-breakdown
- * history to carry. Reference only: the engine never reads it.
+ * What was actually landed, per month and size bucket (kg WR). The bucket is
+ * an actual-harvest bucket (`HarvestActualBucket`), not a planning one; null is
+ * a month's landed total with no size stated. Reference only: the engine never
+ * reads it.
  */
 export interface HarvestActualCell {
   plan_id: string;
-  bucket_id: string;
+  bucket_id: string | null;
   month_index: number;
   quantity_kg_wr: number;
 }
+
+/**
+ * A size the farm records actual harvest against. Same shape as `Bucket`, but
+ * its own list: adding or renaming one never touches the planning buckets.
+ */
+export type HarvestActualBucket = Bucket;
 
 /** The fixed planning horizon (months). data-model.md fixes this at 60 for v1. */
 export const HORIZON_MONTHS = 60 as const;

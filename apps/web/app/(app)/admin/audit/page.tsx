@@ -101,7 +101,9 @@ function describeChanges(entityType: string, changes: any, ctx: Ctx): Described 
   if (Array.isArray(c.edits) && c.edits.length) {
     const unit = UNIT[entityType] ?? '';
     for (const x of c.edits) {
-      const bucket = x.b ? ctx.bucketName(x.b) ?? 'Unknown bucket' : null;
+      const bucket = x.b
+        ? ctx.bucketName(x.b) ?? 'Unknown bucket'
+        : 'b' in x && (entityType === 'harvest_actual' || entityType === 'harvest_request') ? 'No size stated' : null;
       // Daily request edits carry a harvest date rather than a month index.
       const when = x.d ? prettyDay(x.d) : `${ctx.month(x.m)} (M${x.m})`;
       out.changes.push({
@@ -179,7 +181,7 @@ export default async function AuditPage() {
       .filter(Boolean)
   )];
 
-  const [{ data: users }, { data: programs }, { data: buckets }, { data: plans }, { data: planEvents }] = await Promise.all([
+  const [{ data: users }, { data: programs }, { data: buckets }, { data: plans }, { data: planEvents }, { data: actualBuckets }] = await Promise.all([
     supabase.from('users').select('id, full_name, email'),
     progIds.length
       ? supabase.from('programs').select('id, item_code, item_description, customer').in('id', progIds)
@@ -189,11 +191,14 @@ export default async function AuditPage() {
     // Plan-level events, to recover each plan's start month at the time of an
     // older edit: month indices are relative to the start, which rolls forward.
     supabase.from('audit_log').select('plan_id, at, changes').eq('entity_type', 'plans').order('at', { ascending: true }).limit(1000),
+    // Actual Harvest records against its own size list.
+    supabase.from('harvest_actual_buckets').select('id, name'),
   ]);
 
   const userById = new Map<string, string>((users ?? []).map((u: any) => [u.id, u.full_name || u.email]));
   const progById = new Map<string, any>((programs ?? []).map((p: any) => [p.id, p]));
   const bucketById = new Map<string, string>((buckets ?? []).map((b: any) => [b.id, b.name]));
+  const actualBucketById = new Map<string, string>((actualBuckets ?? []).map((b: any) => [b.id, b.name]));
   const planById = new Map<string, any>((plans ?? []).map((p: any) => [p.id, p]));
 
   const startChanges = new Map<string, { at: number; old: string }[]>();
@@ -243,7 +248,14 @@ export default async function AuditPage() {
     const atMs = new Date(e.at).getTime();
     const start = startAt(e.plan_id, atMs);
     const ctx: Ctx = {
-      bucketName: (id) => (id ? bucketById.get(id) ?? null : null),
+      bucketName: (id) => {
+        if (!id) return null;
+        // Seeded actual-harvest buckets share their planning twin's id, so the
+        // list the entry was written against is checked first.
+        const lists = e.entity_type === 'harvest_actual' ? [actualBucketById, bucketById] : [bucketById, actualBucketById];
+        for (const l of lists) if (l.has(id)) return l.get(id)!;
+        return null;
+      },
       month: (m) => (start ? monthLabel(start, m) : `M${m}`),
     };
     const described = describeChanges(e.entity_type, e.changes, ctx);
