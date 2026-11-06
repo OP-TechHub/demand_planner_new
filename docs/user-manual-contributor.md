@@ -41,6 +41,11 @@ You **cannot** edit **Buckets** (size ranges are org-wide, admin-only) or the
 Active / Pipeline / All view switch) → type the monthly finished-product (FP, kg)
 figures. Save. Then **Recalculate** to refresh the outputs.
 
+On an official plan, unless you are an admin, a saved change goes to an approver
+first. It shows above the grid as waiting for approval, its cells are outlined,
+and nothing in the plan changes until it is accepted. You are emailed the outcome,
+and you can **Withdraw** a request while it is still pending.
+
 You can also **import** a month-by-month CSV (headers are month names, e.g.
 "Apr 26") and **export** the current view.
 

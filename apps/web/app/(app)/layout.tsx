@@ -12,7 +12,8 @@ import { Toaster } from '@/components/ui/toast';
 import { ConfirmHost } from '@/components/ui/confirm';
 import { RecalculateButton } from './recalculate-button';
 import { RegisterServiceWorker } from '@/components/pwa/register-service-worker';
-import { logout } from '../login/actions';
+import { OfflineCopyGuard } from '@/components/pwa/offline-copy-guard';
+import { SignOutButton } from '@/components/sign-out-button';
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const user = await getCurrentUser();
@@ -77,11 +78,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               ? 'Your account has been created and is waiting for an administrator to approve access. You’ll be able to sign in once it’s approved.'
               : 'Your account has been deactivated. Contact an administrator.'}
           </p>
-          <form action={logout} className="mt-4">
-            <button className="rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
+          <div className="mt-4">
+            <SignOutButton className="rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
               Sign out
-            </button>
-          </form>
+            </SignOutButton>
+          </div>
         </div>
       </main>
     );
@@ -114,6 +115,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     <div className="flex h-screen overflow-hidden">
       {/* Registered below the auth boundary, so /login stays plain HTML. */}
       <RegisterServiceWorker />
+      <OfflineCopyGuard userId={profile.id} />
       <AppSidebar role={profile.role as UserRole} />
       <div className="flex h-screen min-w-0 flex-1 flex-col">
         <header className="z-20 flex h-14 shrink-0 items-center justify-between border-b border-border bg-card/70 px-6 backdrop-blur-md">
@@ -135,12 +137,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
                 <div className="text-[11px] capitalize text-muted-foreground">{profile.role}</div>
               </div>
             </div>
-            <form action={logout}>
-              <button className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-sm text-muted-foreground shadow-xs transition-colors hover:bg-muted hover:text-foreground">
-                <LogOut className="h-3.5 w-3.5" />
-                Sign out
-              </button>
-            </form>
+            <SignOutButton className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-sm text-muted-foreground shadow-xs transition-colors hover:bg-muted hover:text-foreground">
+              <LogOut className="h-3.5 w-3.5" />
+              Sign out
+            </SignOutButton>
           </div>
         </header>
         {isSandbox && master && (

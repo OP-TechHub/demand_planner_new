@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
-import { EDITABLE_SECTIONS, PLAN_EDITABLE_SECTIONS, type UserRole } from '@oceanpick/shared';
+import { EDITABLE_SECTIONS, NOTIFY_SECTIONS, PLAN_EDITABLE_SECTIONS, type UserRole } from '@oceanpick/shared';
 
 export type AdminResult = { error: string | null };
 
@@ -60,6 +60,29 @@ export async function setUserSections(userId: string, sections: string[]): Promi
   if (me && oldList.slice().sort().join(',') !== valid.slice().sort().join(',')) {
     await writeAudit(supabase, me, userId, {
       edit_sections: { old: oldList.join(', ') || 'none', new: valid.join(', ') || 'none' },
+    });
+  }
+  revalidatePath('/admin/users');
+  return { error: null };
+}
+
+/**
+ * Choose which input tabs a user is emailed about when they change (see
+ * lib/notify-changes.ts). Admin-only. Applies to admins too — the list is who
+ * hears about a tab, not who may edit it.
+ */
+export async function setUserNotifySections(userId: string, sections: string[]): Promise<AdminResult> {
+  const { supabase, me, error } = await requireAdmin();
+  if (error) return { error };
+  const allowed = NOTIFY_SECTIONS as readonly string[];
+  const valid = Array.from(new Set(sections.filter((s) => allowed.includes(s))));
+  const { data: before } = await supabase.from('users').select('notify_sections').eq('id', userId).maybeSingle();
+  const { error: e } = await supabase.from('users').update({ notify_sections: valid }).eq('id', userId);
+  if (e) return { error: e.message };
+  const oldList = (before?.notify_sections ?? []) as string[];
+  if (me && oldList.slice().sort().join(',') !== valid.slice().sort().join(',')) {
+    await writeAudit(supabase, me, userId, {
+      notify_sections: { old: oldList.join(', ') || 'none', new: valid.join(', ') || 'none' },
     });
   }
   revalidatePath('/admin/users');

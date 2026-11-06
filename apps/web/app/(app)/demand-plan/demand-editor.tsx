@@ -77,7 +77,7 @@ export function DemandEditor({
     startTransition(async () => {
       const res = await saveDemandOverrides(planId, program.id, upserts, deletes);
       if (res.error) setError(res.error);
-      else { toast.success('Demand updated'); onSaved(); }
+      else { toast.success(res.pending ? 'Sent for approval — the plan changes once an approver accepts it' : 'Demand updated'); onSaved(); }
     });
   }
 

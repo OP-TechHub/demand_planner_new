@@ -282,6 +282,7 @@ export const EDITABLE_SECTIONS = [
   'assumptions_edit',
   'secondary_products',
   'export_data',
+  'demand_approve',
 ] as const;
 export type EditableSection = (typeof EDITABLE_SECTIONS)[number];
 
@@ -313,7 +314,36 @@ export const SECTION_LABEL: Record<EditableSection, string> = {
   assumptions_edit: 'Assumptions — edit',
   secondary_products: 'Secondary Products',
   export_data: 'Export input data',
+  demand_approve: 'Approve demand changes',
 };
+
+/**
+ * Input tabs whose change digests a user can be emailed about. An admin ticks
+ * these per user (users.notify_sections); nobody else receives the digest.
+ * Engine inputs are reported when the plan is recalculated; Harvest Request
+ * and Actual Harvest never make a plan stale, so they are reported on save.
+ */
+export const NOTIFY_SECTIONS = [
+  'programs',
+  'demand_plan',
+  'harvest_plan',
+  'po_updates',
+  'harvest_request',
+  'harvest_actual',
+] as const;
+export type NotifySection = (typeof NOTIFY_SECTIONS)[number];
+
+export const NOTIFY_SECTION_LABEL: Record<NotifySection, string> = {
+  programs: 'Programs',
+  demand_plan: 'Demand Plan',
+  harvest_plan: 'Harvest Plan',
+  po_updates: 'PO Update',
+  harvest_request: 'Harvest Request Plan',
+  harvest_actual: 'Actual Harvest',
+};
+
+/** What a new account is subscribed to — matches the column default. */
+export const NOTIFY_DEFAULT: readonly NotifySection[] = ['harvest_plan'];
 
 /**
  * What the fish costs to grow — the feed price, clearing, import tax, FCR, FX
@@ -405,6 +435,25 @@ export function canEditSecondaryProducts(
 export const EXPORT_DATA = 'export_data';
 
 /** May this user download the input tabs as CSV? */
+/**
+ * Approving another user's Demand Plan change. Non-admin edits to an official
+ * plan wait as a request until an admin or a holder of this grant accepts them.
+ */
+export const DEMAND_APPROVE = 'demand_approve';
+
+export function canApproveDemand(role: UserRole, editSections: string[] | null | undefined): boolean {
+  if (role === 'admin') return true;
+  return (editSections ?? []).includes(DEMAND_APPROVE);
+}
+
+/**
+ * Does this Demand Plan edit need approval before it touches demand_plan? Only
+ * on an official plan (a sandbox belongs to its owner), and never for an admin.
+ */
+export function demandNeedsApproval(plan: { is_sandbox: boolean }, role: UserRole): boolean {
+  return !plan.is_sandbox && role !== 'admin';
+}
+
 export function canExportData(
   role: UserRole,
   editSections: string[] | null | undefined

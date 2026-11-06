@@ -3,10 +3,27 @@
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { logAudit } from '@/lib/audit';
+import { createServiceClient } from '@/lib/supabase/service';
+import { notifyPlanChanges, type NotifyTrigger } from '@/lib/notify-changes';
+import { runInBackground } from '@/lib/background';
 import type { WideRow, WideImportResult } from '@/components/wide-grid-import';
 import { monthIndexOfDate, type HarvestRequestMode } from '@oceanpick/shared';
 
 export type SaveResult = { error: string | null };
+
+/**
+ * Email the users an admin subscribed to this tab (Admin → Users). The request
+ * plan and actual harvest are not engine inputs, so no recalculation will ever
+ * report them — the save does, after the response goes out. Never blocks or
+ * fails the save.
+ */
+async function notifyAfterSave(planId: string, section: 'harvest_request' | 'harvest_actual'): Promise<void> {
+  const trigger: NotifyTrigger = 'save';
+  await runInBackground(
+    (async () => notifyPlanChanges(createServiceClient(), { planId, trigger, sections: [section] }))(),
+    `${section} change notification`
+  );
+}
 
 /** Map a raw RLS rejection to a clear message about section access. */
 function permError(message: string): string {
@@ -268,6 +285,7 @@ export async function saveHarvestRequest(
       more: Math.max(0, edits.length - CAP),
     },
   });
+  await notifyAfterSave(planId, 'harvest_request');
   revalidatePath('/harvest-plan');
   return { error: null };
 }
@@ -310,6 +328,7 @@ export async function saveHarvestRequestSettings(
   }
   if (Object.keys(changes).length) {
     await logAudit(supabase, { planId, entityType: 'harvest_request', entityId: planId, action: 'update', changes });
+    await notifyAfterSave(planId, 'harvest_request');
   }
   revalidatePath('/harvest-plan');
   return { error: null };
@@ -400,6 +419,7 @@ export async function saveHarvestRequestDaily(
         more: Math.max(0, edits.length - CAP),
       },
     });
+    await notifyAfterSave(planId, 'harvest_request');
   }
   revalidatePath('/harvest-plan');
   return { error: null };
@@ -497,6 +517,7 @@ export async function saveHarvestActual(
       more: Math.max(0, edits.length - CAP),
     },
   });
+  await notifyAfterSave(planId, 'harvest_actual');
   revalidatePath('/harvest-plan');
   return { error: null };
 }

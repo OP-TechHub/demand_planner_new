@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { getActivePlan, getProfile, getMyPlanGrants } from '@/lib/plan';
-import { canEditPlanSection, canExportData, type DemandCell, type Program, type UserRole } from '@oceanpick/shared';
+import { canApproveDemand, canEditPlanSection, canExportData, demandNeedsApproval, type DemandCell, type Program, type UserRole } from '@oceanpick/shared';
+import type { DemandRequest } from './pending-changes';
 import { fetchAllByPlan } from '@/lib/fetch-all';
 import { CHANNELS } from '@oceanpick/engine';
 import type { AllocPath } from '@oceanpick/shared';
@@ -55,11 +56,33 @@ export default async function DemandPlanPage() {
   }
   const bucketNames = Object.fromEntries((buckets ?? []).map((b) => [b.id as string, b.name as string]));
 
-  const canEdit = canEditPlanSection(
-    plan,
-    { id: profile?.id ?? '', role: (profile?.role ?? 'viewer') as UserRole },
-    grants.has('demand_plan')
-  );
+  const role = (profile?.role ?? 'viewer') as UserRole;
+  const canEdit = canEditPlanSection(plan, { id: profile?.id ?? '', role }, grants.has('demand_plan'));
+  const canApprove = canApproveDemand(role, profile?.edit_sections);
+
+  // Approval requests on this plan. RLS returns the viewer's own, plus every
+  // request when they are an approver. Pending ones show above the grid; the
+  // viewer's own decided ones from the last week tell them what happened.
+  const weekAgo = new Date(Date.now() - 7 * 864e5).toISOString();
+  const { data: reqRows } = await supabase
+    .from('demand_change_requests')
+    .select('id, requested_by, source, cells, cell_count, status, created_at, decided_by, decided_at, decision_note')
+    .eq('plan_id', plan.id)
+    .or(`status.eq.pending,and(requested_by.eq.${profile?.id ?? ''},decided_at.gte.${weekAgo})`)
+    .order('created_at', { ascending: true });
+  const reqList = (reqRows ?? []) as (Omit<DemandRequest, 'requester' | 'decider'> & { decided_by: string | null })[];
+  const peopleIds = [...new Set(reqList.flatMap((r) => [r.requested_by, r.decided_by]).filter(Boolean) as string[])];
+  const { data: people } = peopleIds.length
+    ? await supabase.from('users').select('id, full_name, email').in('id', peopleIds)
+    : { data: [] as { id: string; full_name: string; email: string }[] };
+  const nameOf = new Map((people ?? []).map((u) => [u.id, u.full_name || u.email]));
+  const requests: DemandRequest[] = reqList.map((r) => ({
+    ...r,
+    requester: nameOf.get(r.requested_by) ?? 'Unknown user',
+    decider: r.decided_by ? nameOf.get(r.decided_by) ?? 'Unknown user' : null,
+  }));
+  const pendingRequests = requests.filter((r) => r.status === 'pending');
+  const recentRequests = requests.filter((r) => r.status !== 'pending' && r.requested_by === profile?.id).reverse().slice(0, 5);
 
   return (
     <DemandClient
@@ -72,7 +95,12 @@ export default async function DemandPlanPage() {
       wrLines={wrLines}
       bucketNames={bucketNames}
       canEdit={canEdit}
-      canExport={canExportData((profile?.role ?? 'viewer') as UserRole, profile?.edit_sections)}
+      canExport={canExportData(role, profile?.edit_sections)}
+      needsApproval={canEdit && demandNeedsApproval(plan, role)}
+      canApprove={canApprove}
+      meId={profile?.id ?? ''}
+      pendingRequests={pendingRequests}
+      recentRequests={recentRequests}
     />
   );
 }
