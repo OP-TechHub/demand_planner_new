@@ -1,11 +1,10 @@
 import { createClient } from "@/lib/supabase/server";
 import { getActivePlan } from "@/lib/plan";
-import { OutputGrid, NotComputed } from "@/components/output-grid";
+import { NotComputed } from "@/components/output-grid";
 import { type GridRow } from "@/lib/grid-csv";
 import { StalePlanNotice } from "../stale-banner";
-import { PrintableGrid } from "@/components/printable-grid";
-import { MonthRangeProvider } from "@/components/month-range";
-import { ScrollSyncProvider } from "@/components/ui/scroll-x";
+import { OfflineCopy } from "@/components/pwa/offline-copy";
+import { OpenToBuyView } from "./open-to-buy-view";
 import { fetchAllByPlan } from "@/lib/fetch-all";
 import { CHANNELS } from "@oceanpick/engine";
 import { ALLOC_PATHS, PATH_SELECT, programPath, type AllocPath } from "@oceanpick/shared";
@@ -23,16 +22,6 @@ const BORROW_CHANNELS: { col: string; offset: number; pathIdx: number }[] =
     pathIdx: ALLOC_PATHS.indexOf(ch.path as AllocPath),
   }));
 const BORROW_COLS = BORROW_CHANNELS.map((c) => c.col);
-
-/** What the inquiry-fulfilment shading means, for its exports. */
-const INQUIRY_LEGEND = [
-  { label: "Fully fulfilled", bg: "#bbf7d0" },
-  { label: "Short", bg: "#fecaca" },
-  {
-    label: "Partly fulfilled (green share = fulfilled)",
-    bg: "linear-gradient(90deg, #bbf7d0 0 50%, #fecaca 50% 100%)",
-  },
-];
 
 export default async function OpenToBuyPage() {
   const plan = await getActivePlan();
@@ -143,7 +132,9 @@ export default async function OpenToBuyPage() {
       );
     }
   }
-  const allocatedTitles = new Map<string, string>();
+  // Per-cell hover texts are plain objects, not Maps: the whole props bag is
+  // saved as the page's offline copy, so it must stay plain serializable data.
+  const allocatedTitles: Record<string, string> = {};
   for (const [k, inner] of contrib) {
     const items = [...inner.entries()]
       .filter(([, wr]) => wr > 0.5)
@@ -156,10 +147,7 @@ export default async function OpenToBuyPage() {
           `${pipe.get(pid)?.label ?? pid}: ${Math.round(wr).toLocaleString()} kg`,
       );
     const extra = items.length > 12 ? `\n… +${items.length - 12} more` : "";
-    allocatedTitles.set(
-      k,
-      `Inquiries allocated here:\n${lines.join("\n")}${extra}`,
-    );
+    allocatedTitles[k] = `Inquiries allocated here:\n${lines.join("\n")}${extra}`;
   }
 
   const gridFor = (rowsByBM: Map<string, number>): GridRow[] =>
@@ -193,16 +181,14 @@ export default async function OpenToBuyPage() {
         (uwByBM.get(`${b.id}:${m}`) ?? 0) + (pwByBM.get(`${b.id}:${m}`) ?? 0),
     ),
   }));
-  const otbTitles = new Map<string, string>();
+  const otbTitles: Record<string, string> = {};
   for (const b of buckets ?? []) {
     for (const m of months) {
       const u = uwByBM.get(`${b.id}:${m}`) ?? 0;
       const p = pwByBM.get(`${b.id}:${m}`) ?? 0;
       if (u + p <= 0) continue;
-      otbTitles.set(
-        `${b.id}:${m}`,
-        `Unallocated: ${kg(u)}\nUnconfirmed inquiries: ${kg(p)}\nTotal OTB: ${kg(u + p)}`,
-      );
+      otbTitles[`${b.id}:${m}`] =
+        `Unallocated: ${kg(u)}\nUnconfirmed inquiries: ${kg(p)}\nTotal OTB: ${kg(u + p)}`;
     }
   }
 
@@ -240,25 +226,41 @@ export default async function OpenToBuyPage() {
     sublabel: `${p.item_description} (${p.item_code})`,
     values: months.map((m) => demByPM.get(`${p.id}:${m}`) ?? null),
   }));
-  const fulfilBg = new Map<string, string>();
-  const fulfilTitle = new Map<string, string>();
+  const fulfilBg: Record<string, string> = {};
+  const fulfilTitle: Record<string, string> = {};
   for (const p of pipeRows) {
     for (const m of months) {
       const dem = demByPM.get(`${p.id}:${m}`) ?? 0;
       if (dem <= 0) continue;
       const ful = Math.min(fulByPM.get(`${p.id}:${m}`) ?? 0, dem);
       const s = Math.round(Math.max(0, Math.min(1, ful / dem)) * 100);
-      fulfilBg.set(
-        `${p.id}:${m}`,
-        `linear-gradient(90deg, #bbf7d0 0 ${s}%, #fecaca ${s}% 100%)`,
-      );
-      fulfilTitle.set(
-        `${p.id}:${m}`,
-        `Fulfilled ${kg(ful)} of ${kg(dem)} (${s}%) — short ${kg(dem - ful)}`,
-      );
+      fulfilBg[`${p.id}:${m}`] =
+        `linear-gradient(90deg, #bbf7d0 0 ${s}%, #fecaca ${s}% 100%)`;
+      fulfilTitle[`${p.id}:${m}`] =
+        `Fulfilled ${kg(ful)} of ${kg(dem)} (${s}%) — short ${kg(dem - ful)}`;
     }
   }
   const anyFulfil = fulfilRows.some((r) => r.values.some((v) => (v ?? 0) > 0));
+
+  // Everything below the stale-plan notice renders from this one bag — the
+  // same object feeds the offline copy, so the copy holds exactly this view.
+  const props = {
+    planName: plan.name,
+    planStartDate: plan.plan_start_date,
+    horizon: plan.horizon_months,
+    otbRows,
+    otbTotalRows,
+    unallocatedRows,
+    allocatedRows,
+    fulfilRows,
+    otbTitles,
+    allocatedTitles,
+    fulfilTitle,
+    fulfilBg,
+    hasUnallocated: uw.length > 0,
+    hasAllocated: pw.length > 0,
+    anyFulfil,
+  };
 
   return (
     <div className="space-y-8">
@@ -278,164 +280,9 @@ export default async function OpenToBuyPage() {
       {!computed ? (
         <NotComputed />
       ) : (
-        <MonthRangeProvider
-          planStartDate={plan.plan_start_date}
-          horizon={plan.horizon_months}
-          note="applies to every table below"
-        >
-          {/* Every table on this page scrolls sideways together */}
-          <ScrollSyncProvider>
-            {/* Total OTB — unallocated + unconfirmed (pipeline) inquiry WR, in one table */}
-            <PrintableGrid
-              title="Total OTB"
-              planName={plan.name}
-              planStartDate={plan.plan_start_date}
-              horizon={plan.horizon_months}
-              rows={otbRows}
-              firstColLabel="Bucket"
-              unit="kg WR"
-              cellTitle={otbTitles}
-              csvFilename="total-otb"
-              description={
-                <>
-                  Everything still available to sell (kg WR) per bucket × month:{" "}
-                  <b>unallocated WR</b> plus the WR held by
-                  <b> unconfirmed inquiries</b> (pipeline programs — confirming
-                  one promotes it to active and drops it out of OTB). Hover a
-                  value for the split. <b>Print / PDF</b> and <b>Export CSV</b>{" "}
-                  cover the months selected above.
-                </>
-              }
-            />
-
-            {/* Total OTB, no bucket breakdown — the same figures on one line */}
-            <PrintableGrid
-              title="Total OTB — all buckets"
-              planName={plan.name}
-              planStartDate={plan.plan_start_date}
-              horizon={plan.horizon_months}
-              rows={otbTotalRows}
-              firstColLabel="Open to buy"
-              unit="kg WR"
-              showColumnTotals={false}
-              csvFilename="total-otb-all-buckets"
-              description={
-                <>
-                  The table above with the size buckets collapsed away —
-                  everything still available to sell (kg WR) per month across
-                  every bucket. <b>Print / PDF</b> and <b>Export CSV</b> cover
-                  the months selected above.
-                </>
-              }
-            />
-
-            {/* Unallocated WR */}
-            <section className="space-y-3">
-              <h2 className="text-lg font-semibold">Unallocated WR</h2>
-              <p className="text-xs text-muted-foreground">
-                Spare whole-round capacity (kg WR) per bucket × month, after
-                own-month consumption and all borrowings.
-              </p>
-              <OutputGrid
-                planStartDate={plan.plan_start_date}
-                horizon={plan.horizon_months}
-                rows={unallocatedRows}
-                format="num0"
-                firstColLabel="Bucket"
-                unit="kg WR"
-                exportAs={
-                  uw.length > 0
-                    ? {
-                        filename: "unallocated-wr",
-                        title: "Unallocated WR",
-                        subtitle: `${plan.name} · kg WR`,
-                      }
-                    : undefined
-                }
-              />
-            </section>
-
-            {/* Allocated with inquiries (formerly Pipeline WR) */}
-            <section className="space-y-3">
-              <h2 className="text-lg font-semibold">
-                Allocated with inquiries
-              </h2>
-              <p className="text-xs text-muted-foreground">
-                Whole-round (kg WR) consumed from each month&apos;s harvest by{" "}
-                <b>pipeline / inquiry</b> programs (own-month +
-                forward-borrowings sourcing here). Hover a value to see which
-                inquiries make it up.
-              </p>
-              <OutputGrid
-                planStartDate={plan.plan_start_date}
-                horizon={plan.horizon_months}
-                rows={allocatedRows}
-                format="num0"
-                firstColLabel="Bucket"
-                unit="kg WR"
-                cellTitle={allocatedTitles}
-                exportAs={
-                  pw.length > 0
-                    ? {
-                        filename: "allocated-with-inquiries",
-                        title: "Allocated with inquiries",
-                        subtitle: `${plan.name} · kg WR`,
-                      }
-                    : undefined
-                }
-              />
-            </section>
-
-            {/* Inquiry fulfilment — which pipeline orders can be met */}
-            <section className="space-y-3">
-              <h2 className="text-lg font-semibold">Inquiry fulfilment</h2>
-              <p className="text-xs text-muted-foreground">
-                Each pipeline order&apos;s demand (kg FP) per month, shaded by
-                how much the plan can fulfil —
-                <span
-                  className="mx-1 rounded px-1"
-                  style={{ background: "#bbf7d0", color: "#1e293b" }}
-                >
-                  fully
-                </span>
-                ,
-                <span
-                  className="mx-1 rounded px-1"
-                  style={{ background: "#fecaca", color: "#1e293b" }}
-                >
-                  short
-                </span>
-                , or a green/red split for partial. Hover a value for the
-                fulfilled vs short split.
-              </p>
-              {anyFulfil ? (
-                <OutputGrid
-                  planStartDate={plan.plan_start_date}
-                  horizon={plan.horizon_months}
-                  rows={fulfilRows}
-                  format="num0"
-                  firstColLabel="Program"
-                  unit="kg FP"
-                  cellTitle={fulfilTitle}
-                  cellBg={fulfilBg}
-                  exportAs={{
-                    filename: "inquiry-fulfilment",
-                    title: "Inquiry fulfilment",
-                    subtitle: `${plan.name} · demand kg FP`,
-                    legend: INQUIRY_LEGEND,
-                  }}
-                />
-              ) : (
-                <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-                  No pipeline demand is being computed. Pipeline orders are
-                  fulfilled only when the plan&apos;s Scope is{" "}
-                  <b>Active + Pipeline</b> (Settings) — set that and Recalculate
-                  to see this.
-                </p>
-              )}
-            </section>
-          </ScrollSyncProvider>
-        </MonthRangeProvider>
+        <OfflineCopy route="open-to-buy" props={props}>
+          <OpenToBuyView {...props} />
+        </OfflineCopy>
       )}
     </div>
   );

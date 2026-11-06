@@ -37,6 +37,7 @@ export function ScenariosClient({
   canCreate,
   yearsAhead,
   forkSources,
+  offline = false,
 }: {
   scenarios: ScenarioRow[];
   activeId: string;
@@ -44,6 +45,12 @@ export function ScenariosClient({
   canCreate: boolean;
   yearsAhead: number;
   forkSources: ForkSource[];
+  /**
+   * Rendering the saved copy with no connection (see lib/offline-snapshots.ts).
+   * Everything on this page — create, open (switches the active plan), rename,
+   * duplicate, delete — needs the server, so the list goes pure read-only.
+   */
+  offline?: boolean;
 }) {
   const router = useRouter();
   // Both open the same dialog; `creating` starts it at the default source,
@@ -78,19 +85,21 @@ export function ScenariosClient({
     <div className="mx-auto max-w-3xl space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">My Plans</h1>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => { setError(null); setCreating(true); }} disabled={!canCreate || !hasMaster || scenarios.length >= 20}>
-            <Plus />
-            New Scenario
-          </Button>
-          <Button onClick={() => { setError(null); setPlanning(true); }} disabled={!canCreate || !hasMaster || scenarios.length >= 20}>
-            <CalendarPlus />
-            New Plan
-          </Button>
-        </div>
+        {!offline && (
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => { setError(null); setCreating(true); }} disabled={!canCreate || !hasMaster || scenarios.length >= 20}>
+              <Plus />
+              New Scenario
+            </Button>
+            <Button onClick={() => { setError(null); setPlanning(true); }} disabled={!canCreate || !hasMaster || scenarios.length >= 20}>
+              <CalendarPlus />
+              New Plan
+            </Button>
+          </div>
+        )}
       </div>
 
-      {!canCreate && (
+      {!canCreate && !offline && (
         <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
           You have view-only access. Ask an admin for a Planner or Contributor role to create plans.
         </p>
@@ -130,18 +139,20 @@ export function ScenariosClient({
                 </td>
                 <td className="px-3 py-2 text-muted-foreground">{s.forked_at ? new Date(s.forked_at).toLocaleDateString() : '—'}</td>
                 <td className="px-3 py-2">
-                  <div className="flex justify-end gap-3">
-                    <button onClick={() => open(s.id)} disabled={isPending} className="text-primary hover:underline">Open</button>
-                    <button
-                      onClick={() => { setError(null); setDuplicating(s); }}
-                      disabled={isPending || !canCreate || scenarios.length >= 20}
-                      className="text-muted-foreground hover:text-foreground disabled:opacity-50"
-                    >
-                      Duplicate
-                    </button>
-                    <button onClick={() => setRenaming(s)} disabled={isPending} className="text-muted-foreground hover:text-foreground">Rename</button>
-                    <button onClick={() => onDelete(s)} disabled={isPending} className="text-muted-foreground hover:text-destructive">Delete</button>
-                  </div>
+                  {!offline && (
+                    <div className="flex justify-end gap-3">
+                      <button onClick={() => open(s.id)} disabled={isPending} className="text-primary hover:underline">Open</button>
+                      <button
+                        onClick={() => { setError(null); setDuplicating(s); }}
+                        disabled={isPending || !canCreate || scenarios.length >= 20}
+                        className="text-muted-foreground hover:text-foreground disabled:opacity-50"
+                      >
+                        Duplicate
+                      </button>
+                      <button onClick={() => setRenaming(s)} disabled={isPending} className="text-muted-foreground hover:text-foreground">Rename</button>
+                      <button onClick={() => onDelete(s)} disabled={isPending} className="text-muted-foreground hover:text-destructive">Delete</button>
+                    </div>
+                  )}
                 </td>
               </tr>
             ))}

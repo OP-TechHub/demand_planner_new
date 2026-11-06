@@ -1,10 +1,9 @@
 import { createClient } from '@/lib/supabase/server';
 import { getActivePlan, getProfile } from '@/lib/plan';
-import { SettingsForm } from './settings-form';
-import { RollForwardCard } from './roll-forward';
-import { RestoreSnapshotCard, type SnapshotOption } from './restore-snapshot';
-import { ApiKeysCard } from './api-keys';
-import { listApiKeys } from './api-keys-actions';
+import { type SnapshotOption } from './restore-snapshot';
+import { listApiKeys, type ApiKeyRow } from './api-keys-actions';
+import { OfflineCopy } from '@/components/pwa/offline-copy';
+import { SettingsView } from './settings-view';
 
 export default async function SettingsPage() {
   const plan = await getActivePlan();
@@ -44,27 +43,13 @@ export default async function SettingsPage() {
     }));
   }
 
+  // The offline snapshot deliberately carries NO API key material — not even
+  // labels or prefixes — so nothing about the keys is re-rendered from a
+  // device copy. The real list is passed only to the online render below.
+  const props = { plan, isAdmin, snapshots, apiKeys: [] as ApiKeyRow[] };
   return (
-    <div className="mx-auto max-w-2xl space-y-4">
-      <SettingsForm plan={plan} canEdit={isAdmin} />
-      {isAdmin && !plan.is_locked && (
-        <>
-          <RollForwardCard
-            planId={plan.id}
-            planName={plan.name}
-            planStartDate={plan.plan_start_date}
-            horizon={plan.horizon_months}
-          />
-          <RestoreSnapshotCard
-            planId={plan.id}
-            planName={plan.name}
-            planStartDate={plan.plan_start_date}
-            horizon={plan.horizon_months}
-            snapshots={snapshots}
-          />
-        </>
-      )}
-      {isAdmin && <ApiKeysCard keys={apiKeys} />}
-    </div>
+    <OfflineCopy route="settings" props={props}>
+      <SettingsView {...props} apiKeys={apiKeys} />
+    </OfflineCopy>
   );
 }

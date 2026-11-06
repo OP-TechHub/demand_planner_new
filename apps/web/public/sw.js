@@ -17,24 +17,60 @@
  *   - NOTHING user-specific is ever cached. Responses here are role- and
  *     RLS-scoped per user, and Cache Storage is shared across sessions on the
  *     device, so caching a page would leak one user's data to the next.
- *   - The only HTML cached is the two static offline pages, and each is stored
+ *   - The only HTML cached is the static offline pages, and each is stored
  *     together with every build file it references (see cacheOfflinePages), so
  *     a cached page never asks for a chunk that is not also cached. That keeps
  *     `skipWaiting` safe: a new worker can take over mid-session without the
  *     classic "old shell asks for deleted chunks" ChunkLoadError.
  *
- * Offline Cost Grid: /offline/costing is a static page whose DATA lives in
- * IndexedDB (lib/offline-costing.ts), written by the page itself, per user, and
- * wiped on sign-out. This worker only ever caches that page's HTML and code.
+ * Offline copies: /offline/<route> is a static page whose DATA lives in
+ * IndexedDB (lib/offline-snapshots.ts), written per user by the online page
+ * itself and wiped on sign-out. This worker only ever caches those pages'
+ * HTML and code.
  */
 
-const VERSION = 'v2';
+const VERSION = 'v3';
 const STATIC_CACHE = `op-static-${VERSION}`;
 const SHELL_CACHE = `op-shell-${VERSION}`;
 const OFFLINE_URL = '/offline';
-const OFFLINE_COSTING_URL = '/offline/costing';
-/** The static pages kept for use with no connection. No user data on either. */
-const OFFLINE_PAGES = [OFFLINE_URL, OFFLINE_COSTING_URL];
+
+/*
+ * The app routes with an offline copy. KEEP IN SYNC with lib/offline-routes.ts
+ * (this file cannot import it). Changing this list changes sw.js's bytes,
+ * which makes the browser install the new worker — and install re-caches
+ * everything, so a new route is picked up without any extra wiring.
+ */
+const OFFLINE_ROUTES = [
+  'programs',
+  'inquiry',
+  'demand-plan',
+  'po-update',
+  'harvest-plan',
+  'buckets',
+  'settings',
+  'home',
+  'annual-summary',
+  'order-book',
+  'fulfilment',
+  'open-to-buy',
+  'sixty-month',
+  'revenue-cost',
+  'secondary-products',
+  'optimizer',
+  'ranking',
+  'inquiry-management',
+  'inquiries',
+  'scenarios',
+  'diff',
+  'costing',
+  'costing/saved',
+  'costing/skus',
+  'costing/assumptions',
+  'costing/archived',
+];
+
+/** The static pages kept for use with no connection. No user data on any. */
+const OFFLINE_PAGES = [OFFLINE_URL, ...OFFLINE_ROUTES.map((r) => `/offline/${r}`)];
 
 /** Build-file URLs referenced from an HTML page or a stylesheet. */
 function assetUrls(text) {
@@ -87,10 +123,38 @@ function cacheOfflinePages() {
   return caching;
 }
 
+/*
+ * Pages ask for a (re)cache after every save of an offline copy — on every
+ * navigation, in effect — but re-fetching ~27 pages and their chunks each time
+ * would be absurd. One small probe decides instead: if every offline page is
+ * cached and /offline's HTML matches the server's byte for byte, this build is
+ * already fully cached (all the pages come from the same build, so one page's
+ * HTML changing is what a deploy looks like). The probe itself runs at most
+ * once a minute per worker lifetime.
+ */
+let lastFreshCheck = 0;
+async function ensureOfflinePagesFresh() {
+  if (Date.now() - lastFreshCheck < 60e3) return;
+  lastFreshCheck = Date.now();
+  try {
+    const cache = await caches.open(SHELL_CACHE);
+    const have = new Set((await cache.keys()).map((r) => new URL(r.url).pathname));
+    const allPresent = OFFLINE_PAGES.every((p) => have.has(p));
+    const res = await fetch(new Request(OFFLINE_URL, { cache: 'reload', credentials: 'same-origin' }));
+    if (!res.ok || res.redirected) return;
+    const fresh = await res.text();
+    const cached = allPresent ? await cache.match(OFFLINE_URL) : null;
+    if (cached && (await cached.clone().text()) === fresh) return;
+    await cacheOfflinePages();
+  } catch {
+    // Next save will try again.
+  }
+}
+
 /** Which cached offline page answers a failed navigation to `pathname`. */
 function offlinePageFor(pathname) {
-  if (pathname === '/costing' || pathname === OFFLINE_COSTING_URL) return OFFLINE_COSTING_URL;
-  return OFFLINE_URL;
+  const route = pathname.startsWith('/offline/') ? pathname.slice('/offline/'.length) : pathname.replace(/^\//, '');
+  return OFFLINE_ROUTES.includes(route) ? `/offline/${route}` : OFFLINE_URL;
 }
 
 /*
@@ -110,18 +174,18 @@ self.addEventListener('install', (event) => {
       } catch {
         // A missing fallback page must not block activation — the fetch
         // handler synthesises a response if this cache entry isn't there,
-        // and the Cost Grid asks for another attempt on its next visit.
+        // and every page asks for another attempt on its next visit.
       }
       await self.skipWaiting();
     })()
   );
 });
 
-// The Cost Grid posts this after saving its offline copy, so the page that
-// shows the copy is cached with the code of the build that saved it.
+// Pages post this after saving their offline copy, so the pages that show the
+// copies are cached with the code of the build that saved them.
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'cache-offline-pages') {
-    event.waitUntil(cacheOfflinePages().catch(() => {}));
+    event.waitUntil(ensureOfflinePagesFresh());
   }
 });
 
@@ -204,12 +268,12 @@ self.addEventListener('fetch', (event) => {
         try {
           return await fetch(request);
         } catch {
-          // Costing falls back to the saved Cost Grid; everything else to the
-          // offline screen. Costing is redirected rather than answered in place,
-          // so the address bar and Next's router both agree on which page this is;
-          // the redirected navigation fails too and lands back here.
+          // A page with a saved copy falls back to it; everything else to the
+          // offline screen. The copy is redirected to rather than answered in
+          // place, so the address bar and Next's router both agree on which
+          // page this is; the redirected navigation fails too and lands back here.
           const page = offlinePageFor(url.pathname);
-          if (page !== url.pathname && page === OFFLINE_COSTING_URL) {
+          if (page !== url.pathname && page !== OFFLINE_URL) {
             const has = await caches.match(page, { cacheName: SHELL_CACHE });
             if (has) return Response.redirect(page, 302);
           }

@@ -266,16 +266,23 @@ so the UI and DB stay in lockstep.
   (`edits:[{m,old,new}]`, `saved_from`, `inquiry_id`, `trim_for_inquiry`). See
   `app/(app)/admin/audit/reversible.ts` before changing what gets logged.
 - **Stale `.next`** can cause phantom errors — `rm -rf apps/web/.next` and rebuild.
-- **Offline Cost Grid.** `public/sw.js` caches only static files: the `/offline`
-  and `/offline/costing` pages plus every build file they reference, refreshed
-  all-or-nothing whenever Costing is opened online. The grid's data never goes in
-  Cache Storage. `costing/cost-grid-with-offline-copy.tsx` writes the grid's own
-  props to IndexedDB (`lib/offline-costing.ts`) on every online visit; the copy
-  is wiped by `SignOutButton` and by `OfflineCopyGuard` when another user signs
-  in. A failed navigation to `/costing` is redirected to `/offline/costing`.
-  **If you change `CostGridClient`'s props, bump `COST_GRID_SCHEMA`** so old
-  copies are ignored rather than mis-read. Bump the worker's `VERSION` when you
-  change `sw.js` caching.
+- **Offline copies (every data page).** `public/sw.js` caches only static files:
+  `/offline` and one `/offline/<route>` page per data page (admin and auth are
+  excluded) plus every build file they reference, refreshed all-or-nothing when a
+  cheap probe sees a new build. Page data never goes in Cache Storage. Each page
+  wraps its client component in `<OfflineCopy>` (`components/pwa/offline-copy.tsx`),
+  which writes the component's own props to IndexedDB (`lib/offline-snapshots.ts`)
+  on every online visit; the copies are wiped by `SignOutButton` and by
+  `OfflineCopyGuard` when another user signs in. A failed navigation to a page with
+  a copy is redirected to `/offline/<route>`, which renders the same client
+  component read-only via its entry in `app/offline/entries/` (collected in
+  `app/offline/registry.tsx` — never import that from an online page: it pulls in
+  the whole planner's client code).
+  **Adding a page:** follow the checklist at the top of `lib/offline-routes.ts`
+  (route row there, entry file, registry import, `<OfflineCopy>` wrap, and the
+  `OFFLINE_ROUTES` literal in `sw.js`). **If you change a page's client props,
+  bump its `schema` in `lib/offline-routes.ts`** so old copies are ignored rather
+  than mis-read. Bump the worker's `VERSION` when you change `sw.js` caching.
 
 ---
 

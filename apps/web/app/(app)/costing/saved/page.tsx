@@ -3,7 +3,8 @@ import { createClient } from '@/lib/supabase/server';
 import { getProfile } from '@/lib/plan';
 import { getBaseCostAccess, stripBaseCostOverrides } from '@/lib/costing';
 import type { CostAssumptionVersion, CostCosting } from '@oceanpick/shared';
-import { SavedList, type SavedRow } from './saved-list';
+import { SavedList, type SavedListProps, type SavedRow } from './saved-list';
+import { OfflineCopy } from '@/components/pwa/offline-copy';
 
 /**
  * Every saved costing in the org.
@@ -79,5 +80,10 @@ export default async function SavedCostingsPage() {
     isMine: c.created_by === profile?.id,
   }));
 
-  return <SavedList rows={list} />;
+  const props: SavedListProps = { rows: list };
+  return (
+    <OfflineCopy route="costing/saved" props={props}>
+      <SavedList {...props} />
+    </OfflineCopy>
+  );
 }

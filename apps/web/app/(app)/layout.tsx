@@ -13,6 +13,7 @@ import { ConfirmHost } from '@/components/ui/confirm';
 import { RecalculateButton } from './recalculate-button';
 import { RegisterServiceWorker } from '@/components/pwa/register-service-worker';
 import { OfflineCopyGuard } from '@/components/pwa/offline-copy-guard';
+import { OfflineUserProvider } from '@/components/pwa/offline-copy';
 import { SignOutButton } from '@/components/sign-out-button';
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -163,7 +164,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             />
           </div>
         )}
-        <main className="min-h-0 flex-1 overflow-y-auto p-6">{children}</main>
+        <main className="min-h-0 flex-1 overflow-y-auto p-6">
+          {/* Lets any page refresh its offline copy (<OfflineCopy>) without
+              re-fetching who the user is. */}
+          <OfflineUserProvider user={{ id: profile.id, name: profile.full_name || profile.email }}>
+            {children}
+          </OfflineUserProvider>
+        </main>
       </div>
       {/* Outside the header on purpose: its backdrop-blur makes it the containing
           block for fixed children, which would squash the panel to header height. */}

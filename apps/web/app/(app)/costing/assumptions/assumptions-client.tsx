@@ -1,6 +1,6 @@
 'use client';
 
-import { useActionState, useMemo, useState, useTransition } from 'react';
+import { useActionState, useMemo, useState, useTransition, type ComponentProps } from 'react';
 import { useRouter } from 'next/navigation';
 import { History, Lock } from 'lucide-react';
 import { effectiveFeedCostUsd, odcTotalUsd, wholeFishCost } from '@oceanpick/engine';
@@ -35,6 +35,7 @@ export function AssumptionsClient({
   canViewBaseCost,
   canEditBaseCost,
   canEditAssumptions,
+  offline = false,
 }: {
   version: CostAssumptionVersion;
   versions: CostAssumptionVersion[];
@@ -59,6 +60,15 @@ export function AssumptionsClient({
    * either, both, or neither, and an admin holds all of them.
    */
   canEditAssumptions: boolean;
+  /**
+   * Rendering the saved copy with no connection (see lib/offline-snapshots.ts).
+   * The entry forces every edit grant off, which hides publishing, the port
+   * management and the size-grade cells; this flag additionally freezes the
+   * version picker (switching versions is a server round trip) and drops the
+   * grant notices, which would otherwise mislabel the user's real rights.
+   * The live whole-fish preview still computes in the browser.
+   */
+  offline?: boolean;
 }) {
   const router = useRouter();
   const [state, action, pending] = useActionState<SaveState, FormData>(publishAssumptionVersion, {
@@ -92,7 +102,7 @@ export function AssumptionsClient({
    * which one you're in. An admin, and anyone holding both grants, can edit the
    * whole screen and needs no notice at all.
    */
-  const lockNotice = isAdmin || (canEditAssumptions && canEditBaseCost)
+  const lockNotice = offline || isAdmin || (canEditAssumptions && canEditBaseCost)
     ? null
     : canEditBaseCost
       ? 'You can change the base fish cost and the other direct costs. The rest is admin-maintained — override any of it inside your own costing instead, where the deviation gets stamped on it.'
@@ -110,7 +120,7 @@ export function AssumptionsClient({
             differs on the feed tax alone.
           </p>
         </div>
-        <VersionPicker versions={versions} current={version} />
+        <VersionPicker versions={versions} current={version} disabled={offline} />
       </header>
 
       {isHistoric && (
@@ -580,12 +590,22 @@ function HaulageCheck({ draft, version }: { draft: Record<string, number>; versi
   );
 }
 
-function VersionPicker({ versions, current }: { versions: CostAssumptionVersion[]; current: CostAssumptionVersion }) {
+function VersionPicker({
+  versions,
+  current,
+  disabled = false,
+}: {
+  versions: CostAssumptionVersion[];
+  current: CostAssumptionVersion;
+  /** Offline: switching versions reloads the page from the server, so the picker freezes on the version the copy holds. */
+  disabled?: boolean;
+}) {
   return (
     <label className="flex items-center gap-1.5 text-xs">
       <History className="h-3.5 w-3.5 text-muted-foreground" />
       <select
         value={current.id}
+        disabled={disabled}
         onChange={(e) => {
           window.location.href = `/costing/assumptions?v=${e.target.value}`;
         }}
@@ -668,3 +688,6 @@ function Banner({ tone, children }: { tone: 'warning' | 'destructive' | 'success
 }
 
 const inputCls = 'rounded-md border bg-background px-2 py-1 text-xs disabled:opacity-60';
+
+/** Everything the screen needs to draw, as the page hands it over (and the offline copy stores it). */
+export type AssumptionsClientProps = ComponentProps<typeof AssumptionsClient>;

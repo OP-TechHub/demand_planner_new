@@ -1,10 +1,11 @@
 import { createClient } from '@/lib/supabase/server';
 import { getActivePlan } from '@/lib/plan';
-import { NotComputed } from '@/components/output-grid';
 import { StalePlanNotice } from '../stale-banner';
-import { MetricGrid, type Metric } from '@/components/metric-grid';
+import { type Metric } from '@/components/metric-grid';
 import { fetchAllByPlan } from '@/lib/fetch-all';
 import { programOrder, gridRowsFor } from '@/lib/outputs';
+import { OfflineCopy } from '@/components/pwa/offline-copy';
+import { SixtyMonthView } from './sixty-month-view';
 
 export default async function SixtyMonthPage() {
   const plan = await getActivePlan();
@@ -24,13 +25,20 @@ export default async function SixtyMonthPage() {
     { key: 'margin', label: 'Margin', unit: '$', format: 'usd0', rows: gridRowsFor(order, rr, m, 'rolling_margin') },
   ];
 
+  const props = {
+    planStartDate: plan.plan_start_date,
+    horizon: m,
+    metrics,
+    notComputed: order.length === 0,
+  };
+  const view = (
+    <SixtyMonthView {...props} staleNotice={<StalePlanNotice planId={plan.id} lastComputedAt={plan.last_computed_at} />} />
+  );
+  // Not computed yet → nothing worth copying to the device.
+  if (props.notComputed) return view;
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-semibold tracking-tight">60-Month Summary</h1>
-      <StalePlanNotice planId={plan.id} lastComputedAt={plan.last_computed_at} />
-      {order.length === 0 ? <NotComputed /> : (
-        <MetricGrid planStartDate={plan.plan_start_date} horizon={m} metrics={metrics} filenameBase="60-month" />
-      )}
-    </div>
+    <OfflineCopy route="sixty-month" props={props}>
+      {view}
+    </OfflineCopy>
   );
 }

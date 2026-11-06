@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useState, useTransition } from 'react';
+import { useState, useTransition, type ComponentProps } from 'react';
 import { AlertTriangle, RotateCcw } from 'lucide-react';
 import { restoreCosting, restoreCostSku } from './actions';
 
@@ -24,7 +24,20 @@ export interface ArchivedSku {
   deletedAt: string;
 }
 
-export function ArchivedList({ costings, skus }: { costings: ArchivedCosting[]; skus: ArchivedSku[] }) {
+export function ArchivedList({
+  costings,
+  skus,
+  offline = false,
+}: {
+  costings: ArchivedCosting[];
+  skus: ArchivedSku[];
+  /**
+   * Rendering the saved copy with no connection (see lib/offline-snapshots.ts).
+   * Restoring is a server action, so the buttons are hidden — the lists stay
+   * readable so an admin can still see what was deleted and when.
+   */
+  offline?: boolean;
+}) {
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       <header>
@@ -55,7 +68,7 @@ export function ArchivedList({ costings, skus }: { costings: ArchivedCosting[]; 
                 ]}
                 flag={c.hasOverrides ? 'custom assumptions' : null}
                 confirm={`Restore “${c.name}” to Saved costings?`}
-                onRestore={() => restoreCosting(c.id)}
+                onRestore={offline ? null : () => restoreCosting(c.id)}
               />
             ))}
           </div>
@@ -83,7 +96,7 @@ export function ArchivedList({ costings, skus }: { costings: ArchivedCosting[]; 
                 ]}
                 flag={null}
                 confirm={`Restore “${s.name}” to the SKU list?`}
-                onRestore={() => restoreCostSku(s.id)}
+                onRestore={offline ? null : () => restoreCostSku(s.id)}
               />
             ))}
           </div>
@@ -110,7 +123,8 @@ function Row({
   meta: string[];
   flag: string | null;
   confirm: string;
-  onRestore: () => Promise<{ error: string | null }>;
+  /** Null offline: restoring needs the server, so the button is not drawn. */
+  onRestore: (() => Promise<{ error: string | null }>) | null;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -140,23 +154,28 @@ function Row({
             {flag}
           </span>
         )}
-        <button
-          disabled={pending}
-          onClick={() => {
-            if (!confirm(confirmText)) return;
-            setError(null);
-            startTransition(async () => {
-              const res = await onRestore();
-              if (res.error) setError(res.error);
-              else router.refresh();
-            });
-          }}
-          className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium hover:bg-muted disabled:opacity-50"
-        >
-          <RotateCcw className="h-3.5 w-3.5" />
-          {pending ? 'Restoring…' : 'Restore'}
-        </button>
+        {onRestore && (
+          <button
+            disabled={pending}
+            onClick={() => {
+              if (!confirm(confirmText)) return;
+              setError(null);
+              startTransition(async () => {
+                const res = await onRestore();
+                if (res.error) setError(res.error);
+                else router.refresh();
+              });
+            }}
+            className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium hover:bg-muted disabled:opacity-50"
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            {pending ? 'Restoring…' : 'Restore'}
+          </button>
+        )}
       </div>
     </div>
   );
 }
+
+/** Everything the bin needs to draw, as the page hands it over (and the offline copy stores it). */
+export type ArchivedListProps = ComponentProps<typeof ArchivedList>;

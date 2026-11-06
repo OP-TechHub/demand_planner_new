@@ -176,6 +176,7 @@ export function InquiryClient({
   programs,
   buckets,
   canSave,
+  offline = false,
 }: {
   planId: string;
   planStartDate: string;
@@ -183,6 +184,13 @@ export function InquiryClient({
   programs: InquiryProgram[];
   buckets: InquiryBucket[];
   canSave: boolean;
+  /**
+   * Rendering the saved copy with no connection (see lib/offline-snapshots.ts).
+   * Both inquiry flows check availability through server actions as you type —
+   * not just on save — so offline the form is replaced by a clear disabled
+   * state rather than rendered dead.
+   */
+  offline?: boolean;
 }) {
   const [mode, setMode] = useState<'existing' | 'new'>('existing');
   const customers = useMemo(
@@ -201,26 +209,39 @@ export function InquiryClient({
         </p>
       </div>
 
-      <div className="flex w-max items-center gap-0.5 rounded-lg border border-border bg-muted/30 p-0.5 text-sm">
-        {(['existing', 'new'] as const).map((m) => (
-          <button
-            key={m}
-            type="button"
-            onClick={() => setMode(m)}
-            className={cn(
-              'rounded-md px-3 py-1 font-medium transition-colors',
-              mode === m ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
-            )}
-          >
-            {m === 'existing' ? 'Existing program' : 'New program'}
-          </button>
-        ))}
-      </div>
-
-      {mode === 'existing' ? (
-        <ExistingInquiry planId={planId} planStartDate={planStartDate} horizon={horizon} programs={programs} canSave={canSave} />
+      {offline ? (
+        <div className="flex items-start gap-2 rounded-lg border border-dashed p-5 text-sm text-muted-foreground">
+          <Info className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            Raising an inquiry checks the request against the plan&apos;s spare capacity as you fill it in, which needs
+            a connection — so this form is disabled offline. Reconnect to check availability or save an inquiry; the{' '}
+            <b>Inquiries</b> page&apos;s saved copy still lists what has already been raised.
+          </span>
+        </div>
       ) : (
-        <NewInquiry planId={planId} planStartDate={planStartDate} horizon={horizon} buckets={buckets} customers={customers} canSave={canSave} />
+        <>
+          <div className="flex w-max items-center gap-0.5 rounded-lg border border-border bg-muted/30 p-0.5 text-sm">
+            {(['existing', 'new'] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setMode(m)}
+                className={cn(
+                  'rounded-md px-3 py-1 font-medium transition-colors',
+                  mode === m ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                {m === 'existing' ? 'Existing program' : 'New program'}
+              </button>
+            ))}
+          </div>
+
+          {mode === 'existing' ? (
+            <ExistingInquiry planId={planId} planStartDate={planStartDate} horizon={horizon} programs={programs} canSave={canSave} />
+          ) : (
+            <NewInquiry planId={planId} planStartDate={planStartDate} horizon={horizon} buckets={buckets} customers={customers} canSave={canSave} />
+          )}
+        </>
       )}
     </div>
   );

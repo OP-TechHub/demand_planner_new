@@ -126,7 +126,7 @@ export function CostGridClient({
    */
   canViewBaseCost: boolean;
   /**
-   * Rendering the saved copy with no connection (see lib/offline-costing.ts).
+   * Rendering the saved copy with no connection (see lib/offline-snapshots.ts).
    * Saving a costing and re-costing need the server, so they are hidden; the
    * caller also passes canRecost false. Breakdowns and every export still work.
    */

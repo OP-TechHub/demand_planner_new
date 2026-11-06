@@ -3,7 +3,9 @@ import { getActivePlan } from '@/lib/plan';
 import { type GridRow } from '@/lib/grid-csv';
 import { StalePlanNotice } from '../stale-banner';
 import { fetchAllByPlan } from '@/lib/fetch-all';
-import { OrderBookGrid } from './order-book-grid';
+import { OfflineCopy } from '@/components/pwa/offline-copy';
+import { OrderBookView } from './order-book-view';
+import { BLUE, PINK, YELLOW } from './colors';
 import { num0 } from '@/lib/format';
 
 /**
@@ -23,11 +25,6 @@ import { num0 } from '@/lib/format';
  * Anything else (inactive) is left uncoloured rather than dropped, so a
  * deactivated program with orders against it stays visible.
  */
-
-/** Cell colours. Deliberate data-viz values, not theme tokens — see output-grid. */
-const BLUE = '#bfdbfe';
-const PINK = '#fbcfe8';
-const YELLOW = '#fde68a';
 
 export default async function OrderBookPage() {
   const plan = await getActivePlan();
@@ -77,9 +74,11 @@ export default async function OrderBookPage() {
   const rank = (s: string) => (s === 'active' ? 0 : s === 'pipeline' ? 1 : 2);
   const ordered = [...programs].sort((a, b) => rank(a.status) - rank(b.status) || a.sort_order - b.sort_order);
 
+  // Plain objects, not Maps: the whole props bag is saved as the page's
+  // offline copy, so it must be plain serializable data throughout.
   const rows: GridRow[] = [];
-  const cellBg = new Map<string, string>();
-  const cellTitle = new Map<string, string>();
+  const cellBg: Record<string, string> = {};
+  const cellTitle: Record<string, string> = {};
   const poMonths: Record<string, number[]> = {};
 
   for (const p of ordered) {
@@ -92,8 +91,8 @@ export default async function OrderBookPage() {
       if (pipeline) {
         const ful = fulfilled.get(k) ?? 0;
         if (ful > 0) {
-          cellBg.set(k, YELLOW);
-          cellTitle.set(k, `Pipeline — can fulfil ${num0(ful)} kg of ${num0(dem)} kg asked`);
+          cellBg[k] = YELLOW;
+          cellTitle[k] = `Pipeline — can fulfil ${num0(ful)} kg of ${num0(dem)} kg asked`;
         }
         return ful;
       }
@@ -105,11 +104,11 @@ export default async function OrderBookPage() {
       if (qty !== undefined) {
         const refs = poRefs.get(k) ?? [];
         (poMonths[p.id] ??= []).push(m);
-        cellBg.set(k, BLUE);
-        cellTitle.set(k, `PO received — ${refs.join(', ')} · ${num0(qty)} kg`);
+        cellBg[k] = BLUE;
+        cellTitle[k] = `PO received — ${refs.join(', ')} · ${num0(qty)} kg`;
       } else if (p.status === 'active') {
-        cellBg.set(k, PINK);
-        cellTitle.set(k, `Active, no PO yet — ${num0(dem)} kg forecast`);
+        cellBg[k] = PINK;
+        cellTitle[k] = `Active, no PO yet — ${num0(dem)} kg forecast`;
       }
       return dem;
     });
@@ -126,6 +125,19 @@ export default async function OrderBookPage() {
   const computed = rr.length > 0;
   const anyPipeline = programs.some((p) => p.status === 'pipeline');
 
+  // Everything below the stale-plan notice renders from this one bag — the
+  // same object feeds the offline copy, so the copy holds exactly this view.
+  const props = {
+    planStartDate: plan.plan_start_date,
+    horizon,
+    rows,
+    poMonths,
+    cellBg,
+    cellTitle,
+    computed,
+    anyPipeline,
+  };
+
   return (
     <div className="space-y-4">
       <div>
@@ -137,67 +149,9 @@ export default async function OrderBookPage() {
 
       <StalePlanNotice planId={plan.id} lastComputedAt={plan.last_computed_at} />
 
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-lg border bg-card px-4 py-3 text-xs">
-        <Key color={BLUE} title="PO received">the month&apos;s PO quantity — firm</Key>
-        <Key color={PINK} title="Active, no PO">forecast demand — not yet sold</Key>
-        <Key color={YELLOW} title="Pipeline">what the plan can fulfil, not the full ask</Key>
-      </div>
-
-      {!computed && anyPipeline && (
-        <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
-          Pipeline rows read zero until the plan is calculated — their figure is what the engine can fulfil, and there
-          are no results yet. <b>Recalculate</b> to fill them in.
-        </p>
-      )}
-
-      {rows.length === 0 ? (
-        <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-          This plan has no programs yet — add them on the Programs tab first.
-        </p>
-      ) : (
-        <OrderBookGrid
-          planStartDate={plan.plan_start_date}
-          horizon={horizon}
-          rows={rows}
-          poMonths={poMonths}
-          cellBg={cellBg}
-          cellTitle={cellTitle}
-          legend={[
-            { label: 'PO received — firm', bg: BLUE },
-            { label: 'Active, no PO — forecast', bg: PINK },
-            { label: 'Pipeline — what the plan can fulfil', bg: YELLOW },
-          ]}
-        />
-      )}
-
-      <p className="text-xs text-muted-foreground">
-        Pick the months you want, then narrow to the programs you care about — the picker beside the tabs takes any
-        number of them, and searching by customer lets you add a whole account at once. The tabs then sort what&apos;s
-        left by what it does <i>in those months</i>: <b>PO received</b> is any program holding a PO in that window,
-        <b> Active, no PO</b> is an active program with none, and <b>Pipeline</b> is the inquiry rows. Narrowing the
-        months re-answers the question, so a program whose only PO lands outside the window moves between the first two,
-        and the counts on the tabs move with it. Active and pipeline programs are kept apart, active first. For an <b>active</b> program the figure is its demand
-        plan quantity — <span className="rounded px-1" style={{ background: BLUE, color: '#1e293b' }}>blue</span> once a
-        PO has been received for that month (the PO Update tab has already set demand to the PO sum), and{' '}
-        <span className="rounded px-1" style={{ background: PINK, color: '#1e293b' }}>pink</span> while it is still
-        only a forecast. A <b>pipeline</b> program is{' '}
-        <span className="rounded px-1" style={{ background: YELLOW, color: '#1e293b' }}>yellow</span> and shows what the
-        plan <b>can fulfil</b> rather than what was asked for, because an unconfirmed inquiry only belongs in an order
-        book to the extent supply can actually cover it — hover one to see the ask behind it. Months with no demand, and
-        pipeline months the plan can&apos;t fulfil at all, are left uncoloured. The TOTAL row therefore adds firm and
-        forecast active demand to fulfilable pipeline, which is the order book as a whole.
-      </p>
+      <OfflineCopy route="order-book" props={props}>
+        <OrderBookView {...props} />
+      </OfflineCopy>
     </div>
-  );
-}
-
-function Key({ color, title, children }: { color: string; title: string; children: React.ReactNode }) {
-  return (
-    <span className="flex items-center gap-2">
-      <span className="h-4 w-6 shrink-0 rounded border border-border" style={{ background: color }} />
-      <span>
-        <b>{title}</b> <span className="text-muted-foreground">— {children}</span>
-      </span>
-    </span>
   );
 }

@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { getActivePlan } from '@/lib/plan';
+import { OfflineCopy } from '@/components/pwa/offline-copy';
 import { InquiriesClient, type InquiryRow } from './inquiries-client';
 
 export default async function InquiriesPage() {
@@ -39,5 +40,10 @@ export default async function InquiriesPage() {
     promotable: r.target_program_id ? pipelineTargets.has(r.target_program_id) : false,
   }));
 
-  return <InquiriesClient planName={plan.name} planStartDate={plan.plan_start_date} inquiries={inquiries} />;
+  const props = { planName: plan.name, planStartDate: plan.plan_start_date, inquiries };
+  return (
+    <OfflineCopy route="inquiries" props={props}>
+      <InquiriesClient {...props} />
+    </OfflineCopy>
+  );
 }

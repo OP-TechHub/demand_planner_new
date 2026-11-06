@@ -1,11 +1,12 @@
 import { createClient } from '@/lib/supabase/server';
 import { getActivePlan } from '@/lib/plan';
-import { NotComputed } from '@/components/output-grid';
 import type { GridRow } from '@/lib/grid-csv';
 import { StalePlanNotice } from '../stale-banner';
-import { MetricGrid, type Metric } from '@/components/metric-grid';
+import { type Metric } from '@/components/metric-grid';
 import { fetchAllByPlan } from '@/lib/fetch-all';
 import { programOrder, gridRowsFor, unitGridRowsFor } from '@/lib/outputs';
+import { OfflineCopy } from '@/components/pwa/offline-copy';
+import { RevenueCostView } from './revenue-cost-view';
 
 export default async function RevenueCostPage() {
   const plan = await getActivePlan();
@@ -214,46 +215,22 @@ export default async function RevenueCostPage() {
     .some((r) => Number(r.rolling_margin_per_path) !== 0);
   const hasMargin = (rr as { rolling_margin: number }[]).some((r) => Number(r.rolling_margin) !== 0);
 
+  const props = {
+    planStartDate: plan.plan_start_date,
+    horizon: m,
+    metrics,
+    perPathReady,
+    hasMargin,
+    notComputed: order.length === 0,
+  };
+  const view = (
+    <RevenueCostView {...props} staleNotice={<StalePlanNotice planId={plan.id} lastComputedAt={plan.last_computed_at} />} />
+  );
+  // Not computed yet → nothing worth copying to the device.
+  if (props.notComputed) return view;
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-semibold tracking-tight">Revenue &amp; Cost</h1>
-      <StalePlanNotice planId={plan.id} lastComputedAt={plan.last_computed_at} />
-      <p className="text-xs text-muted-foreground">
-        The per-program rows of revenue, cost and margin reproduce the V30 workbook to the dollar (parity-tested to ±$1). Cost charges every kilo
-        at the program&apos;s <b>primary-path</b> rate, exactly as Excel does; <b>Margin (per-path)</b> re-costs each kilo at
-        the path that actually supplied it, which on the V30 baseline shifts the plan total by about 0.1% and individual
-        programs by more. Filter by status to see active or pipeline (inquiry) programs only. On <b>Cost</b>, the dropdown
-        splits the total into its components — barra, packing, processing, storage, freight and other — which sum back to
-        the total. <b>Revenue</b> and both <b>Margin</b> tabs carry a <b>Secondary products</b> row beneath the programs,
-        taken from the Secondary products page. Secondary products carry no cost of their own, so every dollar they
-        earn is also a dollar of margin. Beneath that, each <b>other product</b> from the same page (fingerling, or any
-        other line traded outside the harvest plan) has its own row, named after the product, on <b>Revenue</b>,{' '}
-        <b>Cost</b> and both <b>Margin</b> tabs: its typed-in quantity × the per-unit revenue and cost it was set up
-        with. On <b>Cost</b> the dropdown gains an <b>Other products</b> component so the parts still sum to the total.
-        Together these make the <b>TOTAL</b> row on each tab the plan&apos;s whole figure — programs, secondary products and
-        other products — and match the Total rows on the Annual Summary. The program rows above are untouched, so the
-        parity figures are still there to read.
-      </p>
-      <p className="text-xs text-muted-foreground">
-        <b>Unit revenue</b>, <b>Unit cost</b> and <b>Unit margin</b> are the same three figures divided by the kilos of
-        finished product behind them — the realised price per kg, the loaded cost per kg, and the difference. A rate
-        can&apos;t be added up, so on these three tabs the total column and the bottom row are a{' '}
-        <b>weighted average</b>: total dollars ÷ total kilos, which lets a large program pull the average its way
-        instead of counting equally with a small one. A month a program ships nothing has no rate, so it reads $0.00 and
-        is left out of the averages rather than dragging them down. <b>Unit cost</b> splits into the same six components
-        through the dropdown. These three tabs carry <b>no Secondary products or other product rows</b>: by-products
-        are recovered from round weight, and other products are counted in their own units, so neither has a kilo of
-        finished product behind it and can&apos;t share this denominator — read them on the dollar tabs above.
-      </p>
-      {hasMargin && !perPathReady && (
-        <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
-          <b>Margin (per-path)</b> reads zero until the next Recalculate — it&apos;s a new figure and existing results
-          predate it.
-        </p>
-      )}
-      {order.length === 0 ? <NotComputed /> : (
-        <MetricGrid planStartDate={plan.plan_start_date} horizon={m} metrics={metrics} filenameBase="revenue-cost" statusFilter rowFilter />
-      )}
-    </div>
+    <OfflineCopy route="revenue-cost" props={props}>
+      {view}
+    </OfflineCopy>
   );
 }

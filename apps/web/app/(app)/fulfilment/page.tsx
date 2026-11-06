@@ -1,10 +1,11 @@
 import { createClient } from '@/lib/supabase/server';
 import { getActivePlan } from '@/lib/plan';
-import { OutputGrid, NotComputed } from '@/components/output-grid';
 import { type GridRow } from '@/lib/grid-csv';
 import { StalePlanNotice } from '../stale-banner';
 import { fetchAllByPlan } from '@/lib/fetch-all';
 import { programOrder } from '@/lib/outputs';
+import { OfflineCopy } from '@/components/pwa/offline-copy';
+import { FulfilmentView } from './fulfilment-view';
 
 export default async function FulfilmentPage() {
   const plan = await getActivePlan();
@@ -24,18 +25,20 @@ export default async function FulfilmentPage() {
     values: months.map((m) => byPM.get(`${p.id}:${m}`) ?? null),
   }));
 
+  const props = {
+    planStartDate: plan.plan_start_date,
+    horizon: plan.horizon_months,
+    planName: plan.name,
+    rows,
+  };
+  const view = (
+    <FulfilmentView {...props} staleNotice={<StalePlanNotice planId={plan.id} lastComputedAt={plan.last_computed_at} />} />
+  );
+  // Not computed yet → nothing worth copying to the device.
+  if (rows.length === 0) return view;
   return (
-    <div className="space-y-4">
-      <StalePlanNotice planId={plan.id} lastComputedAt={plan.last_computed_at} />
-      <h1 className="text-2xl font-semibold tracking-tight">Program Fulfilment</h1>
-      {rows.length === 0 ? (
-        <NotComputed />
-      ) : (
-        <>
-          <p className="text-xs text-muted-foreground">Fulfilment % by program × month. Green ≥ 95%, amber 80–95%, red &lt; 80%. Blank = no demand.</p>
-          <OutputGrid planStartDate={plan.plan_start_date} horizon={plan.horizon_months} rows={rows} format="pct" colorFor="fulfilment" unit="% of demand" hideTotals exportAs={{ filename: "program-fulfilment", title: "Program Fulfilment", subtitle: `${plan.name} · fulfilment %` }} />
-        </>
-      )}
-    </div>
+    <OfflineCopy route="fulfilment" props={props}>
+      {view}
+    </OfflineCopy>
   );
 }

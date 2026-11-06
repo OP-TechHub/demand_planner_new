@@ -6,6 +6,7 @@ import { fetchAllByPlan } from '@/lib/fetch-all';
 import { CHANNELS } from '@oceanpick/engine';
 import type { AllocPath } from '@oceanpick/shared';
 import { DemandClient, type AllocLine } from './demand-client';
+import { OfflineCopy } from '@/components/pwa/offline-copy';
 
 /** rolling_results borrow columns → (months back, sourcing path). */
 const BORROW_CHANNELS = CHANNELS.map((ch) => ({ col: `borrow_${ch.field}_wr`, offset: ch.offset, path: ch.path as AllocPath }));
@@ -84,23 +85,26 @@ export default async function DemandPlanPage() {
   const pendingRequests = requests.filter((r) => r.status === 'pending');
   const recentRequests = requests.filter((r) => r.status !== 'pending' && r.requested_by === profile?.id).reverse().slice(0, 5);
 
+  const props = {
+    planId: plan.id,
+    planStartDate: plan.plan_start_date,
+    horizon: plan.horizon_months,
+    programs: (programs ?? []) as Program[],
+    demandRows: rows as DemandCell[],
+    fulfilment,
+    wrLines,
+    bucketNames,
+    canEdit,
+    canExport: canExportData(role, profile?.edit_sections),
+    needsApproval: canEdit && demandNeedsApproval(plan, role),
+    canApprove,
+    meId: profile?.id ?? '',
+    pendingRequests,
+    recentRequests,
+  };
   return (
-    <DemandClient
-      planId={plan.id}
-      planStartDate={plan.plan_start_date}
-      horizon={plan.horizon_months}
-      programs={(programs ?? []) as Program[]}
-      demandRows={rows as DemandCell[]}
-      fulfilment={fulfilment}
-      wrLines={wrLines}
-      bucketNames={bucketNames}
-      canEdit={canEdit}
-      canExport={canExportData(role, profile?.edit_sections)}
-      needsApproval={canEdit && demandNeedsApproval(plan, role)}
-      canApprove={canApprove}
-      meId={profile?.id ?? ''}
-      pendingRequests={pendingRequests}
-      recentRequests={recentRequests}
-    />
+    <OfflineCopy route="demand-plan" props={props}>
+      <DemandClient {...props} />
+    </OfflineCopy>
   );
 }

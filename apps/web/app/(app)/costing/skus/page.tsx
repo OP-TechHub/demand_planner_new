@@ -2,7 +2,8 @@ import { createClient } from '@/lib/supabase/server';
 import { getProfile } from '@/lib/plan';
 import { forClient, getBaseCostAccess, loadCostingContext } from '@/lib/costing';
 import { CostingSetupNotice } from '../setup-notice';
-import { SkusClient } from './skus-client';
+import { SkusClient, type SkusClientProps } from './skus-client';
+import { OfflineCopy } from '@/components/pwa/offline-copy';
 
 /**
  * The costing SKU master — one standalone list serving both markets
@@ -34,37 +35,40 @@ export default async function CostingSkusPage() {
   // nothing about the feed price or the ODC components.
   const { version, odc } = forClient(ctx, baseCost);
 
+  const props: SkusClientProps = {
+    skus: ctx.skus,
+    buckets: ctx.buckets,
+    yields: Object.fromEntries(ctx.yields.entries()),
+    // The ingredients behind each marinade cost. Loaded for every SKU, not
+    // just the one being edited, because the builder offers every ingredient
+    // anyone has already priced as you type.
+    marinadeLines: Object.fromEntries(ctx.marinadeLines.entries()),
+    // The sub-products of each composite SKU, with the ingredient list behind
+    // each price. Loaded for every SKU for the same reason as above.
+    components: Object.fromEntries(ctx.components.entries()),
+    overheads: Object.fromEntries(ctx.overheads.entries()),
+    orgId: ctx.version.org_id,
+    // Passed so the editor can show what each override would inherit if left
+    // blank — a new SKU shouldn't be a guess about what the defaults are.
+    version,
+    // The dialog costs the SKU live, before saving, using the same engine the
+    // grid uses — so it needs the same assumptions and freight rates.
+    odc,
+    destinations: ctx.destinations,
+    rates: Object.fromEntries(
+      [...ctx.rates.entries()].map(([id, r]) => [id, { sea: r.sea_rate_per_20ft, air: r.air_rate_per_lot, duty: r.duty_levy_pct ?? null }])
+    ),
+    // Anyone may add a SKU; editing one is limited to whoever created it
+    // (Decisions §5, same rule as costings). The seeded 34 have no creator,
+    // so they stay admin-only — they are shared company recipes.
+    currentUserId: profile?.id ?? null,
+    authors,
+    isAdmin: (profile?.role ?? 'viewer') === 'admin',
+    canViewBaseCost: baseCost.canView,
+  };
   return (
-    <SkusClient
-      skus={ctx.skus}
-      buckets={ctx.buckets}
-      yields={Object.fromEntries(ctx.yields.entries())}
-      // The ingredients behind each marinade cost. Loaded for every SKU, not
-      // just the one being edited, because the builder offers every ingredient
-      // anyone has already priced as you type.
-      marinadeLines={Object.fromEntries(ctx.marinadeLines.entries())}
-      // The sub-products of each composite SKU, with the ingredient list behind
-      // each price. Loaded for every SKU for the same reason as above.
-      components={Object.fromEntries(ctx.components.entries())}
-      overheads={Object.fromEntries(ctx.overheads.entries())}
-      orgId={ctx.version.org_id}
-      // Passed so the editor can show what each override would inherit if left
-      // blank — a new SKU shouldn't be a guess about what the defaults are.
-      version={version}
-      // The dialog costs the SKU live, before saving, using the same engine the
-      // grid uses — so it needs the same assumptions and freight rates.
-      odc={odc}
-      destinations={ctx.destinations}
-      rates={Object.fromEntries(
-        [...ctx.rates.entries()].map(([id, r]) => [id, { sea: r.sea_rate_per_20ft, air: r.air_rate_per_lot, duty: r.duty_levy_pct ?? null }])
-      )}
-      // Anyone may add a SKU; editing one is limited to whoever created it
-      // (Decisions §5, same rule as costings). The seeded 34 have no creator,
-      // so they stay admin-only — they are shared company recipes.
-      currentUserId={profile?.id ?? null}
-      authors={authors}
-      isAdmin={(profile?.role ?? 'viewer') === 'admin'}
-      canViewBaseCost={baseCost.canView}
-    />
+    <OfflineCopy route="costing/skus" props={props}>
+      <SkusClient {...props} />
+    </OfflineCopy>
   );
 }

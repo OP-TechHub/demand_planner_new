@@ -1,6 +1,6 @@
 'use client';
 
-import { useActionState, useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import { useActionState, useEffect, useMemo, useRef, useState, useTransition, type ComponentProps } from 'react';
 import { useRouter } from 'next/navigation';
 import { Download, FileSignature, FileText, Lock, Pencil, Plus, Printer, X } from 'lucide-react';
 import {
@@ -66,6 +66,7 @@ export function SkusClient({
   authors,
   isAdmin,
   canViewBaseCost,
+  offline = false,
 }: {
   skus: CostSkuRow[];
   buckets: CostSizeBucket[];
@@ -87,6 +88,14 @@ export function SkusClient({
    * numbers — so the printed sheet drops the whole-fish build-up.
    */
   canViewBaseCost: boolean;
+  /**
+   * Rendering the saved copy with no connection (see lib/offline-snapshots.ts).
+   * Creating, editing, archiving and the per-grade yield cells all need the
+   * server, so New SKU is hidden and canEdit answers no for every row — which
+   * also keeps the dialog (and its save/archive actions) unreachable. Search,
+   * the costed-by filter and both tables keep working.
+   */
+  offline?: boolean;
 }) {
   const [editing, setEditing] = useState<CostSkuRow | null | undefined>(undefined);
   const [query, setQuery] = useState('');
@@ -114,7 +123,8 @@ export function SkusClient({
    * the ones they created. Mirrors the DB policy exactly, so the UI never
    * offers an edit the database will reject.
    */
-  const canEdit = (s: CostSkuRow) => isAdmin || (currentUserId != null && s.created_by === currentUserId);
+  const canEdit = (s: CostSkuRow) =>
+    !offline && (isAdmin || (currentUserId != null && s.created_by === currentUserId));
 
   // The offered category vocabulary: the known set, plus anything already in
   // use, so a value already on a row is never silently dropped by the dropdown.
@@ -178,9 +188,11 @@ export function SkusClient({
             everywhere — domestic converts them at the FX rate.
           </p>
         </div>
-        <button onClick={() => setEditing(null)} className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground">
-          <Plus className="h-3.5 w-3.5" /> New SKU
-        </button>
+        {!offline && (
+          <button onClick={() => setEditing(null)} className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground">
+            <Plus className="h-3.5 w-3.5" /> New SKU
+          </button>
+        )}
       </header>
 
       {!isAdmin && (
@@ -223,7 +235,7 @@ export function SkusClient({
         <YieldTable skus={visible} buckets={buckets} yields={yields} canEdit={canEdit} />
       )}
 
-      {editing !== undefined && (
+      {editing !== undefined && !offline && (
         <SkuDialog
           sku={editing}
           orgId={orgId}
@@ -2772,3 +2784,6 @@ const th =
   'sticky top-0 z-20 whitespace-nowrap border-b border-border bg-muted px-2 py-2 font-medium';
 const td = 'whitespace-nowrap px-2 py-1.5';
 const inputCls = 'rounded-md border bg-background px-2 py-1 text-xs disabled:opacity-60';
+
+/** Everything the SKU list needs to draw, as the page hands it over (and the offline copy stores it). */
+export type SkusClientProps = ComponentProps<typeof SkusClient>;

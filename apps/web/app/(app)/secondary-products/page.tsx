@@ -4,8 +4,10 @@ import { getActivePlan, getProfile } from '@/lib/plan';
 import { NotComputed } from '@/components/output-grid';
 import { StalePlanNotice } from '../stale-banner';
 import { fetchAllByPlan } from '@/lib/fetch-all';
-import { SecondaryProductsClient, type SecondaryDef, type SourceOption } from './secondary-products-client';
+import { type SecondaryDef, type SourceOption } from './secondary-products-client';
 import { OtherProductsClient, type OtherProduct } from './other-products-client';
+import { SecondaryProductsView } from './secondary-products-view';
+import { OfflineCopy } from '@/components/pwa/offline-copy';
 
 /**
  * Secondary products — the by-products recovered while processing a main product.
@@ -115,44 +117,54 @@ export default async function SecondaryProductsPage() {
     canEditSecondaryProducts(role, profile?.edit_sections)
   );
 
-  return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Secondary products</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          By-products recovered while processing a main product — quantity and the revenue they generate.
-        </p>
-      </div>
+  // Not computed yet: the usual empty state, with no offline copy saved.
+  if (!computed) {
+    return (
+      <div className="space-y-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Secondary products</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            By-products recovered while processing a main product — quantity and the revenue they generate.
+          </p>
+        </div>
 
-      <StalePlanNotice planId={plan.id} lastComputedAt={plan.last_computed_at} />
+        <StalePlanNotice planId={plan.id} lastComputedAt={plan.last_computed_at} />
 
-      {!computed ? (
         <NotComputed />
-      ) : (
-        <SecondaryProductsClient
-          orgId={plan.org_id}
-          planId={plan.id}
-          planStartDate={plan.plan_start_date}
-          horizon={horizon}
-          definitions={definitions}
-          feedstock={feedstock}
-          totalWr={totalWr}
-          sources={sources}
-          canEdit={canEdit}
-        />
-      )}
 
-      <div className="border-t pt-6">
-        <OtherProductsClient
-          orgId={plan.org_id}
-          planId={plan.id}
-          planStartDate={plan.plan_start_date}
-          horizon={horizon}
-          products={otherProducts}
-          quantities={otherQuantities}
-          canEdit={canEdit}
-        />
+        <div className="border-t pt-6">
+          <OtherProductsClient
+            orgId={plan.org_id}
+            planId={plan.id}
+            planStartDate={plan.plan_start_date}
+            horizon={horizon}
+            products={otherProducts}
+            quantities={otherQuantities}
+            canEdit={canEdit}
+          />
+        </div>
       </div>
-    </div>
+    );
+  }
+
+  const props = {
+    orgId: plan.org_id,
+    planId: plan.id,
+    planStartDate: plan.plan_start_date,
+    horizon,
+    definitions,
+    feedstock,
+    totalWr,
+    sources,
+    canEdit,
+    products: otherProducts,
+    quantities: otherQuantities,
+  };
+  return (
+    <OfflineCopy route="secondary-products" props={props}>
+      {/* The freshness notice stays a per-request server check, passed into the
+          view's slot so it is not part of the saved copy. */}
+      <SecondaryProductsView {...props} notice={<StalePlanNotice planId={plan.id} lastComputedAt={plan.last_computed_at} />} />
+    </OfflineCopy>
   );
 }

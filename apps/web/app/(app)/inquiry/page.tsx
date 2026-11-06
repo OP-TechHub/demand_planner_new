@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { getActivePlan, getProfile, getMyPlanGrants } from '@/lib/plan';
 import { canEditPlanSection, type UserRole } from '@oceanpick/shared';
+import { OfflineCopy } from '@/components/pwa/offline-copy';
 import { InquiryClient, type InquiryProgram, type InquiryBucket } from './inquiry-client';
 
 export default async function InquiryPage() {
@@ -40,14 +41,17 @@ export default async function InquiryPage() {
   const who = { id: profile?.id ?? '', role: (profile?.role ?? 'viewer') as UserRole };
   const canSave = canEditPlanSection(plan, who, grants.has('inquiry'));
 
+  const props = {
+    planId: plan.id,
+    planStartDate: plan.plan_start_date,
+    horizon: plan.horizon_months,
+    programs,
+    buckets,
+    canSave,
+  };
   return (
-    <InquiryClient
-      planId={plan.id}
-      planStartDate={plan.plan_start_date}
-      horizon={plan.horizon_months}
-      programs={programs}
-      buckets={buckets}
-      canSave={canSave}
-    />
+    <OfflineCopy route="inquiry" props={props}>
+      <InquiryClient {...props} />
+    </OfflineCopy>
   );
 }
