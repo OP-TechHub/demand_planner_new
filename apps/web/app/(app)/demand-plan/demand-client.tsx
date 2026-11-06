@@ -24,6 +24,7 @@ import { usePasteGrid, pasteCellCls, PendingPasteBar } from '@/components/paste-
 import { toast } from '@/components/ui/toast';
 import { DemandEditor } from './demand-editor';
 import { importDemand, saveDemandCells } from './actions';
+import { PendingChanges, type DemandRequest } from './pending-changes';
 
 export type FulfilCell = { program_id: string; month_index: number; demand_fp: number; rolling_fp: number };
 /** Whole round a program-month drew on one sourcing path — offset 0 = its own month, n = borrowed from n months back. */
@@ -40,6 +41,11 @@ export function DemandClient({
   bucketNames,
   canEdit,
   canExport,
+  needsApproval,
+  canApprove,
+  meId,
+  pendingRequests,
+  recentRequests,
 }: {
   planId: string;
   planStartDate: string;
@@ -52,8 +58,20 @@ export function DemandClient({
   canEdit: boolean;
   /** Granted per user by an admin — editing a plan and taking a copy of it away are different rights. */
   canExport: boolean;
+  /** This user's edits are held for approval instead of written (non-admin on an official plan). */
+  needsApproval: boolean;
+  canApprove: boolean;
+  meId: string;
+  pendingRequests: DemandRequest[];
+  recentRequests: DemandRequest[];
 }) {
   const router = useRouter();
+  // Cells with a pending proposal, to outline them in the grid. Later requests win.
+  const proposed = useMemo(() => {
+    const m = new Map<string, { value: number | null; by: string }>();
+    for (const r of pendingRequests) for (const c of r.cells) m.set(`${c.program_id}:${c.month_index}`, { value: c.demand_fp, by: r.requested_by === meId ? 'you' : r.requester });
+    return m;
+  }, [pendingRequests, meId]);
   const [editing, setEditing] = useState<Program | null>(null);
   const [importing, setImporting] = useState(false);
   const [customer, setCustomer] = useState('all');
@@ -190,7 +208,9 @@ export function DemandClient({
     startSavePaste(async () => {
       const res = await saveDemandCells(planId, cells);
       if (res.error) { toast.error(res.error); return; }
-      toast.success(`Saved ${res.count} cell${res.count === 1 ? '' : 's'}`);
+      toast.success(res.pending
+        ? `Sent ${res.count} cell${res.count === 1 ? '' : 's'} for approval`
+        : `Saved ${res.count} cell${res.count === 1 ? '' : 's'}`);
       paste.discard();
       router.refresh();
     });
@@ -297,8 +317,19 @@ export function DemandClient({
           {!fullRange && <>Showing {visibleMonths.length} of {horizon} months. </>}
           Effective demand (kg FP) — override where set, else program baseline; the right-hand total covers the months shown.
           {canEdit ? ' Click a program to edit its timeline. Click or drag across month cells to select them, then paste (Ctrl+V) from Excel or press Delete to clear back to baseline.' : ''}
+          {needsApproval ? ' Your changes are sent to an approver and apply only once accepted.' : ''}
         </span>
       </div>
+
+      <PendingChanges
+        requests={pendingRequests}
+        recent={recentRequests}
+        meId={meId}
+        canApprove={canApprove}
+        programs={programs}
+        demandRows={demandRows}
+        planStartDate={planStartDate}
+      />
 
       {programs.length === 0 ? (
         <EmptyState
@@ -381,6 +412,7 @@ export function DemandClient({
                   {visibleMonths.map((mo, ci) => {
                     const isOverride = overrides.has(`${p.id}:${mo}`);
                     const pasted = paste.pendingValue(p.id, mo) !== undefined;
+                    const awaiting = proposed.get(`${p.id}:${mo}`);
                     // The fulfilment gradient is an inline background, which would hide both tints.
                     const f = pasted || paste.isSelected(ri, ci) ? {} : fulfilCell(p, mo);
                     return (
@@ -394,9 +426,14 @@ export function DemandClient({
                           isOverride && !f.style && !pasted && 'font-semibold text-primary',
                           canEdit && pasteCellCls.base,
                           pasted && pasteCellCls.pending,
+                          awaiting && !pasted && 'outline-dashed outline-2 -outline-offset-2 outline-warning',
                           paste.isSelected(ri, ci) && pasteCellCls.selected
                         )}
-                        title={pasted ? 'Changed — not saved yet' : f.title ?? (isOverride ? 'Overridden (baseline: ' + p.max_monthly_demand_fp.toLocaleString() + ')' : 'Baseline')}
+                        title={
+                          pasted ? 'Changed — not saved yet'
+                          : awaiting ? `Awaiting approval: ${(awaiting.value ?? p.max_monthly_demand_fp).toLocaleString()}${awaiting.value === null ? ' (baseline)' : ''}, proposed by ${awaiting.by}`
+                          : f.title ?? (isOverride ? 'Overridden (baseline: ' + p.max_monthly_demand_fp.toLocaleString() + ')' : 'Baseline')
+                        }
                       >
                         {effective(p, mo).toLocaleString()}
                       </td>

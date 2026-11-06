@@ -70,6 +70,19 @@ printing or downloading a copy for a customer and those four lines come off the
 preview, the PDF and the Word file together. The whole-fish cost and every price
 stay on the sheet either way.
 
+### Demand Plan approval
+On an **official plan**, a Demand Plan change by anyone who is **not an admin** is
+held as a request instead of being written. It covers the program editor, grid
+paste or Delete, and CSV import. Approvers get an email and see the request above
+the Demand Plan grid, with each cell's current and proposed value. Pending cells
+are outlined in the grid. **Approve** writes the change and records it in the audit
+log against the requester, naming the approver. **Reject** discards it. The
+requester is emailed either way and can withdraw a request while it is pending.
+
+Admins can always approve. Tick **Can approve demand changes** to add others.
+Nobody approves their own change. Edits to a user's own private scenario apply
+directly. Inquiry saves, promotions and PO updates still write demand directly.
+
 ---
 
 ## 3. Plans (Admin → Plans)
@@ -129,9 +142,18 @@ It runs the engine as a **background job** and updates all output tabs. A **stal
 banner shows when inputs changed after the last compute.
 
 ### Change emails
-When an **official/admin plan** is recalculated and its **Harvest Plan** changed
-since the previous recalculation, **every active user is emailed** a summary
-(who changed what, when, and which output tabs are affected). Requires email to be
+Each user can be emailed a digest (who changed what, when, and which output tabs
+are affected) when chosen **input tabs** change on an **official/admin plan**. Set
+this per user under **Admin → Users → Notify on changes to**:
+
+- **Programs, Demand Plan, Harvest Plan, PO Update** — emailed when the plan is
+  recalculated after the tab changed.
+- **Harvest Request Plan, Actual Harvest** — these never make a plan stale, so they
+  are emailed as soon as a save lands.
+
+Everyone starts with **Harvest Plan** ticked (the email people have always
+received); untick it to stop it, tick other tabs to add them. Admins can be
+subscribed too. Private scenarios never email anyone. Requires email to be
 configured (see the Developer Guide → Email).
 
 ---

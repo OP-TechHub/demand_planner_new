@@ -8,7 +8,8 @@ import { Dialog } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 
 export type WideRow = { key: string; cells: { month: number; value: number }[] };
-export type WideImportResult = { error: string | null; count: number; unknown: string[] };
+/** `notice` replaces the default "Imported N cells" message, e.g. when the cells were held for approval. */
+export type WideImportResult = { error: string | null; count: number; unknown: string[]; notice?: string };
 
 /** One importable row: its key, plus an optional descriptive column for the template. */
 export type WideKey = { key: string; note?: string };
@@ -126,7 +127,7 @@ export function WideGridImport({
       const res = await onImport(parsed.rows);
       if (res.error) { setError(res.error); return; }
       const extra = res.unknown.length ? ` (${res.unknown.length} unknown ${keyColumn}s skipped)` : '';
-      setResult(`Imported ${res.count} cells across ${parsed.rows.length} rows${extra}.`);
+      setResult(res.notice ? `${res.notice}${extra}` : `Imported ${res.count} cells across ${parsed.rows.length} rows${extra}.`);
     });
   }
 

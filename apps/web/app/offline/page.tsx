@@ -1,4 +1,5 @@
 import { WifiOff } from 'lucide-react';
+import { OpenSavedCosting } from './open-saved-costing';
 
 /*
  * Served by public/sw.js when a page navigation fails.
@@ -22,6 +23,7 @@ export default function OfflinePage() {
           The Demand Planner reads live data on every screen, so it needs a connection.
           Reconnect and try again — nothing you’d saved is lost.
         </p>
+        <OpenSavedCosting />
       </div>
     </main>
   );

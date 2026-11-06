@@ -3,7 +3,7 @@ import { getProfile } from '@/lib/plan';
 import { canPublishAssumptions, type UserRole } from '@oceanpick/shared';
 import { forClient, forClientByVersion, getBaseCostAccess, loadCostingContext } from '@/lib/costing';
 import { CostingSetupNotice } from './setup-notice';
-import { CostGridClient } from './cost-grid-client';
+import { CostGridWithOfflineCopy } from './cost-grid-with-offline-copy';
 
 /**
  * The live cost grid — every SKU on the assumptions version it is costed on.
@@ -49,7 +49,8 @@ export default async function CostingPage() {
   const canRecost = canPublishAssumptions(role, profile?.edit_sections);
 
   return (
-    <CostGridClient
+    <CostGridWithOfflineCopy
+      userName={profile?.full_name || profile?.email || ''}
       version={version}
       odc={odc}
       costedVersions={Object.fromEntries(ctx.costedVersions.entries())}

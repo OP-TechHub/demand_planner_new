@@ -3,9 +3,32 @@
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { logAudit } from '@/lib/audit';
+import { getDemandEditContext, submitDemandRequest, type DemandCellChange, type DemandRequestSource } from '@/lib/demand-approval';
 import type { WideRow, WideImportResult } from '@/components/wide-grid-import';
 
-export type SaveResult = { error: string | null };
+/** `pending` = the edit was held for approval, not written (see lib/demand-approval.ts). */
+export type SaveResult = { error: string | null; pending?: boolean };
+
+const NO_ACCESS = 'Can’t edit the demand plan here — this plan may be locked, or you may not have edit access to this section.';
+
+/**
+ * Gate every Demand Plan save. Returns null when the edit may be written
+ * directly (an admin, or a sandbox owner). Otherwise the edit is either
+ * refused or held as an approval request, and the caller returns that result.
+ */
+async function holdForApproval(
+  planId: string,
+  source: DemandRequestSource,
+  cells: () => Promise<DemandCellChange[]> | DemandCellChange[]
+): Promise<{ error: string | null; pending: boolean; count: number } | null> {
+  const ctx = await getDemandEditContext(planId);
+  if ('error' in ctx) return { error: ctx.error, pending: false, count: 0 };
+  if (!ctx.canEdit) return { error: NO_ACCESS, pending: false, count: 0 };
+  if (!ctx.needsApproval) return null;
+  const res = await submitDemandRequest(ctx, planId, source, await cells());
+  revalidatePath('/demand-plan');
+  return { error: res.error, pending: !res.error, count: res.count };
+}
 
 /** Map a raw RLS rejection to a clear message about section access. */
 function permError(message: string): string {
@@ -37,6 +60,12 @@ export async function saveDemandOverrides(
       return { error: `Demand for month ${c.month_index} must be zero or greater.` };
     }
   }
+
+  const held = await holdForApproval(planId, 'editor', () => [
+    ...upserts.map((c) => ({ program_id: programId, month_index: c.month_index, demand_fp: c.demand_fp })),
+    ...deletes.map((m) => ({ program_id: programId, month_index: m, demand_fp: null })),
+  ]);
+  if (held) return { error: held.error, pending: held.pending };
 
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -115,6 +144,9 @@ export async function saveDemandCells(
     }
   }
 
+  const held = await holdForApproval(planId, 'grid', () => cells);
+  if (held) return { error: held.error, pending: held.pending, count: held.count };
+
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: 'Your session expired. Sign in again.', count: 0 };
@@ -175,6 +207,17 @@ export async function importDemand(planId: string, rows: WideRow[]): Promise<Wid
     }
   }
 
+  const held = await holdForApproval(planId, 'import', () =>
+    upserts.map((u) => ({ program_id: u.program_id as string, month_index: u.month_index as number, demand_fp: u.demand_fp as number }))
+  );
+  if (held) {
+    if (held.error) return { error: held.error, count: 0, unknown: [...unknown] };
+    return {
+      error: null, count: held.count, unknown: [...unknown],
+      notice: `Sent ${held.count} cell${held.count === 1 ? '' : 's'} for approval. Nothing changes in the plan until an approver accepts them.`,
+    };
+  }
+
   if (upserts.length) {
     const { error } = await supabase.from('demand_plan').upsert(upserts, { onConflict: 'program_id,month_index' });
     if (error) return { error: permError(error.message), count: 0, unknown: [...unknown] };
@@ -188,6 +231,13 @@ export async function importDemand(planId: string, rows: WideRow[]): Promise<Wid
 export async function resetDemandProgram(programId: string): Promise<SaveResult> {
   if (!programId) return { error: 'Missing program.' };
   const supabase = await createClient();
+  const { data: prog } = await supabase.from('programs').select('plan_id').eq('id', programId).maybeSingle();
+  if (!prog) return { error: 'Program not found.' };
+  const held = await holdForApproval(prog.plan_id, 'reset', async () => {
+    const { data: rows } = await supabase.from('demand_plan').select('month_index').eq('program_id', programId);
+    return (rows ?? []).map((r: { month_index: number }) => ({ program_id: programId, month_index: r.month_index, demand_fp: null }));
+  });
+  if (held) return { error: held.error, pending: held.pending };
   const { error } = await supabase.from('demand_plan').delete().eq('program_id', programId);
   if (error) return { error: error.message };
   revalidatePath('/demand-plan');

@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, useTransition } from 'react';
+import { useMemo, useState, useTransition, type ComponentProps } from 'react';
 import { useRouter } from 'next/navigation';
 import { Download, FileDown, FileSignature, FileText, Globe, Lock, Printer, RefreshCw, Save, AlertTriangle } from 'lucide-react';
 import { computeCost, type CostResult, type DomesticOutput, type ExportOutput } from '@oceanpick/engine';
@@ -94,6 +94,7 @@ export function CostGridClient({
   currentUserId,
   isAdmin,
   canViewBaseCost,
+  offline = false,
 }: {
   /** The CURRENT assumptions version, with its ODC rows and freight rates. */
   version: CostAssumptionVersion;
@@ -124,6 +125,12 @@ export function CostGridClient({
    * so don't render them, and don't offer them as overrides.
    */
   canViewBaseCost: boolean;
+  /**
+   * Rendering the saved copy with no connection (see lib/offline-costing.ts).
+   * Saving a costing and re-costing need the server, so they are hidden; the
+   * caller also passes canRecost false. Breakdowns and every export still work.
+   */
+  offline?: boolean;
 }) {
   const router = useRouter();
   const [market, setMarket] = useState<CostMarket>('domestic');
@@ -451,9 +458,11 @@ export function CostGridClient({
           >
             <FileSignature className="h-3.5 w-3.5" /> Quotation
           </button>
-          <button onClick={() => setSaving(true)} className={btnPrimary} disabled={isPending}>
-            <Save className="h-3.5 w-3.5" /> Save as costing
-          </button>
+          {!offline && (
+            <button onClick={() => setSaving(true)} className={btnPrimary} disabled={isPending}>
+              <Save className="h-3.5 w-3.5" /> Save as costing
+            </button>
+          )}
         </div>
       </header>
 
@@ -2035,3 +2044,6 @@ const btnGhost =
   'inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium hover:bg-muted';
 const btnPrimary =
   'inline-flex items-center gap-1.5 rounded-md bg-primary px-2.5 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50';
+
+/** Everything the grid needs to draw, as the page hands it over (and the offline copy stores it). */
+export type CostGridProps = ComponentProps<typeof CostGridClient>;

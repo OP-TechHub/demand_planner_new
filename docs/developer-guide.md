@@ -190,8 +190,9 @@ promotion moves months from pipeline to active (splitting where partial).
 2. Inserts a `recompute_jobs` row (`running`), returns **202** immediately.
 3. Runs `runRecompute(planId)` via `waitUntil` (survives the response; on non-Vercel
    it awaits). Marks the job `done`/`error`.
-4. On `done` for an **official** plan, best-effort emails the change summary if the
-   Harvest Plan changed (see §9). Mail failure never affects the recompute.
+4. On `done` for an **official** plan, best-effort emails a digest of the engine-input
+   changes (Programs, Demand Plan, Harvest Plan, PO Update) to the users subscribed to
+   each tab (see §9). Mail failure never affects the recompute.
 
 The client (`recalculate-button.tsx`) polls `recompute_jobs` for status.
 
@@ -222,10 +223,18 @@ so the UI and DB stay in lockstep.
 ## 9. Email
 
 - **Change notifications** — `lib/email.ts` (Resend batch HTTP API, no SDK) +
-  `lib/notify-recompute.ts`. Fires from the recompute job when an official plan's
-  **Harvest Plan** changed since the last recalculation; emails each active user
-  individually. Dormant unless `RESEND_API_KEY` is set. `RESEND_FROM` should be a
-  verified domain. Times are formatted in **Asia/Colombo**.
+  `lib/notify-changes.ts`. Per input tab, emails the users whose
+  `users.notify_sections` includes it (Admin → Users → "Notify on changes to";
+  default `{harvest_plan}`, so the Harvest Plan email still reaches everyone until
+  unticked). Engine inputs (Programs, Demand Plan, Harvest Plan, PO Update) are
+  reported by the recompute job with trigger `recompute`; Harvest Request and
+  Actual Harvest never make a plan stale, so their save actions report them with
+  trigger `save` via `lib/background.ts` (waitUntil on Vercel, awaited locally).
+  `change_notifications` records how far the audit log each digest covered, so a
+  change is reported at most once whichever trigger fires. One email per
+  recipient covers every subscribed tab that changed. Dormant unless
+  `RESEND_API_KEY` is set. `RESEND_FROM` should be a verified domain. Times are
+  formatted in **Asia/Colombo**.
 - **Password-reset email** — `lib/reset-password-email.ts` +
   `app/forgot-password/actions.ts`, also over Resend. The token comes from
   `admin.generateLink` (service role, sends nothing) and we mail the link
@@ -234,6 +243,11 @@ so the UI and DB stay in lockstep.
   Configuration. Without `RESEND_API_KEY` it falls back to Supabase's own mailer.
   Note the trade-off: Supabase's per-hour email rate limit no longer applies to
   this route, so add a throttle if the form ever gets abused.
+- **Demand approval emails** — `lib/demand-approval.ts`. Non-admin Demand Plan
+  saves on an official plan go to `demand_change_requests` (service role) instead of
+  `demand_plan`. Approvers (admins and `demand_approve` holders) are emailed; the
+  requester is emailed the decision. `approval-actions.ts` applies an approved
+  request with the service role and audits it against the requester.
 
 ---
 
@@ -252,6 +266,16 @@ so the UI and DB stay in lockstep.
   (`edits:[{m,old,new}]`, `saved_from`, `inquiry_id`, `trim_for_inquiry`). See
   `app/(app)/admin/audit/reversible.ts` before changing what gets logged.
 - **Stale `.next`** can cause phantom errors — `rm -rf apps/web/.next` and rebuild.
+- **Offline Cost Grid.** `public/sw.js` caches only static files: the `/offline`
+  and `/offline/costing` pages plus every build file they reference, refreshed
+  all-or-nothing whenever Costing is opened online. The grid's data never goes in
+  Cache Storage. `costing/cost-grid-with-offline-copy.tsx` writes the grid's own
+  props to IndexedDB (`lib/offline-costing.ts`) on every online visit; the copy
+  is wiped by `SignOutButton` and by `OfflineCopyGuard` when another user signs
+  in. A failed navigation to `/costing` is redirected to `/offline/costing`.
+  **If you change `CostGridClient`'s props, bump `COST_GRID_SCHEMA`** so old
+  copies are ignored rather than mis-read. Bump the worker's `VERSION` when you
+  change `sw.js` caching.
 
 ---
 

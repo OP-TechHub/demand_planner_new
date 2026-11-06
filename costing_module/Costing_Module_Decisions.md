@@ -307,3 +307,13 @@ Customer master · by-product credit loop · price tiers · Feed WACC wiring · 
 - **Which feed supplier is real** — SK ($1.3552) or AD ($1.49268)? The live input is $1.35, matching neither.
 - **Per-bucket feed cost.** Small pellets cost markedly more (1.5mm at $1.82 vs 10mm at $1.29, a 40% premium) and the mix is dominated by large sizes. A 0–600g fish is currently costed on a feed blend it never ate. Worth revisiting if the effect is material at the farm.
 - **Real per-bucket FCR and yield** from the farm, to replace the placeholders.
+
+## 15. Offline Cost Grid (decided 2026-11-06)
+
+- **Scope:** the Cost Grid and its breakdowns only. Saved costings and SKU sheets are online-only.
+- **Saving:** automatic on every online visit to Costing. No manual button.
+- **Expiry:** none. The offline grid shows when the copy was saved.
+- **Who:** anyone who can open Costing. The copy is what they see online, so base cost stays masked without the view grant.
+- **Removal:** deleted on sign-out, and when a different user signs in on the device. No PIN; anyone using the device can open it offline.
+- **Opening it:** opening Costing offline shows the copy, and the offline screen has an "Open saved costing" button.
+- **Offline features:** view, CSV export, Print / Save as PDF, Word. Save as costing and re-cost are off.

@@ -7,7 +7,10 @@ import {
   ASSUMPTIONS_EDIT,
   BASE_COST_EDIT,
   BASE_COST_VIEW,
+  DEMAND_APPROVE,
   EXPORT_DATA,
+  NOTIFY_SECTIONS,
+  NOTIFY_SECTION_LABEL,
   SECONDARY_PRODUCTS,
   type UserRole,
 } from '@oceanpick/shared';
@@ -15,7 +18,7 @@ import { cn } from '@/lib/utils';
 import { Select } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { toast } from '@/components/ui/toast';
-import { updateUserRole, setUserActive, setUserSections } from '../actions';
+import { updateUserRole, setUserActive, setUserSections, setUserNotifySections } from '../actions';
 
 export interface AdminUser {
   id: string;
@@ -25,7 +28,12 @@ export interface AdminUser {
   is_active: boolean;
   last_login_at: string | null;
   edit_sections: string[];
+  notify_sections: string[] | null;
 }
+
+// Which tabs are reported when the plan is recalculated, and which the moment
+// a save lands — so the tooltip can say when the email will arrive.
+const NOTIFY_ON_SAVE = new Set<string>(['harvest_request', 'harvest_actual']);
 
 const ROLES: UserRole[] = ['admin', 'planner', 'contributor', 'viewer'];
 
@@ -90,6 +98,13 @@ function AccessCell({
         title="Download Programs, Demand Plan, Harvest Plan and PO Update as CSV"
         onChange={(on) => onToggle(EXPORT_DATA, on)}
       />
+      <Grant
+        label="Can approve demand changes"
+        checked={held.includes(DEMAND_APPROVE)}
+        disabled={busy}
+        title="Accept or reject other users' Demand Plan changes on official plans. Nobody approves their own."
+        onChange={(on) => onToggle(DEMAND_APPROVE, on)}
+      />
     </div>
   );
 }
@@ -122,6 +137,40 @@ function Grant({
   );
 }
 
+/**
+ * The input tabs one user is emailed about, each one a checkbox. Shown for
+ * every user including admins: this is who hears about a change, not who may
+ * make it.
+ */
+function NotifyCell({
+  held,
+  busy,
+  onToggle,
+}: {
+  held: string[];
+  busy: boolean;
+  onToggle: (section: string, on: boolean) => void;
+}) {
+  return (
+    <div className="space-y-1.5">
+      {NOTIFY_SECTIONS.map((s) => (
+        <Grant
+          key={s}
+          label={NOTIFY_SECTION_LABEL[s]}
+          checked={held.includes(s)}
+          disabled={busy}
+          title={
+            NOTIFY_ON_SAVE.has(s)
+              ? `Emailed as soon as a ${NOTIFY_SECTION_LABEL[s]} save lands on an official plan`
+              : `Emailed when an official plan is recalculated after ${NOTIFY_SECTION_LABEL[s]} changed`
+          }
+          onChange={(on) => onToggle(s, on)}
+        />
+      ))}
+    </div>
+  );
+}
+
 export function UsersClient({ users, meId }: { users: AdminUser[]; meId: string }) {
   const router = useRouter();
   const [isPending, start] = useTransition();
@@ -150,6 +199,14 @@ export function UsersClient({ users, meId }: { users: AdminUser[]; meId: string 
     return setUserSections(u.id, [...next]);
   };
 
+  /** Flip one notification tab, leaving the others alone (same shape as toggle). */
+  const toggleNotify = (u: AdminUser, section: string, on: boolean) => {
+    const next = new Set(u.notify_sections ?? []);
+    if (on) next.add(section);
+    else next.delete(section);
+    return setUserNotifySections(u.id, [...next]);
+  };
+
   const pendingCount = users.filter((u) => !u.is_active && !u.last_login_at).length;
 
   return (
@@ -170,12 +227,13 @@ export function UsersClient({ users, meId }: { users: AdminUser[]; meId: string 
       )}
 
       <div className="overflow-x-auto rounded-lg border border-border">
-        <table className="w-full min-w-[52rem] text-sm">
+        <table className="w-full min-w-[64rem] text-sm">
           <thead className="border-b border-border bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
             <tr>
               <th className="px-4 py-2.5 font-medium">User</th>
               <th className="px-4 py-2.5 font-medium">Role</th>
               <th className="px-4 py-2.5 font-medium">Access</th>
+              <th className="px-4 py-2.5 font-medium">Notify on changes to</th>
               <th className="px-4 py-2.5 font-medium">Last login</th>
               <th className="px-4 py-2.5 text-right font-medium">Status</th>
             </tr>
@@ -223,6 +281,13 @@ export function UsersClient({ users, meId }: { users: AdminUser[]; meId: string 
                     />
                   )}
                 </td>
+                <td className="px-4 py-3">
+                  <NotifyCell
+                    held={u.notify_sections ?? []}
+                    busy={isPending}
+                    onToggle={(section, on) => run(() => toggleNotify(u, section, on), 'Notifications updated')}
+                  />
+                </td>
                 <td className="px-4 py-3 text-muted-foreground">
                   {u.last_login_at ? new Date(u.last_login_at).toLocaleDateString() : 'Never'}
                 </td>
@@ -254,6 +319,20 @@ export function UsersClient({ users, meId }: { users: AdminUser[]; meId: string 
       <p className="text-xs text-muted-foreground">
         Admins can edit everything. For everyone else, click a section to grant or revoke edit access — ungranted
         sections stay read-only.
+      </p>
+      <p className="text-xs text-muted-foreground">
+        <b>Demand Plan approval</b> — on an official plan, a Demand Plan change by anyone who is not an admin is held
+        as a request and written only when an approver accepts it. Admins can always approve; tick &ldquo;Can approve
+        demand changes&rdquo; to add others. Nobody approves their own change, so keep at least two approvers if
+        approvers also edit demand. Changes to a user&apos;s own private scenario apply directly.
+      </p>
+      <p className="text-xs text-muted-foreground">
+        <b>Notify on changes to</b> picks which input tabs a user is emailed about when they change on an official
+        plan — a digest of who changed what and when. Everyone starts with Harvest Plan ticked, which is the email
+        people have always received; untick it to stop it, tick other tabs to add them. Programs, Demand Plan,
+        Harvest Plan and PO Update are reported when the plan is recalculated; Harvest Request Plan and Actual
+        Harvest do not feed the engine, so they are reported as soon as a save lands. Changes to a user&apos;s own
+        private scenario are never emailed.
       </p>
       <p className="text-xs text-muted-foreground">
         <b>Base cost</b> is the Assumptions screen&apos;s &ldquo;Base fish cost&rdquo; and &ldquo;Other direct

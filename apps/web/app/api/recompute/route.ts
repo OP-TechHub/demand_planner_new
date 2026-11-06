@@ -3,7 +3,7 @@ import { waitUntil } from '@vercel/functions';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { runRecompute } from '@/lib/recompute-core';
-import { notifyPlanRecomputed } from '@/lib/notify-recompute';
+import { notifyPlanChanges } from '@/lib/notify-changes';
 
 // The engine can churn for a while on a big plan; give it room. (Capped by the
 // Vercel plan's limit — it simply runs up to whatever is allowed.)
@@ -56,10 +56,11 @@ export async function POST(req: Request) {
         .from('recompute_jobs')
         .update({ status: 'done', ms, finished_at: new Date().toISOString() })
         .eq('id', job.id);
-      // Best-effort: email everyone the change summary for official/admin plans.
+      // Best-effort: email the subscribed users a digest of the engine-input
+      // changes this recalculation picked up (official/admin plans only).
       // Never let a mail failure affect the (already-saved) recompute result.
       try {
-        await notifyPlanRecomputed(svc, { planId, jobId: job.id });
+        await notifyPlanChanges(svc, { planId, jobId: job.id, trigger: 'recompute' });
       } catch (mailErr) {
         console.error('recompute notification failed:', mailErr);
       }
