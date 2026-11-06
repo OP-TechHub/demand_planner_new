@@ -1,15 +1,13 @@
 import { Suspense } from 'react';
-import { AlertTriangle, Activity, CalendarRange } from 'lucide-react';
 import { createClient } from '@/lib/supabase/server';
-import { monthLabel, PATH_SELECT, programPath, type AllocPath, type Program } from '@oceanpick/shared';
+import { PATH_SELECT, programPath, type AllocPath, type Program } from '@oceanpick/shared';
 import { CHANNELS as ENGINE_CHANNELS } from '@oceanpick/engine';
-import { cn } from '@/lib/utils';
 import { fetchAllByPlan } from '@/lib/fetch-all';
 import { getActivePlan } from '@/lib/plan';
-import { Card } from '@/components/ui/card';
-import { RecalculateButton } from '../recalculate-button';
 import { StalePlanNotice } from '../stale-banner';
-import { DashboardOverview, type BorrowSource, type OtherData, type StatusData, type StatusKey } from './dashboard-overview';
+import { type BorrowSource, type OtherData, type StatusData, type StatusKey } from './dashboard-overview';
+import { OfflineCopy } from '@/components/pwa/offline-copy';
+import { HomeView } from './home-view';
 
 export default async function HomePage() {
   const supabase = await createClient();
@@ -232,90 +230,53 @@ export default async function HomePage() {
     if (!alerts.some((a) => a.level === 'warn')) alerts.push({ level: 'info', text: 'No warnings — plan looks healthy.' });
   }
 
-  return (
-    <div className="mx-auto max-w-5xl space-y-6">
-      <div className="flex items-end justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {plan && <span className="font-medium text-foreground">{plan.name}</span>}
-            {plan ? ' · ' : ''}
-            {lastComputed ? `last computed ${lastComputed}.` : 'not computed yet.'}
-          </p>
-        </div>
-        {plan && <RecalculateButton planId={plan.id} />}
-      </div>
-
-      {/* Streamed: the freshness probe shouldn't hold back the rest of the page. */}
-      {plan && (
-        <Suspense fallback={null}>
-          <StalePlanNotice planId={plan.id} lastComputedAt={plan.last_computed_at} />
+  const props = {
+    plan: plan
+      ? {
+          id: plan.id,
+          name: plan.name,
+          is_live: plan.is_live,
+          plan_start_date: plan.plan_start_date,
+          horizon_months: plan.horizon_months,
+          settings_margin_metric: plan.settings_margin_metric,
+          settings_allocation_mode: plan.settings_allocation_mode,
+          settings_scope: plan.settings_scope,
+          settings_lookback_months: plan.settings_lookback_months,
+        }
+      : null,
+    lastComputed,
+    hasSummary: Boolean(summary && plan),
+    active: byStatus.active,
+    pipeline: byStatus.pipeline,
+    other,
+    alerts,
+    bucketCount: bucketCount ?? 0,
+    userCount: userCount ?? 0,
+  };
+  const view = (
+    <HomeView
+      {...props}
+      staleNotice={
+        // Streamed: the freshness probe shouldn't hold back the rest of the page.
+        plan ? (
+          <Suspense fallback={null}>
+            <StalePlanNotice planId={plan.id} lastComputedAt={plan.last_computed_at} />
+          </Suspense>
+        ) : undefined
+      }
+      recentActivity={
+        <Suspense fallback={<p className="text-sm text-muted-foreground">Loading…</p>}>
+          <RecentActivity />
         </Suspense>
-      )}
-
-      {summary && plan ? (
-        <DashboardOverview active={byStatus.active} pipeline={byStatus.pipeline} other={other} planStartDate={plan.plan_start_date} horizon={plan.horizon_months} />
-      ) : (
-        <Card className="border-dashed bg-muted/30 p-6 text-sm text-muted-foreground">
-          No computed results yet. Add programs, demand, and harvest capacity, then{' '}
-          <b className="text-foreground">Recalculate</b> to see fulfilment, revenue, and margin.
-        </Card>
-      )}
-
-      {plan && (
-        <div className="grid gap-4 lg:grid-cols-2">
-          <Card className="p-5">
-            <div className="mb-3 flex items-center gap-2">
-              <Activity className="h-4 w-4 text-muted-foreground" />
-              <h2 className="text-sm font-semibold">Recent activity</h2>
-            </div>
-            <Suspense fallback={<p className="text-sm text-muted-foreground">Loading…</p>}>
-              <RecentActivity />
-            </Suspense>
-          </Card>
-          <Card className="p-5">
-            <div className="mb-3 flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4 text-muted-foreground" />
-              <h2 className="text-sm font-semibold">Alerts</h2>
-            </div>
-            <ul className="space-y-1.5 text-sm">
-              {alerts.map((a, i) => (
-                <li key={i} className="flex items-start gap-2">
-                  <span className={cn('mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full', a.level === 'warn' ? 'bg-warning' : 'bg-muted-foreground/40')} />
-                  <span className={a.level === 'warn' ? 'text-warning' : 'text-muted-foreground'}>{a.text}</span>
-                </li>
-              ))}
-            </ul>
-          </Card>
-        </div>
-      )}
-
-      <div className="grid gap-4 sm:grid-cols-3">
-        <MiniStat label={plan?.is_live ? 'Live plan' : 'Plan'} value={plan ? plan.name : 'Not seeded'} />
-        <MiniStat label="Size buckets" value={String(bucketCount ?? 0)} />
-        <MiniStat label="Team members" value={String(userCount ?? 0)} />
-      </div>
-
-      {plan && (
-        <Card className="p-5">
-          <div className="mb-2 flex items-center gap-2">
-            <CalendarRange className="h-4 w-4 text-muted-foreground" />
-            <h2 className="text-sm font-semibold">Plan horizon</h2>
-          </div>
-          <p className="text-sm text-muted-foreground">
-            M1 = <span className="font-medium text-foreground">{monthLabel(plan.plan_start_date, 1)}</span>
-            {' · '}M{plan.horizon_months} ={' '}
-            <span className="font-medium text-foreground">{monthLabel(plan.plan_start_date, plan.horizon_months)}</span>
-          </p>
-          <dl className="mt-4 grid gap-x-8 gap-y-2 text-sm sm:grid-cols-2">
-            <Row k="Margin metric" v={plan.settings_margin_metric} />
-            <Row k="Allocation mode" v={plan.settings_allocation_mode} />
-            <Row k="Scope" v={plan.settings_scope} />
-            <Row k="Lookback" v={`${plan.settings_lookback_months} months`} />
-          </dl>
-        </Card>
-      )}
-    </div>
+      }
+    />
+  );
+  // No plan yet (unseeded org) → nothing worth copying to the device.
+  if (!plan) return view;
+  return (
+    <OfflineCopy route="home" props={props}>
+      {view}
+    </OfflineCopy>
   );
 }
 
@@ -340,23 +301,5 @@ async function RecentActivity() {
         </li>
       ))}
     </ul>
-  );
-}
-
-function MiniStat({ label, value }: { label: string; value: string }) {
-  return (
-    <Card className="p-5">
-      <div className="text-xs uppercase tracking-wide text-muted-foreground">{label}</div>
-      <div className="mt-1 text-lg font-semibold">{value}</div>
-    </Card>
-  );
-}
-
-function Row({ k, v }: { k: string; v: string }) {
-  return (
-    <div className="flex justify-between border-b border-border pb-1">
-      <dt className="text-muted-foreground">{k}</dt>
-      <dd className="font-medium">{v.replace(/_/g, ' ')}</dd>
-    </div>
   );
 }

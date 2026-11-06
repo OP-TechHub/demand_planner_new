@@ -4,6 +4,7 @@ import { NotComputed } from '@/components/output-grid';
 import { StalePlanNotice } from '../stale-banner';
 import { fetchAllByPlan } from '@/lib/fetch-all';
 import { PATH_SELECT, programPaths } from '@oceanpick/shared';
+import { OfflineCopy } from '@/components/pwa/offline-copy';
 import { InquiryManagementClient, type OtbProgram } from './inquiry-management-client';
 
 /**
@@ -58,6 +59,15 @@ export default async function InquiryManagementPage() {
   }
   const computed = uw.length > 0 || pw.length > 0;
 
+  const props = {
+    planStartDate: plan.plan_start_date,
+    horizon: plan.horizon_months,
+    buckets: (buckets ?? []) as { id: string; name: string }[],
+    programs,
+    unallocated,
+    pipeline,
+  };
+
   return (
     <div className="space-y-4">
       <div>
@@ -72,14 +82,9 @@ export default async function InquiryManagementPage() {
       {!computed ? (
         <NotComputed />
       ) : (
-        <InquiryManagementClient
-          planStartDate={plan.plan_start_date}
-          horizon={plan.horizon_months}
-          buckets={(buckets ?? []) as { id: string; name: string }[]}
-          programs={programs}
-          unallocated={unallocated}
-          pipeline={pipeline}
-        />
+        <OfflineCopy route="inquiry-management" props={props}>
+          <InquiryManagementClient {...props} />
+        </OfflineCopy>
       )}
     </div>
   );

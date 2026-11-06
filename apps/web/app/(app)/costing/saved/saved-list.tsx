@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useMemo, useState, useTransition } from 'react';
+import { useMemo, useState, useTransition, type ComponentProps } from 'react';
 import { AlertTriangle, Copy, Globe, Lock, Trash2 } from 'lucide-react';
 import type { CostCosting } from '@oceanpick/shared';
 import { cn } from '@/lib/utils';
@@ -21,7 +21,20 @@ export interface SavedRow {
 
 type Tab = 'mine' | 'all';
 
-export function SavedList({ rows }: { rows: SavedRow[] }) {
+export function SavedList({
+  rows,
+  offline = false,
+}: {
+  rows: SavedRow[];
+  /**
+   * Rendering the saved copy with no connection (see lib/offline-snapshots.ts).
+   * Duplicate, share/private and delete are server actions, so the row buttons
+   * are hidden; the tabs and badges keep working. A row still links to its
+   * costing, which has no offline copy — the service worker shows the offline
+   * screen for it.
+   */
+  offline?: boolean;
+}) {
   const mine = useMemo(() => rows.filter((r) => r.isMine), [rows]);
   // Mine is the point of the split, but opening on an empty list reads as a
   // broken page to someone who has never saved one — so a user with none starts
@@ -55,7 +68,7 @@ export function SavedList({ rows }: { rows: SavedRow[] }) {
       ) : (
         <div className="divide-y rounded-lg border bg-card">
           {shown.map((row) => (
-            <Row key={row.costing.id} row={row} />
+            <Row key={row.costing.id} row={row} offline={offline} />
           ))}
         </div>
       )}
@@ -87,12 +100,13 @@ function TabButton({
   );
 }
 
-function Row({ row }: { row: SavedRow }) {
+function Row({ row, offline }: { row: SavedRow; offline: boolean }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const c = row.costing;
   const overridden = Object.keys(c.assumption_overrides ?? {}).length > 0;
   const isPrivate = c.visibility === 'private';
+  const canEdit = row.canEdit && !offline;
 
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 p-3">
@@ -154,23 +168,25 @@ function Row({ row }: { row: SavedRow }) {
         {/* Available on everyone's costings, not just your own: copying is how
             you work from someone else's numbers without overwriting a record
             they may already have sent to a customer. */}
-        <button
-          disabled={pending}
-          onClick={() =>
-            startTransition(async () => {
-              const res = await duplicateCosting(c.id);
-              if (res.error) alert(res.error);
-              else if (res.id) router.push(`/costing/saved/${res.id}`);
-            })
-          }
-          className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-          aria-label={`Duplicate ${c.name}`}
-          title="Make my own copy of this costing"
-        >
-          <Copy className="h-3.5 w-3.5" />
-        </button>
+        {!offline && (
+          <button
+            disabled={pending}
+            onClick={() =>
+              startTransition(async () => {
+                const res = await duplicateCosting(c.id);
+                if (res.error) alert(res.error);
+                else if (res.id) router.push(`/costing/saved/${res.id}`);
+              })
+            }
+            className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+            aria-label={`Duplicate ${c.name}`}
+            title="Make my own copy of this costing"
+          >
+            <Copy className="h-3.5 w-3.5" />
+          </button>
+        )}
 
-        {row.canEdit && (
+        {canEdit && (
           <button
             disabled={pending}
             onClick={() =>
@@ -188,7 +204,7 @@ function Row({ row }: { row: SavedRow }) {
           </button>
         )}
 
-        {row.canEdit && (
+        {canEdit && (
           <button
             disabled={pending}
             onClick={() => {
@@ -209,3 +225,6 @@ function Row({ row }: { row: SavedRow }) {
     </div>
   );
 }
+
+/** Everything the list needs to draw, as the page hands it over (and the offline copy stores it). */
+export type SavedListProps = ComponentProps<typeof SavedList>;

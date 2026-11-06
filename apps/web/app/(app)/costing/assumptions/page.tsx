@@ -8,7 +8,8 @@ import {
 import { createClient } from '@/lib/supabase/server';
 import { forClient, getBaseCostAccess, loadCostingContext, maskBaseCost } from '@/lib/costing';
 import { CostingSetupNotice } from '../setup-notice';
-import { AssumptionsClient } from './assumptions-client';
+import { AssumptionsClient, type AssumptionsClientProps } from './assumptions-client';
+import { OfflineCopy } from '@/components/pwa/offline-copy';
 
 /**
  * The official farm economics: feed, FCR, FX, ODC, adders, margins, and the
@@ -57,25 +58,27 @@ export default async function AssumptionsPage({
 
   const { version, odc } = forClient(ctx, baseCost);
 
+  const props: AssumptionsClientProps = {
+    version,
+    // The picker carries every version, and each one is a full row — so the
+    // whole list is masked, not just the selected one.
+    versions:
+      baseCost.canView
+        ? ctx.versions
+        : ctx.versions.map((v) => maskBaseCost(v, [] as CostOdcComponentRow[]).version),
+    odc,
+    buckets: ctx.buckets,
+    destinations: ctx.destinations,
+    retiredDestinations: (retired ?? []) as CostDestinationRow[],
+    rates,
+    isAdmin: (profile?.role ?? 'viewer') === 'admin',
+    canViewBaseCost: baseCost.canView,
+    canEditBaseCost: baseCost.canEdit,
+    canEditAssumptions: canEditAssumptions((profile?.role ?? 'viewer') as UserRole, profile?.edit_sections),
+  };
   return (
-    <AssumptionsClient
-      version={version}
-      // The picker carries every version, and each one is a full row — so the
-      // whole list is masked, not just the selected one.
-      versions={
-        baseCost.canView
-          ? ctx.versions
-          : ctx.versions.map((v) => maskBaseCost(v, [] as CostOdcComponentRow[]).version)
-      }
-      odc={odc}
-      buckets={ctx.buckets}
-      destinations={ctx.destinations}
-      retiredDestinations={(retired ?? []) as CostDestinationRow[]}
-      rates={rates}
-      isAdmin={(profile?.role ?? 'viewer') === 'admin'}
-      canViewBaseCost={baseCost.canView}
-      canEditBaseCost={baseCost.canEdit}
-      canEditAssumptions={canEditAssumptions((profile?.role ?? 'viewer') as UserRole, profile?.edit_sections)}
-    />
+    <OfflineCopy route="costing/assumptions" props={props}>
+      <AssumptionsClient {...props} />
+    </OfflineCopy>
   );
 }

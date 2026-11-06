@@ -630,7 +630,8 @@ export function parseMonthHeader(
   // there's no telling which of the two numbers is which).
   if (month0 === -1) {
     if (tokens.length !== 2) return null;
-    const [a, b] = tokens.map(Number);
+    const a = Number(tokens[0]);
+    const b = Number(tokens[1]);
     if (!(a >= 1000 && b >= 1 && b <= 12)) return null;
     year = a;
     month0 = b - 1;

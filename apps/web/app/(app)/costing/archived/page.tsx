@@ -1,7 +1,8 @@
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import type { CostAssumptionVersion, CostCosting } from '@oceanpick/shared';
-import { ArchivedList, type ArchivedCosting, type ArchivedSku } from './archived-client';
+import { ArchivedList, type ArchivedCosting, type ArchivedListProps, type ArchivedSku } from './archived-client';
+import { OfflineCopy } from '@/components/pwa/offline-copy';
 
 /**
  * The costing module's bin: everything soft-deleted, and a way back.
@@ -105,5 +106,10 @@ export default async function ArchivedCostingsPage() {
     deletedAt: s.deleted_at,
   }));
 
-  return <ArchivedList costings={costingRows} skus={skuRows} />;
+  const props: ArchivedListProps = { costings: costingRows, skus: skuRows };
+  return (
+    <OfflineCopy route="costing/archived" props={props}>
+      <ArchivedList {...props} />
+    </OfflineCopy>
+  );
 }

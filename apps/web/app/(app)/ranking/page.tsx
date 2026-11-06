@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { getActivePlan } from '@/lib/plan';
 import { StalePlanNotice } from '../stale-banner';
 import { fetchAllByPlan } from '@/lib/fetch-all';
+import { OfflineCopy } from '@/components/pwa/offline-copy';
 import { RankingClient, type RankRow, type MonthCell } from './ranking-client';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -94,10 +95,19 @@ export default async function RankingPage() {
     };
   });
 
+  const props = {
+    rows,
+    metric: plan.settings_margin_metric as string,
+    planName: plan.name,
+    planStartDate: plan.plan_start_date,
+    horizon: months,
+  };
   return (
     <div className="space-y-4">
       <StalePlanNotice planId={plan.id} lastComputedAt={plan.last_computed_at} />
-      <RankingClient rows={rows} metric={plan.settings_margin_metric} planName={plan.name} planStartDate={plan.plan_start_date} horizon={months} />
+      <OfflineCopy route="ranking" props={props}>
+        <RankingClient {...props} />
+      </OfflineCopy>
     </div>
   );
 }

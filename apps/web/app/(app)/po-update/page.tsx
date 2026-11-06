@@ -3,6 +3,7 @@ import { getActivePlan, getProfile, getMyPlanGrants } from '@/lib/plan';
 import { canEditPlanSection, canExportData, type UserRole } from '@oceanpick/shared';
 import { fetchAllByPlan } from '@/lib/fetch-all';
 import { StalePlanNotice } from '../stale-banner';
+import { OfflineCopy } from '@/components/pwa/offline-copy';
 import { PoUpdateClient, type PoLine, type DemandCell, type ProgramRow } from './po-update-client';
 
 /**
@@ -60,6 +61,17 @@ export default async function PoUpdatePage() {
     max_monthly_demand_fp: Number(p.max_monthly_demand_fp),
   }));
 
+  const props = {
+    planId: plan.id,
+    planStartDate: plan.plan_start_date,
+    horizon: plan.horizon_months,
+    programs,
+    lines: lines as PoLine[],
+    demand: demand as DemandCell[],
+    canEdit,
+    canExport: canExportData((profile?.role ?? 'viewer') as UserRole, profile?.edit_sections),
+  };
+
   return (
     <div className="space-y-4">
       <div>
@@ -72,16 +84,9 @@ export default async function PoUpdatePage() {
 
       <StalePlanNotice planId={plan.id} lastComputedAt={plan.last_computed_at} />
 
-      <PoUpdateClient
-        planId={plan.id}
-        planStartDate={plan.plan_start_date}
-        horizon={plan.horizon_months}
-        programs={programs}
-        lines={lines as PoLine[]}
-        demand={demand as DemandCell[]}
-        canEdit={canEdit}
-        canExport={canExportData((profile?.role ?? 'viewer') as UserRole, profile?.edit_sections)}
-      />
+      <OfflineCopy route="po-update" props={props}>
+        <PoUpdateClient {...props} />
+      </OfflineCopy>
     </div>
   );
 }

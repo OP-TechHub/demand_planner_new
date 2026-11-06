@@ -3,6 +3,7 @@ import { getActivePlan, getProfile } from '@/lib/plan';
 import { ALLOC_PATHS, PATH_SELECT, programPath, canEditSection, type Bucket, type Program, type HarvestCell, type UserRole } from '@oceanpick/shared';
 import { fetchAllByPlan } from '@/lib/fetch-all';
 import { BucketsClient, type BucketRow } from './buckets-client';
+import { OfflineCopy } from '@/components/pwa/offline-copy';
 
 export default async function BucketsPage() {
   const plan = await getActivePlan();
@@ -52,13 +53,16 @@ export default async function BucketsPage() {
     monthly: monthly.get(b.id) ?? new Array<number>(horizon).fill(0),
   }));
 
+  const props = {
+    orgId: plan.org_id,
+    rows,
+    planStartDate: plan.plan_start_date,
+    horizon,
+    canEdit: canEditSection((profile?.role ?? 'viewer') as UserRole, profile?.edit_sections, 'buckets'),
+  };
   return (
-    <BucketsClient
-      orgId={plan.org_id}
-      rows={rows}
-      planStartDate={plan.plan_start_date}
-      horizon={horizon}
-      canEdit={canEditSection((profile?.role ?? 'viewer') as UserRole, profile?.edit_sections, 'buckets')}
-    />
+    <OfflineCopy route="buckets" props={props}>
+      <BucketsClient {...props} />
+    </OfflineCopy>
   );
 }

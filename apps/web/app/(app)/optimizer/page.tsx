@@ -5,6 +5,7 @@ import { StalePlanNotice } from '../stale-banner';
 import { fetchAllByPlan } from '@/lib/fetch-all';
 import { programOrder } from '@/lib/outputs';
 import { OptimizerClient, type OptProgram, type OptBucket } from './optimizer-client';
+import { OfflineCopy } from '@/components/pwa/offline-copy';
 
 export default async function OptimizerPage() {
   const plan = await getActivePlan();
@@ -71,16 +72,21 @@ export default async function OptimizerPage() {
     b.capacity[i] = u.plan_capacity_wr; b.used[i] = (u.own_consumption_wr ?? 0) + (u.borrowings_into_wr ?? 0); b.left[i] = u.unallocated_wr;
   }
 
+  const props = {
+    months,
+    planStartDate: plan.plan_start_date,
+    scope: plan.settings_scope,
+    programs,
+    buckets: [...bkt.values()],
+  };
   return (
     <div className="space-y-4">
+      {/* Stays outside the offline copy: freshness is a per-request server check,
+          and its Recalculate button needs the server anyway. */}
       <StalePlanNotice planId={plan.id} lastComputedAt={plan.last_computed_at} />
-      <OptimizerClient
-        months={months}
-        planStartDate={plan.plan_start_date}
-        scope={plan.settings_scope}
-        programs={programs}
-        buckets={[...bkt.values()]}
-      />
+      <OfflineCopy route="optimizer" props={props}>
+        <OptimizerClient {...props} />
+      </OfflineCopy>
     </div>
   );
 }

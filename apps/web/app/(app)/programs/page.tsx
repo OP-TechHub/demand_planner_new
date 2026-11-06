@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { getActivePlan, getProfile, getMyPlanGrants } from '@/lib/plan';
 import { canEditPlanSection, canExportData, type Bucket, type Program, type UserRole } from '@oceanpick/shared';
 import { ProgramsClient } from './programs-client';
+import { OfflineCopy } from '@/components/pwa/offline-copy';
 
 export default async function ProgramsPage() {
   const plan = await getActivePlan();
@@ -30,13 +31,16 @@ export default async function ProgramsPage() {
     grants.has('programs')
   );
 
+  const props = {
+    planId: plan.id,
+    programs: (programs ?? []) as Program[],
+    buckets: (buckets ?? []) as Bucket[],
+    canEdit,
+    canExport: canExportData((profile?.role ?? 'viewer') as UserRole, profile?.edit_sections),
+  };
   return (
-    <ProgramsClient
-      planId={plan.id}
-      programs={(programs ?? []) as Program[]}
-      buckets={(buckets ?? []) as Bucket[]}
-      canEdit={canEdit}
-      canExport={canExportData((profile?.role ?? 'viewer') as UserRole, profile?.edit_sections)}
-    />
+    <OfflineCopy route="programs" props={props}>
+      <ProgramsClient {...props} />
+    </OfflineCopy>
   );
 }

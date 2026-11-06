@@ -1,7 +1,7 @@
 'use client';
 
 import { useTransition, type ReactNode } from 'react';
-import { clearOfflineData } from '@/lib/offline-costing';
+import { clearOfflineData } from '@/lib/offline-snapshots';
 import { logout } from '@/app/login/actions';
 
 /**

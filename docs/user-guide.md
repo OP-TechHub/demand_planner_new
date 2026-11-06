@@ -418,16 +418,18 @@ untouched, and the diff view shows you the impact.
 **"I can't edit anything."**
 You're probably a **viewer**. Ask an admin to make you an editor.
 
-**"I need the Cost Grid with no connection."**
-Every time you open **Costing** while online, a copy of the Cost Grid is saved on
-that device. With no connection, opening Costing shows that copy, and the
-"You're offline" screen has an **Open saved costing** button. A banner says when
-the copy was saved; its prices are as of then, and it never expires. You can
-switch market, bucket and destination, open breakdowns, export the CSV sheet,
-Print / Save as PDF and download Word. Saving a costing and re-costing wait until
-you reconnect. The copy holds only what you can see online, so the base cost is
-hidden in it if it is hidden for you. **Signing out deletes it**, and so does
-another person signing in on the same device.
+**"I need the planner with no connection."**
+Every time you open a page while online, a copy of it is saved on that device —
+this covers every data page (Demand Plan, Harvest Plan, outputs, costing, and so
+on; admin pages are excluded). With no connection, opening a page shows its saved
+copy, and the "You're offline" screen lists every copy the device holds. A banner
+says when each copy was saved; its numbers are as of then, and it never expires.
+Everything that runs in the browser keeps working — filters, view toggles,
+tooltips, breakdowns, CSV exports, Print / Save as PDF — while editing, saving,
+approving and recalculating wait until you reconnect. Each copy holds only what
+you could see online, so anything hidden from your role stays hidden in it.
+**Signing out deletes all copies**, and so does another person signing in on the
+same device.
 
 ---
 

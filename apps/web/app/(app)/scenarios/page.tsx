@@ -1,6 +1,7 @@
 import { getActivePlan, getSelectablePlans, getProfile } from '@/lib/plan';
 import { can, type UserRole } from '@oceanpick/shared';
 import { ScenariosClient, type ForkSource } from './scenarios-client';
+import { OfflineCopy } from '@/components/pwa/offline-copy';
 
 export default async function ScenariosPage() {
   const [plans, active, profile] = await Promise.all([getSelectablePlans(), getActivePlan(), getProfile()]);
@@ -34,14 +35,17 @@ export default async function ScenariosPage() {
       planStartDate: p.plan_start_date,
     }));
 
+  const props = {
+    scenarios,
+    activeId: active?.id ?? '',
+    hasMaster: !!master,
+    canCreate,
+    yearsAhead: master?.settings_plan_years_ahead ?? 10,
+    forkSources,
+  };
   return (
-    <ScenariosClient
-      scenarios={scenarios}
-      activeId={active?.id ?? ''}
-      hasMaster={!!master}
-      canCreate={canCreate}
-      yearsAhead={master?.settings_plan_years_ahead ?? 10}
-      forkSources={forkSources}
-    />
+    <OfflineCopy route="scenarios" props={props}>
+      <ScenariosClient {...props} />
+    </OfflineCopy>
   );
 }

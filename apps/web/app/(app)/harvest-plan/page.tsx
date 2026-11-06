@@ -15,6 +15,7 @@ import {
 } from '@oceanpick/shared';
 import { fetchAllByPlan } from '@/lib/fetch-all';
 import { HarvestClient } from './harvest-client';
+import { OfflineCopy } from '@/components/pwa/offline-copy';
 
 export default async function HarvestPlanPage() {
   const plan = await getActivePlan();
@@ -137,25 +138,28 @@ export default async function HarvestPlanPage() {
     (b) => !b.is_archived || usedActualBuckets.has(b.id)
   );
 
+  const props = {
+    planId: plan.id,
+    planStartDate: plan.plan_start_date,
+    horizon: plan.horizon_months,
+    buckets: (buckets ?? []) as Bucket[],
+    harvestRows: rows as HarvestCell[],
+    canEdit,
+    canExport: canExportData(me.role, profile?.edit_sections),
+    request,
+    requestDaily,
+    requestSettings,
+    canEditRequest,
+    actual,
+    canEditActual,
+    orgId: plan.org_id,
+    actualBuckets,
+    canEditActualBuckets,
+    required,
+  };
   return (
-    <HarvestClient
-      planId={plan.id}
-      planStartDate={plan.plan_start_date}
-      horizon={plan.horizon_months}
-      buckets={(buckets ?? []) as Bucket[]}
-      harvestRows={rows as HarvestCell[]}
-      canEdit={canEdit}
-      canExport={canExportData(me.role, profile?.edit_sections)}
-      request={request}
-      requestDaily={requestDaily}
-      requestSettings={requestSettings}
-      canEditRequest={canEditRequest}
-      actual={actual}
-      canEditActual={canEditActual}
-      orgId={plan.org_id}
-      actualBuckets={actualBuckets}
-      canEditActualBuckets={canEditActualBuckets}
-      required={required}
-    />
+    <OfflineCopy route="harvest-plan" props={props}>
+      <HarvestClient {...props} />
+    </OfflineCopy>
   );
 }
