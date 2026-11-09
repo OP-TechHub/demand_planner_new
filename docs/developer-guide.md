@@ -273,7 +273,13 @@ so the UI and DB stay in lockstep.
   wraps its client component in `<OfflineCopy>` (`components/pwa/offline-copy.tsx`),
   which writes the component's own props to IndexedDB (`lib/offline-snapshots.ts`)
   on every online visit; the copies are wiped by `SignOutButton` and by
-  `OfflineCopyGuard` when another user signs in. A failed navigation to a page with
+  `OfflineCopyGuard` when another user signs in. **Prepare for offline**
+  (`components/pwa/prepare-offline-button.tsx`, sidebar footer) sweeps every
+  role-visible route through hidden same-origin iframes so each page's own
+  `<OfflineCopy>` saves it; a save is signalled over
+  `BroadcastChannel('op-offline')`, with a `listSavedPages()` polling fallback,
+  and a route that never saves (no content yet, role-gated) times out as
+  "not available". A failed navigation to a page with
   a copy is redirected to `/offline/<route>`, which renders the same client
   component read-only via its entry in `app/offline/entries/` (collected in
   `app/offline/registry.tsx` — never import that from an online page: it pulls in

@@ -34,6 +34,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { InstallAppButton } from '@/components/pwa/install-app-button';
+import { PrepareOfflineButton } from '@/components/pwa/prepare-offline-button';
 import type { UserRole } from '@oceanpick/shared';
 
 type Item = { label: string; href: string; icon: LucideIcon };
@@ -164,9 +165,10 @@ export function AppSidebar({ role }: { role: UserRole }) {
         ))}
       </div>
 
-      {/* Renders nothing unless the browser offers an install prompt and we
-          aren't already running installed, so the footer collapses away. */}
-      <div className="shrink-0 px-3 pb-3 empty:hidden">
+      {/* Each button renders nothing when it has nothing to offer (offline /
+          no install prompt), so the footer collapses away when both do. */}
+      <div className="shrink-0 space-y-1.5 px-3 pb-3 empty:hidden">
+        <PrepareOfflineButton role={role} />
         <InstallAppButton />
       </div>
     </nav>
