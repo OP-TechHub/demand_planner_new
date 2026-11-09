@@ -41,7 +41,18 @@ export function OfflineCopy({ route, props, children }: { route: string; props: 
     const meta = offlineRoute(route);
     if (!meta) return;
     savePageSnapshot(route, meta.schema, props, user)
-      .then(requestOfflinePagesCache)
+      .then(() => {
+        requestOfflinePagesCache();
+        try {
+          // "Prepare for offline" loads pages in hidden iframes and listens
+          // here to learn each save landed; on a normal visit nobody listens.
+          const ch = new BroadcastChannel('op-offline');
+          ch.postMessage({ type: 'saved', route });
+          ch.close();
+        } catch {
+          // No BroadcastChannel (older Safari): the button's polling fallback covers it.
+        }
+      })
       .catch(() => {});
   }, [route, props, user]);
   return <>{children}</>;

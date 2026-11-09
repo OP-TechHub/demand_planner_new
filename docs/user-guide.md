@@ -421,7 +421,10 @@ You're probably a **viewer**. Ask an admin to make you an editor.
 **"I need the planner with no connection."**
 Every time you open a page while online, a copy of it is saved on that device —
 this covers every data page (Demand Plan, Harvest Plan, outputs, costing, and so
-on; admin pages are excluded). With no connection, opening a page shows its saved
+on; admin pages are excluded). To save every page in one go before you lose
+connection — instead of opening each one — click **Prepare for offline** at the
+bottom of the sidebar and wait for its summary ("24 pages saved"). With no
+connection, opening a page shows its saved
 copy, and the "You're offline" screen lists every copy the device holds. A banner
 says when each copy was saved; its numbers are as of then, and it never expires.
 Everything that runs in the browser keeps working — filters, view toggles,
