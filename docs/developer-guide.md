@@ -280,7 +280,9 @@ so the UI and DB stay in lockstep.
   `BroadcastChannel('op-offline')`, with a `listSavedPages()` polling fallback,
   and a route that never saves (no content yet, role-gated) times out as
   "not available". A failed navigation to a page with
-  a copy is redirected to `/offline/<route>`, which renders the same client
+  a copy is redirected to `/offline/<route>`, which renders `OfflineSidebar`
+  (same `NAV_SECTIONS` as the live sidebar, from `components/nav-sections.ts`;
+  saved pages link to their copies, the rest are greyed) beside the same client
   component read-only via its entry in `app/offline/entries/` (collected in
   `app/offline/registry.tsx` — never import that from an online page: it pulls in
   the whole planner's client code).

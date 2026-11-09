@@ -1,5 +1,6 @@
 import { OFFLINE_ROUTES, offlineRoute } from '@/lib/offline-routes';
 import { OfflinePageViewer } from '../offline-page-viewer';
+import { OfflineSidebar } from '../offline-sidebar';
 
 /*
  * The saved copy of any data page, for use with no connection.
@@ -25,8 +26,11 @@ export async function generateMetadata({ params }: { params: Promise<{ route: st
 export default async function OfflineRoutePage({ params }: { params: Promise<{ route: string[] }> }) {
   const route = (await params).route.join('/');
   return (
-    <main className="mx-auto max-w-[1600px] px-4 py-6">
-      <OfflinePageViewer route={route} />
-    </main>
+    <div className="flex h-screen overflow-hidden">
+      <OfflineSidebar current={route} />
+      <main className="min-h-0 min-w-0 flex-1 overflow-y-auto p-6">
+        <OfflinePageViewer route={route} />
+      </main>
+    </div>
   );
 }
